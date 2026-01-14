@@ -273,12 +273,6 @@ const AdminAlbumDetail = () => {
                     Mark as Ready
                   </DropdownMenuItem>
                 )}
-                {album?.status !== 'delivered' && (
-                  <DropdownMenuItem onClick={() => handleUpdateStatus('delivered')}>
-                    <CheckCircle size={16} className="mr-2" />
-                    Mark as Delivered
-                  </DropdownMenuItem>
-                )}
                 {album?.status !== 'pending' && (
                   <DropdownMenuItem onClick={() => handleUpdateStatus('pending')}>
                     <CheckCircle size={16} className="mr-2" />
