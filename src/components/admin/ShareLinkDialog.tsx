@@ -71,14 +71,18 @@ export const ShareLinkDialog = ({ albumId, albumTitle, trigger }: ShareLinkDialo
   const onSubmit = async (data: ShareLinkFormData) => {
     setIsLoading(true);
     try {
-      // Hash password if provided (simple hash for demo, use bcrypt in production)
+      // Hash password using bcrypt via edge function
       let passwordHash = null;
       if (data.password) {
-        const encoder = new TextEncoder();
-        const passwordData = encoder.encode(data.password);
-        const hashBuffer = await crypto.subtle.digest('SHA-256', passwordData);
-        const hashArray = Array.from(new Uint8Array(hashBuffer));
-        passwordHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        const { data: hashData, error: hashError } = await supabase.functions.invoke('hash-password', {
+          body: { password: data.password },
+        });
+
+        if (hashError || hashData?.error) {
+          throw new Error(hashData?.error || hashError?.message || 'Failed to hash password');
+        }
+
+        passwordHash = hashData.hash;
       }
 
       const { data: shareLink, error } = await supabase

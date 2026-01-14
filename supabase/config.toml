@@ -11,3 +11,6 @@ verify_jwt = false
 
 [functions.create-client]
 verify_jwt = false
+
+[functions.hash-password]
+verify_jwt = false
