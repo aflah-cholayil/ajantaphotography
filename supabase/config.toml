@@ -1,1 +1,13 @@
 project_id = "dtknywnttoslxthlqwsz"
+
+[functions.send-email]
+verify_jwt = false
+
+[functions.s3-upload]
+verify_jwt = false
+
+[functions.s3-signed-url]
+verify_jwt = false
+
+[functions.create-client]
+verify_jwt = false

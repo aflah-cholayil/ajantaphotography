@@ -1,0 +1,197 @@
+import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
+import { Resend } from "https://esm.sh/resend@2.0.0";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+const resend = new Resend(Deno.env.get("RESEND_API_KEY"));
+const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "Ajanta Photography <onboarding@resend.dev>";
+const adminEmail = Deno.env.get("BOOKING_ADMIN_EMAIL") || "";
+
+interface EmailRequest {
+  type: "welcome" | "gallery_ready" | "share_link" | "booking_confirmation" | "booking_admin";
+  to: string;
+  data: Record<string, unknown>;
+}
+
+const getEmailContent = (type: string, data: Record<string, unknown>) => {
+  switch (type) {
+    case "welcome":
+      return {
+        subject: "Welcome to Ajanta Photography - Your Gallery Access",
+        html: `
+          <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; background: #1a1814; color: #f5f0e8; padding: 40px;">
+            <div style="text-align: center; margin-bottom: 30px;">
+              <h1 style="font-size: 32px; font-weight: 300; color: #d4a853; margin: 0;">Ajanta</h1>
+              <p style="font-size: 10px; letter-spacing: 4px; color: #d4a853; margin: 5px 0;">PHOTOGRAPHY</p>
+            </div>
+            <h2 style="color: #f5f0e8; font-weight: 300;">Welcome, ${data.name}!</h2>
+            <p style="line-height: 1.8; color: #a09080;">Your private gallery account has been created for <strong style="color: #d4a853;">${data.eventName}</strong>.</p>
+            <div style="background: #252118; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 3px solid #d4a853;">
+              <p style="margin: 5px 0; color: #a09080;"><strong style="color: #f5f0e8;">Email:</strong> ${data.email}</p>
+              <p style="margin: 5px 0; color: #a09080;"><strong style="color: #f5f0e8;">Temporary Password:</strong> <code style="background: #1a1814; padding: 4px 8px; border-radius: 4px; color: #d4a853;">${data.password}</code></p>
+            </div>
+            <p style="color: #a09080;">Please change your password upon first login.</p>
+            <a href="${data.loginUrl}" style="display: inline-block; background: linear-gradient(135deg, #d4a853, #b8923d); color: #1a1814; padding: 15px 30px; text-decoration: none; border-radius: 4px; font-weight: 500; margin-top: 20px;">Access Your Gallery</a>
+            <p style="margin-top: 40px; font-size: 12px; color: #666;">Ajanta Photography. All rights reserved.</p>
+          </div>
+        `,
+      };
+
+    case "gallery_ready":
+      return {
+        subject: "Your Gallery is Ready! - Ajanta Photography",
+        html: `
+          <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; background: #1a1814; color: #f5f0e8; padding: 40px;">
+            <div style="text-align: center; margin-bottom: 30px;">
+              <h1 style="font-size: 32px; font-weight: 300; color: #d4a853; margin: 0;">Ajanta</h1>
+              <p style="font-size: 10px; letter-spacing: 4px; color: #d4a853; margin: 5px 0;">PHOTOGRAPHY</p>
+            </div>
+            <h2 style="color: #f5f0e8; font-weight: 300;">Great News, ${data.name}!</h2>
+            <p style="line-height: 1.8; color: #a09080;">Your gallery for <strong style="color: #d4a853;">${data.albumTitle}</strong> is now ready for viewing.</p>
+            <p style="line-height: 1.8; color: #a09080;">We have carefully curated and edited ${data.photoCount || "all"} photos from your special day. Each image has been crafted to preserve those precious moments.</p>
+            <a href="${data.galleryUrl}" style="display: inline-block; background: linear-gradient(135deg, #d4a853, #b8923d); color: #1a1814; padding: 15px 30px; text-decoration: none; border-radius: 4px; font-weight: 500; margin-top: 20px;">View Your Gallery</a>
+            <p style="margin-top: 40px; font-size: 12px; color: #666;">Ajanta Photography. All rights reserved.</p>
+          </div>
+        `,
+      };
+
+    case "share_link":
+      return {
+        subject: "Gallery Shared With You - Ajanta Photography",
+        html: `
+          <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; background: #1a1814; color: #f5f0e8; padding: 40px;">
+            <div style="text-align: center; margin-bottom: 30px;">
+              <h1 style="font-size: 32px; font-weight: 300; color: #d4a853; margin: 0;">Ajanta</h1>
+              <p style="font-size: 10px; letter-spacing: 4px; color: #d4a853; margin: 5px 0;">PHOTOGRAPHY</p>
+            </div>
+            <h2 style="color: #f5f0e8; font-weight: 300;">A Gallery Has Been Shared With You</h2>
+            <p style="line-height: 1.8; color: #a09080;">You have been given access to view <strong style="color: #d4a853;">${data.albumTitle}</strong>.</p>
+            ${data.password ? `
+              <div style="background: #252118; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 3px solid #d4a853;">
+                <p style="margin: 5px 0; color: #a09080;"><strong style="color: #f5f0e8;">Password:</strong> <code style="background: #1a1814; padding: 4px 8px; border-radius: 4px; color: #d4a853;">${data.password}</code></p>
+              </div>
+            ` : ""}
+            ${data.expiresAt ? `<p style="color: #a09080;">This link expires on ${data.expiresAt}.</p>` : ""}
+            <a href="${data.shareUrl}" style="display: inline-block; background: linear-gradient(135deg, #d4a853, #b8923d); color: #1a1814; padding: 15px 30px; text-decoration: none; border-radius: 4px; font-weight: 500; margin-top: 20px;">View Gallery</a>
+            <p style="margin-top: 40px; font-size: 12px; color: #666;">Ajanta Photography. All rights reserved.</p>
+          </div>
+        `,
+      };
+
+    case "booking_confirmation":
+      return {
+        subject: "Booking Request Received - Ajanta Photography",
+        html: `
+          <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; background: #1a1814; color: #f5f0e8; padding: 40px;">
+            <div style="text-align: center; margin-bottom: 30px;">
+              <h1 style="font-size: 32px; font-weight: 300; color: #d4a853; margin: 0;">Ajanta</h1>
+              <p style="font-size: 10px; letter-spacing: 4px; color: #d4a853; margin: 5px 0;">PHOTOGRAPHY</p>
+            </div>
+            <h2 style="color: #f5f0e8; font-weight: 300;">Thank You, ${data.name}!</h2>
+            <p style="line-height: 1.8; color: #a09080;">We have received your booking request for a <strong style="color: #d4a853;">${data.eventType}</strong> on <strong style="color: #d4a853;">${data.eventDate}</strong>.</p>
+            <p style="line-height: 1.8; color: #a09080;">Our team will review your request and get back to you within 24 hours to discuss your vision and confirm availability.</p>
+            <div style="background: #252118; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 3px solid #d4a853;">
+              <p style="margin: 5px 0; color: #a09080;"><strong style="color: #f5f0e8;">Event Type:</strong> ${data.eventType}</p>
+              <p style="margin: 5px 0; color: #a09080;"><strong style="color: #f5f0e8;">Date:</strong> ${data.eventDate}</p>
+              ${data.message ? `<p style="margin: 5px 0; color: #a09080;"><strong style="color: #f5f0e8;">Message:</strong> ${data.message}</p>` : ""}
+            </div>
+            <p style="margin-top: 40px; font-size: 12px; color: #666;">Ajanta Photography. All rights reserved.</p>
+          </div>
+        `,
+      };
+
+    case "booking_admin":
+      return {
+        subject: `New Booking Request: ${data.eventType} - ${data.name}`,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #f5f5f5; padding: 20px;">
+            <h2 style="color: #333;">New Booking Request</h2>
+            <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0;">
+              <p><strong>Name:</strong> ${data.name}</p>
+              <p><strong>Email:</strong> ${data.email}</p>
+              <p><strong>Phone:</strong> ${data.phone || "Not provided"}</p>
+              <p><strong>Event Type:</strong> ${data.eventType}</p>
+              <p><strong>Event Date:</strong> ${data.eventDate}</p>
+              <p><strong>Message:</strong></p>
+              <p style="background: #f9f9f9; padding: 10px; border-radius: 4px;">${data.message || "No message"}</p>
+            </div>
+            <p style="color: #666; font-size: 12px;">This is an automated notification from Ajanta Photography booking system.</p>
+          </div>
+        `,
+      };
+
+    default:
+      throw new Error(`Unknown email type: ${type}`);
+  }
+};
+
+const handler = async (req: Request): Promise<Response> => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  const supabase = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+  );
+
+  try {
+    const { type, to, data }: EmailRequest = await req.json();
+    
+    console.log(`Sending ${type} email to ${to}`);
+    
+    const emailContent = getEmailContent(type, data);
+    
+    // For booking admin notification, send to admin email
+    const recipient = type === "booking_admin" ? adminEmail : to;
+    
+    if (!recipient) {
+      throw new Error("No recipient email provided");
+    }
+
+    const { data: emailResult, error } = await resend.emails.send({
+      from: fromEmail,
+      to: [recipient],
+      subject: emailContent.subject,
+      html: emailContent.html,
+    });
+
+    // Log the email
+    await supabase.from("email_logs").insert({
+      to_email: recipient,
+      subject: emailContent.subject,
+      template_type: type,
+      status: error ? "failed" : "sent",
+      error_message: error?.message,
+      metadata: { data, resend_id: emailResult?.id },
+    });
+
+    if (error) {
+      console.error("Resend error:", error);
+      throw error;
+    }
+
+    console.log("Email sent successfully:", emailResult);
+
+    return new Response(JSON.stringify({ success: true, id: emailResult?.id }), {
+      status: 200,
+      headers: { "Content-Type": "application/json", ...corsHeaders },
+    });
+  } catch (error: unknown) {
+    console.error("Error in send-email function:", error);
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    return new Response(
+      JSON.stringify({ error: errorMessage }),
+      {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      }
+    );
+  }
+};
+
+serve(handler);
