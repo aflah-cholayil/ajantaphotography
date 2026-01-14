@@ -14,16 +14,335 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      albums: {
+        Row: {
+          client_id: string
+          cover_image_key: string | null
+          created_at: string
+          description: string | null
+          id: string
+          ready_at: string | null
+          status: Database["public"]["Enums"]["album_status"]
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          client_id: string
+          cover_image_key?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          ready_at?: string | null
+          status?: Database["public"]["Enums"]["album_status"]
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          client_id?: string
+          cover_image_key?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          ready_at?: string | null
+          status?: Database["public"]["Enums"]["album_status"]
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "albums_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bookings: {
+        Row: {
+          admin_notes: string | null
+          client_email: string
+          client_name: string
+          created_at: string
+          event_date: string | null
+          event_type: string
+          id: string
+          message: string | null
+          phone: string | null
+          status: Database["public"]["Enums"]["booking_status"]
+          updated_at: string
+        }
+        Insert: {
+          admin_notes?: string | null
+          client_email: string
+          client_name: string
+          created_at?: string
+          event_date?: string | null
+          event_type: string
+          id?: string
+          message?: string | null
+          phone?: string | null
+          status?: Database["public"]["Enums"]["booking_status"]
+          updated_at?: string
+        }
+        Update: {
+          admin_notes?: string | null
+          client_email?: string
+          client_name?: string
+          created_at?: string
+          event_date?: string | null
+          event_type?: string
+          id?: string
+          message?: string | null
+          phone?: string | null
+          status?: Database["public"]["Enums"]["booking_status"]
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      clients: {
+        Row: {
+          created_at: string
+          event_date: string | null
+          event_name: string
+          id: string
+          notes: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          event_date?: string | null
+          event_name: string
+          id?: string
+          notes?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          event_date?: string | null
+          event_name?: string
+          id?: string
+          notes?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      email_logs: {
+        Row: {
+          created_at: string
+          error_message: string | null
+          id: string
+          metadata: Json | null
+          status: Database["public"]["Enums"]["email_status"]
+          subject: string
+          template_type: string
+          to_email: string
+        }
+        Insert: {
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          metadata?: Json | null
+          status?: Database["public"]["Enums"]["email_status"]
+          subject: string
+          template_type: string
+          to_email: string
+        }
+        Update: {
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          metadata?: Json | null
+          status?: Database["public"]["Enums"]["email_status"]
+          subject?: string
+          template_type?: string
+          to_email?: string
+        }
+        Relationships: []
+      }
+      media: {
+        Row: {
+          album_id: string
+          created_at: string
+          duration: number | null
+          file_name: string
+          height: number | null
+          id: string
+          mime_type: string
+          s3_key: string
+          s3_preview_key: string | null
+          size: number
+          sort_order: number | null
+          type: Database["public"]["Enums"]["media_type"]
+          width: number | null
+        }
+        Insert: {
+          album_id: string
+          created_at?: string
+          duration?: number | null
+          file_name: string
+          height?: number | null
+          id?: string
+          mime_type: string
+          s3_key: string
+          s3_preview_key?: string | null
+          size: number
+          sort_order?: number | null
+          type?: Database["public"]["Enums"]["media_type"]
+          width?: number | null
+        }
+        Update: {
+          album_id?: string
+          created_at?: string
+          duration?: number | null
+          file_name?: string
+          height?: number | null
+          id?: string
+          mime_type?: string
+          s3_key?: string
+          s3_preview_key?: string | null
+          size?: number
+          sort_order?: number | null
+          type?: Database["public"]["Enums"]["media_type"]
+          width?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "media_album_id_fkey"
+            columns: ["album_id"]
+            isOneToOne: false
+            referencedRelation: "albums"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profiles: {
+        Row: {
+          avatar_url: string | null
+          created_at: string
+          email: string
+          id: string
+          last_login: string | null
+          must_change_password: boolean | null
+          name: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          avatar_url?: string | null
+          created_at?: string
+          email: string
+          id?: string
+          last_login?: string | null
+          must_change_password?: boolean | null
+          name: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          avatar_url?: string | null
+          created_at?: string
+          email?: string
+          id?: string
+          last_login?: string | null
+          must_change_password?: boolean | null
+          name?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      share_links: {
+        Row: {
+          album_id: string
+          allow_download: boolean
+          created_at: string
+          download_count: number
+          expires_at: string | null
+          id: string
+          password_hash: string | null
+          token: string
+          view_count: number
+        }
+        Insert: {
+          album_id: string
+          allow_download?: boolean
+          created_at?: string
+          download_count?: number
+          expires_at?: string | null
+          id?: string
+          password_hash?: string | null
+          token?: string
+          view_count?: number
+        }
+        Update: {
+          album_id?: string
+          allow_download?: boolean
+          created_at?: string
+          download_count?: number
+          expires_at?: string | null
+          id?: string
+          password_hash?: string | null
+          token?: string
+          view_count?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "share_links_album_id_fkey"
+            columns: ["album_id"]
+            isOneToOne: false
+            referencedRelation: "albums"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_roles: {
+        Row: {
+          created_at: string
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      get_user_role: {
+        Args: { _user_id: string }
+        Returns: Database["public"]["Enums"]["app_role"]
+      }
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
     }
     Enums: {
-      [_ in never]: never
+      album_status: "pending" | "ready"
+      app_role: "admin" | "client"
+      booking_status: "new" | "contacted" | "confirmed" | "cancelled"
+      email_status: "sent" | "failed" | "pending"
+      media_type: "photo" | "video"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +469,12 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      album_status: ["pending", "ready"],
+      app_role: ["admin", "client"],
+      booking_status: ["new", "contacted", "confirmed", "cancelled"],
+      email_status: ["sent", "failed", "pending"],
+      media_type: ["photo", "video"],
+    },
   },
 } as const
