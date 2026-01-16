@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { format } from 'date-fns';
-import { Search, MoreVertical, Mail, Eye } from 'lucide-react';
+import { Search, MoreVertical, Mail, Eye, RefreshCw } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { AdminLayout } from '@/components/admin/AdminLayout';
 import { CreateClientDialog } from '@/components/admin/CreateClientDialog';
@@ -28,10 +28,11 @@ interface Client {
   event_date: string | null;
   notes: string | null;
   created_at: string;
+  user_id: string;
   profiles: {
     name: string;
     email: string;
-  };
+  } | null;
   albums: {
     id: string;
     title: string;
@@ -45,48 +46,84 @@ const AdminClients = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
 
-  const fetchClients = async () => {
+  const fetchClients = useCallback(async () => {
+    setIsLoading(true);
     try {
-      // First get clients
+      console.log('Fetching clients...');
+      
+      // Get clients with joined profiles and albums
       const { data: clientsData, error: clientsError } = await supabase
         .from('clients')
-        .select('id, event_name, event_date, notes, created_at, user_id')
+        .select(`
+          id,
+          event_name,
+          event_date,
+          notes,
+          created_at,
+          user_id,
+          albums (
+            id,
+            title,
+            status
+          )
+        `)
         .order('created_at', { ascending: false });
 
-      if (clientsError) throw clientsError;
+      if (clientsError) {
+        console.error('Error fetching clients:', clientsError);
+        throw clientsError;
+      }
 
-      // Get profiles and albums for each client
-      const clientsWithDetails = await Promise.all(
-        (clientsData || []).map(async (client) => {
-          const [profileRes, albumsRes] = await Promise.all([
-            supabase.from('profiles').select('name, email').eq('user_id', client.user_id).single(),
-            supabase.from('albums').select('id, title, status').eq('client_id', client.id),
-          ]);
-          return {
-            ...client,
-            profiles: profileRes.data || { name: 'Unknown', email: '' },
-            albums: albumsRes.data || [],
-          };
-        })
-      );
+      console.log('Clients fetched:', clientsData?.length || 0);
 
-      setClients(clientsWithDetails as Client[]);
+      // Now fetch profiles separately - admins should be able to see all
+      const userIds = (clientsData || []).map(c => c.user_id).filter(Boolean);
+      
+      let profilesMap: Record<string, { name: string; email: string }> = {};
+      
+      if (userIds.length > 0) {
+        const { data: profilesData, error: profilesError } = await supabase
+          .from('profiles')
+          .select('user_id, name, email')
+          .in('user_id', userIds);
+        
+        if (profilesError) {
+          console.error('Error fetching profiles:', profilesError);
+        } else if (profilesData) {
+          profilesMap = profilesData.reduce((acc, p) => {
+            acc[p.user_id] = { name: p.name, email: p.email };
+            return acc;
+          }, {} as Record<string, { name: string; email: string }>);
+        }
+      }
+
+      // Combine the data
+      const clientsWithProfiles = (clientsData || []).map(client => ({
+        ...client,
+        profiles: profilesMap[client.user_id] || { name: 'Unknown', email: 'N/A' },
+        albums: client.albums || [],
+      }));
+
+      console.log('Clients with profiles:', clientsWithProfiles);
+      setClients(clientsWithProfiles);
     } catch (error) {
-      console.error('Error fetching clients:', error);
+      console.error('Error in fetchClients:', error);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchClients();
-  }, []);
+  }, [fetchClients]);
 
   const filteredClients = clients.filter((client) => {
     const searchLower = searchQuery.toLowerCase();
+    const name = client.profiles?.name || '';
+    const email = client.profiles?.email || '';
     return (
-      client.profiles.name.toLowerCase().includes(searchLower) ||
-      client.profiles.email.toLowerCase().includes(searchLower) ||
+      name.toLowerCase().includes(searchLower) ||
+      email.toLowerCase().includes(searchLower) ||
       client.event_name.toLowerCase().includes(searchLower)
     );
   });
@@ -100,7 +137,12 @@ const AdminClients = () => {
             <h1 className="font-serif text-3xl font-light text-foreground">Clients</h1>
             <p className="text-muted-foreground mt-1">Manage your photography clients</p>
           </div>
-          <CreateClientDialog onSuccess={fetchClients} />
+          <div className="flex gap-2">
+            <Button variant="outline" size="icon" onClick={fetchClients} disabled={isLoading}>
+              <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+            </Button>
+            <CreateClientDialog onSuccess={fetchClients} />
+          </div>
         </div>
 
         {/* Search */}
@@ -145,8 +187,8 @@ const AdminClients = () => {
                   <TableRow key={client.id} className="hover:bg-muted/20">
                     <TableCell>
                       <div>
-                        <p className="font-medium">{client.profiles.name}</p>
-                        <p className="text-sm text-muted-foreground">{client.profiles.email}</p>
+                        <p className="font-medium">{client.profiles?.name || 'Unknown'}</p>
+                        <p className="text-sm text-muted-foreground">{client.profiles?.email || 'N/A'}</p>
                       </div>
                     </TableCell>
                     <TableCell>{client.event_name}</TableCell>
