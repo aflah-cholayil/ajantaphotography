@@ -1,12 +1,6 @@
 import { Link } from 'react-router-dom';
 import { Instagram, Facebook, Mail, Phone, MapPin, MessageCircle } from 'lucide-react';
-import { studioConfig, formatPhoneLink, formatWhatsAppLink } from '@/config/studio';
-
-const socialLinks = [
-  { icon: Instagram, href: studioConfig.social.instagramUrl, label: 'Instagram' },
-  { icon: Facebook, href: studioConfig.social.facebookUrl, label: 'Facebook' },
-  { icon: MessageCircle, href: formatWhatsAppLink('Hello! I would like to inquire about your photography services.'), label: 'WhatsApp' },
-];
+import { useStudioSettings } from '@/hooks/useStudioSettings';
 
 const quickLinks = [
   { name: 'About Us', path: '/about' },
@@ -16,6 +10,15 @@ const quickLinks = [
 ];
 
 export const Footer = () => {
+  const { settings, identity, formatPhoneLink, formatWhatsAppLink, getPhoneArray } = useStudioSettings();
+  const phones = getPhoneArray();
+
+  const socialLinks = [
+    { icon: Instagram, href: settings.instagram_url, label: 'Instagram' },
+    { icon: Facebook, href: settings.facebook_url, label: 'Facebook' },
+    { icon: MessageCircle, href: formatWhatsAppLink('Hello! I would like to inquire about your photography services.'), label: 'WhatsApp' },
+  ];
+
   return (
     <footer className="bg-card border-t border-border">
       <div className="container mx-auto px-6 py-16">
@@ -31,7 +34,7 @@ export const Footer = () => {
               </span>
             </Link>
             <p className="text-muted-foreground font-sans text-sm leading-relaxed mb-6">
-              {studioConfig.tagline}. {studioConfig.description}.
+              {identity.tagline}. {identity.description}.
             </p>
             <div className="flex gap-4">
               {socialLinks.map((social) => (
@@ -85,19 +88,19 @@ export const Footer = () => {
               <li className="flex items-start gap-3">
                 <MapPin size={18} className="text-primary mt-1 flex-shrink-0" />
                 <a 
-                  href={studioConfig.address.googleMapsUrl}
+                  href={settings.google_maps_url}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="font-sans text-sm text-muted-foreground hover:text-primary transition-colors"
                 >
-                  {studioConfig.address.line1}<br />
-                  {studioConfig.address.line2} – {studioConfig.address.pincode}
+                  {settings.address_line1}<br />
+                  {settings.address_line2} – {settings.pincode}
                 </a>
               </li>
               <li className="flex items-start gap-3">
                 <Phone size={18} className="text-primary flex-shrink-0 mt-0.5" />
                 <div className="font-sans text-sm text-muted-foreground">
-                  {studioConfig.contact.phones.map((phone, index) => (
+                  {phones.map((phone, index) => (
                     <a 
                       key={index}
                       href={formatPhoneLink(phone)} 
@@ -111,10 +114,10 @@ export const Footer = () => {
               <li className="flex items-center gap-3">
                 <Mail size={18} className="text-primary flex-shrink-0" />
                 <a 
-                  href={`mailto:${studioConfig.contact.email}`} 
+                  href={`mailto:${settings.email}`} 
                   className="font-sans text-sm text-muted-foreground hover:text-primary transition-colors"
                 >
-                  {studioConfig.contact.email}
+                  {settings.email}
                 </a>
               </li>
             </ul>
@@ -124,7 +127,7 @@ export const Footer = () => {
         {/* Bottom Bar */}
         <div className="mt-12 pt-8 border-t border-border flex flex-col md:flex-row items-center justify-between gap-4">
           <p className="font-sans text-sm text-muted-foreground">
-            © {new Date().getFullYear()} {studioConfig.name}. All rights reserved.
+            © {new Date().getFullYear()} {identity.name}. All rights reserved.
           </p>
           <div className="flex gap-6 font-sans text-sm text-muted-foreground">
             <Link to="/privacy" className="hover:text-primary transition-colors">

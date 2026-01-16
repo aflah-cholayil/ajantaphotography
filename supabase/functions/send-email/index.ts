@@ -11,31 +11,74 @@ const resend = new Resend(Deno.env.get("RESEND_API_KEY"));
 const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "Ajanta Photography <onboarding@resend.dev>";
 const adminEmail = Deno.env.get("BOOKING_ADMIN_EMAIL") || "";
 
-// Studio configuration - Single source of truth
-const studioConfig = {
+// Default studio configuration (fallback if DB fetch fails)
+const defaultStudioConfig = {
   name: "Ajanta Photography",
-  phones: ["+91 94435 68486", "+91 76398 88486"],
+  phones: "+91 94435 68486, +91 76398 88486",
   email: "ajantastudiopandalur@gmail.com",
   instagram: "@ajanta.photography",
-  address: {
-    line1: "GHSS School Junction, Pandalur",
-    line2: "The Nilgiris – 643233",
-  },
+  address_line1: "GHSS School Junction, Pandalur",
+  address_line2: "The Nilgiris – 643233",
+  whatsapp: "+91 94435 68486",
 };
 
-// Email footer with contact details
-const emailFooter = `
-  <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #333;">
-    <p style="font-size: 14px; color: #d4a853; margin: 0 0 10px 0; font-weight: 500;">${studioConfig.name}</p>
-    <p style="font-size: 12px; color: #a09080; margin: 0; line-height: 1.8;">
-      ${studioConfig.address.line1}<br />
-      ${studioConfig.address.line2}<br />
-      Phone: ${studioConfig.phones.join(" / ")}<br />
-      Email: ${studioConfig.email}<br />
-      Instagram: ${studioConfig.instagram}
-    </p>
-  </div>
-`;
+interface StudioConfig {
+  name: string;
+  phones: string;
+  email: string;
+  instagram: string;
+  address_line1: string;
+  address_line2: string;
+  whatsapp: string;
+}
+
+// Fetch studio settings from database
+async function getStudioConfig(supabase: any): Promise<StudioConfig> {
+  try {
+    const { data, error } = await supabase
+      .from("studio_settings")
+      .select("setting_key, setting_value");
+
+    if (error || !data || data.length === 0) {
+      console.log("Using default studio config");
+      return defaultStudioConfig;
+    }
+
+    const settingsMap: Record<string, string> = {};
+    data.forEach((row: { setting_key: string; setting_value: string }) => {
+      settingsMap[row.setting_key] = row.setting_value;
+    });
+
+    return {
+      name: "Ajanta Photography", // Fixed identity
+      phones: settingsMap.phones || defaultStudioConfig.phones,
+      email: settingsMap.email || defaultStudioConfig.email,
+      instagram: settingsMap.instagram || defaultStudioConfig.instagram,
+      address_line1: settingsMap.address_line1 || defaultStudioConfig.address_line1,
+      address_line2: `${settingsMap.address_line2 || "The Nilgiris"} – ${settingsMap.pincode || "643233"}`,
+      whatsapp: settingsMap.whatsapp || defaultStudioConfig.whatsapp,
+    };
+  } catch (err) {
+    console.error("Error fetching studio config:", err);
+    return defaultStudioConfig;
+  }
+}
+
+// Generate email footer with contact details
+function getEmailFooter(config: StudioConfig): string {
+  return `
+    <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #333;">
+      <p style="font-size: 14px; color: #d4a853; margin: 0 0 10px 0; font-weight: 500;">${config.name}</p>
+      <p style="font-size: 12px; color: #a09080; margin: 0; line-height: 1.8;">
+        ${config.address_line1}<br />
+        ${config.address_line2}<br />
+        Phone: ${config.phones}<br />
+        Email: ${config.email}<br />
+        Instagram: ${config.instagram}
+      </p>
+    </div>
+  `;
+}
 
 interface EmailRequest {
   type: "welcome" | "gallery_ready" | "share_link" | "booking_confirmation" | "booking_admin";
@@ -43,11 +86,14 @@ interface EmailRequest {
   data: Record<string, unknown>;
 }
 
-const getEmailContent = (type: string, data: Record<string, unknown>) => {
+const getEmailContent = (type: string, data: Record<string, unknown>, config: StudioConfig, emailFooter: string) => {
+  const whatsappNumber = config.whatsapp.replace(/[^0-9]/g, "");
+  const primaryPhone = config.phones.split(",")[0]?.trim() || config.phones;
+
   switch (type) {
     case "welcome":
       return {
-        subject: `Welcome to ${studioConfig.name} - Your Gallery Access`,
+        subject: `Welcome to ${config.name} - Your Gallery Access`,
         html: `
           <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; background: #1a1814; color: #f5f0e8; padding: 40px;">
             <div style="text-align: center; margin-bottom: 30px;">
@@ -69,7 +115,7 @@ const getEmailContent = (type: string, data: Record<string, unknown>) => {
 
     case "gallery_ready":
       return {
-        subject: `Your Gallery is Ready! - ${studioConfig.name}`,
+        subject: `Your Gallery is Ready! - ${config.name}`,
         html: `
           <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; background: #1a1814; color: #f5f0e8; padding: 40px;">
             <div style="text-align: center; margin-bottom: 30px;">
@@ -87,7 +133,7 @@ const getEmailContent = (type: string, data: Record<string, unknown>) => {
 
     case "share_link":
       return {
-        subject: `Gallery Shared With You - ${studioConfig.name}`,
+        subject: `Gallery Shared With You - ${config.name}`,
         html: `
           <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; background: #1a1814; color: #f5f0e8; padding: 40px;">
             <div style="text-align: center; margin-bottom: 30px;">
@@ -110,7 +156,7 @@ const getEmailContent = (type: string, data: Record<string, unknown>) => {
 
     case "booking_confirmation":
       return {
-        subject: `Booking Request Received - ${studioConfig.name}`,
+        subject: `Booking Request Received - ${config.name}`,
         html: `
           <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; background: #1a1814; color: #f5f0e8; padding: 40px;">
             <div style="text-align: center; margin-bottom: 30px;">
@@ -127,8 +173,8 @@ const getEmailContent = (type: string, data: Record<string, unknown>) => {
             </div>
             <p style="line-height: 1.8; color: #a09080;">Have questions? Contact us directly:</p>
             <p style="line-height: 1.8; color: #a09080;">
-              📞 <a href="tel:+919443568486" style="color: #d4a853; text-decoration: none;">${studioConfig.phones[0]}</a><br />
-              💬 <a href="https://wa.me/919443568486" style="color: #25D366; text-decoration: none;">WhatsApp Us</a>
+              📞 <a href="tel:${primaryPhone.replace(/\s/g, "")}" style="color: #d4a853; text-decoration: none;">${primaryPhone}</a><br />
+              💬 <a href="https://wa.me/${whatsappNumber}" style="color: #25D366; text-decoration: none;">WhatsApp Us</a>
             </p>
             ${emailFooter}
           </div>
@@ -150,7 +196,7 @@ const getEmailContent = (type: string, data: Record<string, unknown>) => {
               <p><strong>Message:</strong></p>
               <p style="background: #f9f9f9; padding: 10px; border-radius: 4px;">${data.message || "No message"}</p>
             </div>
-            <p style="color: #666; font-size: 12px;">This is an automated notification from ${studioConfig.name} booking system.</p>
+            <p style="color: #666; font-size: 12px;">This is an automated notification from ${config.name} booking system.</p>
           </div>
         `,
       };
@@ -175,7 +221,11 @@ const handler = async (req: Request): Promise<Response> => {
     
     console.log(`Sending ${type} email to ${to}`);
     
-    const emailContent = getEmailContent(type, data);
+    // Fetch studio config from database
+    const studioConfig = await getStudioConfig(supabase);
+    const emailFooter = getEmailFooter(studioConfig);
+    
+    const emailContent = getEmailContent(type, data, studioConfig, emailFooter);
     
     // For booking admin notification, send to admin email
     const recipient = type === "booking_admin" ? adminEmail : to;
