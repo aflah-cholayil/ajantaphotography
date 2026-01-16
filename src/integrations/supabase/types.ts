@@ -323,6 +323,66 @@ export type Database = {
         }
         Relationships: []
       }
+      works: {
+        Row: {
+          category: Database["public"]["Enums"]["work_category"]
+          created_at: string
+          description: string | null
+          height: number | null
+          id: string
+          mime_type: string | null
+          s3_key: string
+          s3_preview_key: string | null
+          show_on_gallery: boolean
+          show_on_home: boolean
+          size: number | null
+          sort_order: number | null
+          status: Database["public"]["Enums"]["work_status"]
+          title: string
+          type: Database["public"]["Enums"]["work_type"]
+          updated_at: string
+          width: number | null
+        }
+        Insert: {
+          category?: Database["public"]["Enums"]["work_category"]
+          created_at?: string
+          description?: string | null
+          height?: number | null
+          id?: string
+          mime_type?: string | null
+          s3_key: string
+          s3_preview_key?: string | null
+          show_on_gallery?: boolean
+          show_on_home?: boolean
+          size?: number | null
+          sort_order?: number | null
+          status?: Database["public"]["Enums"]["work_status"]
+          title: string
+          type?: Database["public"]["Enums"]["work_type"]
+          updated_at?: string
+          width?: number | null
+        }
+        Update: {
+          category?: Database["public"]["Enums"]["work_category"]
+          created_at?: string
+          description?: string | null
+          height?: number | null
+          id?: string
+          mime_type?: string | null
+          s3_key?: string
+          s3_preview_key?: string | null
+          show_on_gallery?: boolean
+          show_on_home?: boolean
+          size?: number | null
+          sort_order?: number | null
+          status?: Database["public"]["Enums"]["work_status"]
+          title?: string
+          type?: Database["public"]["Enums"]["work_type"]
+          updated_at?: string
+          width?: number | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       admin_users_view: {
@@ -362,6 +422,9 @@ export type Database = {
       booking_status: "new" | "contacted" | "confirmed" | "cancelled"
       email_status: "sent" | "failed" | "pending"
       media_type: "photo" | "video"
+      work_category: "wedding" | "pre-wedding" | "event" | "candid" | "other"
+      work_status: "active" | "hidden"
+      work_type: "photo" | "video"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -494,6 +557,9 @@ export const Constants = {
       booking_status: ["new", "contacted", "confirmed", "cancelled"],
       email_status: ["sent", "failed", "pending"],
       media_type: ["photo", "video"],
+      work_category: ["wedding", "pre-wedding", "event", "candid", "other"],
+      work_status: ["active", "hidden"],
+      work_type: ["photo", "video"],
     },
   },
 } as const

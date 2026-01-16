@@ -21,6 +21,7 @@ const navItems = [
   { path: '/admin', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/admin/clients', label: 'Clients', icon: Users },
   { path: '/admin/albums', label: 'Albums', icon: Image },
+  { path: '/admin/works', label: 'Works / Portfolio', icon: Image },
   { path: '/admin/bookings', label: 'Bookings', icon: Calendar },
   { path: '/admin/users', label: 'Admin Users', icon: UserCog, ownerOnly: true },
 ];

@@ -20,3 +20,6 @@ verify_jwt = false
 
 [functions.manage-admin-user]
 verify_jwt = false
+
+[functions.manage-work]
+verify_jwt = false
