@@ -8,10 +8,13 @@ import { Textarea } from '@/components/ui/textarea';
 import { Mail, Phone, MapPin, Send, MessageCircle, Instagram, Clock } from 'lucide-react';
 import { useState } from 'react';
 import { useToast } from '@/hooks/use-toast';
-import { studioConfig, formatPhoneLink, formatWhatsAppLink } from '@/config/studio';
+import { useStudioSettings } from '@/hooks/useStudioSettings';
+import { studioConfig } from '@/config/studio';
 
 const Contact = () => {
   const { toast } = useToast();
+  const { settings, formatPhoneLink, formatWhatsAppLink, getPhoneArray } = useStudioSettings();
+  const phones = getPhoneArray();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -70,7 +73,7 @@ const Contact = () => {
                   <div>
                     <h4 className="font-sans font-medium text-foreground mb-1">Phone</h4>
                     <div className="space-y-1">
-                      {studioConfig.contact.phones.map((phone, index) => (
+                      {phones.map((phone, index) => (
                         <a 
                           key={index}
                           href={formatPhoneLink(phone)} 
@@ -96,7 +99,7 @@ const Contact = () => {
                       rel="noopener noreferrer"
                       className="font-sans text-muted-foreground hover:text-green-500 transition-colors"
                     >
-                      {studioConfig.contact.whatsapp}
+                      {settings.whatsapp}
                     </a>
                     <a 
                       href={formatWhatsAppLink('Hello! I would like to inquire about your photography services.')}
@@ -118,10 +121,10 @@ const Contact = () => {
                   <div>
                     <h4 className="font-sans font-medium text-foreground mb-1">Email</h4>
                     <a 
-                      href={`mailto:${studioConfig.contact.email}`} 
+                      href={`mailto:${settings.email}`} 
                       className="font-sans text-muted-foreground hover:text-primary transition-colors"
                     >
-                      {studioConfig.contact.email}
+                      {settings.email}
                     </a>
                   </div>
                 </div>
@@ -134,12 +137,12 @@ const Contact = () => {
                   <div>
                     <h4 className="font-sans font-medium text-foreground mb-1">Instagram</h4>
                     <a 
-                      href={studioConfig.social.instagramUrl}
+                      href={settings.instagram_url}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="font-sans text-muted-foreground hover:text-pink-500 transition-colors"
                     >
-                      {studioConfig.social.instagram}
+                      {settings.instagram}
                     </a>
                   </div>
                 </div>
@@ -152,13 +155,13 @@ const Contact = () => {
                   <div>
                     <h4 className="font-sans font-medium text-foreground mb-1">Studio</h4>
                     <a 
-                      href={studioConfig.address.googleMapsUrl}
+                      href={settings.google_maps_url}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="font-sans text-muted-foreground hover:text-primary transition-colors"
                     >
-                      {studioConfig.address.line1}<br />
-                      {studioConfig.address.line2} – {studioConfig.address.pincode}
+                      {settings.address_line1}<br />
+                      {settings.address_line2} – {settings.pincode}
                     </a>
                   </div>
                 </div>
@@ -172,9 +175,9 @@ const Contact = () => {
                   <div>
                     <h4 className="font-sans font-medium text-foreground mb-2">Studio Hours</h4>
                     <div className="font-sans text-sm text-muted-foreground space-y-1">
-                      <p>Monday - Friday: {studioConfig.hours.weekdays}</p>
-                      <p>Saturday: {studioConfig.hours.saturday}</p>
-                      <p>Sunday: {studioConfig.hours.sunday}</p>
+                      <p>Monday - Friday: {settings.hours_weekdays}</p>
+                      <p>Saturday: {settings.hours_saturday}</p>
+                      <p>Sunday: {settings.hours_sunday}</p>
                     </div>
                   </div>
                 </div>
