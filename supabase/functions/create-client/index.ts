@@ -71,7 +71,9 @@ const handler = async (req: Request): Promise<Response> => {
       .eq("user_id", userId)
       .single();
 
-    if (roleData?.role !== "admin") {
+    const allowedRoles = ["admin", "owner", "editor"];
+    if (!roleData?.role || !allowedRoles.includes(roleData.role)) {
+      console.log("Access denied for role:", roleData?.role);
       return new Response(JSON.stringify({ error: "Admin access required" }), {
         status: 403,
         headers: { "Content-Type": "application/json", ...corsHeaders },
