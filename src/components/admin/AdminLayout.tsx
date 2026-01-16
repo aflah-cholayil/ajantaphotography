@@ -24,6 +24,7 @@ const navItems = [
   { path: '/admin/works', label: 'Works / Portfolio', icon: Image },
   { path: '/admin/bookings', label: 'Bookings', icon: Calendar },
   { path: '/admin/users', label: 'Admin Users', icon: UserCog, ownerOnly: true },
+  { path: '/admin/settings', label: 'Studio Settings', icon: Settings },
 ];
 
 export const AdminLayout = ({ children }: AdminLayoutProps) => {

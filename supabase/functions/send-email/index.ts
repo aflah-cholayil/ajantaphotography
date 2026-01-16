@@ -11,6 +11,32 @@ const resend = new Resend(Deno.env.get("RESEND_API_KEY"));
 const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "Ajanta Photography <onboarding@resend.dev>";
 const adminEmail = Deno.env.get("BOOKING_ADMIN_EMAIL") || "";
 
+// Studio configuration - Single source of truth
+const studioConfig = {
+  name: "Ajanta Photography",
+  phones: ["+91 94435 68486", "+91 76398 88486"],
+  email: "ajantastudiopandalur@gmail.com",
+  instagram: "@ajanta.photography",
+  address: {
+    line1: "GHSS School Junction, Pandalur",
+    line2: "The Nilgiris – 643233",
+  },
+};
+
+// Email footer with contact details
+const emailFooter = `
+  <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #333;">
+    <p style="font-size: 14px; color: #d4a853; margin: 0 0 10px 0; font-weight: 500;">${studioConfig.name}</p>
+    <p style="font-size: 12px; color: #a09080; margin: 0; line-height: 1.8;">
+      ${studioConfig.address.line1}<br />
+      ${studioConfig.address.line2}<br />
+      Phone: ${studioConfig.phones.join(" / ")}<br />
+      Email: ${studioConfig.email}<br />
+      Instagram: ${studioConfig.instagram}
+    </p>
+  </div>
+`;
+
 interface EmailRequest {
   type: "welcome" | "gallery_ready" | "share_link" | "booking_confirmation" | "booking_admin";
   to: string;
@@ -21,7 +47,7 @@ const getEmailContent = (type: string, data: Record<string, unknown>) => {
   switch (type) {
     case "welcome":
       return {
-        subject: "Welcome to Ajanta Photography - Your Gallery Access",
+        subject: `Welcome to ${studioConfig.name} - Your Gallery Access`,
         html: `
           <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; background: #1a1814; color: #f5f0e8; padding: 40px;">
             <div style="text-align: center; margin-bottom: 30px;">
@@ -36,14 +62,14 @@ const getEmailContent = (type: string, data: Record<string, unknown>) => {
             </div>
             <p style="color: #a09080;">Please change your password upon first login.</p>
             <a href="${data.loginUrl}" style="display: inline-block; background: linear-gradient(135deg, #d4a853, #b8923d); color: #1a1814; padding: 15px 30px; text-decoration: none; border-radius: 4px; font-weight: 500; margin-top: 20px;">Access Your Gallery</a>
-            <p style="margin-top: 40px; font-size: 12px; color: #666;">Ajanta Photography. All rights reserved.</p>
+            ${emailFooter}
           </div>
         `,
       };
 
     case "gallery_ready":
       return {
-        subject: "Your Gallery is Ready! - Ajanta Photography",
+        subject: `Your Gallery is Ready! - ${studioConfig.name}`,
         html: `
           <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; background: #1a1814; color: #f5f0e8; padding: 40px;">
             <div style="text-align: center; margin-bottom: 30px;">
@@ -54,14 +80,14 @@ const getEmailContent = (type: string, data: Record<string, unknown>) => {
             <p style="line-height: 1.8; color: #a09080;">Your gallery for <strong style="color: #d4a853;">${data.albumTitle}</strong> is now ready for viewing.</p>
             <p style="line-height: 1.8; color: #a09080;">We have carefully curated and edited ${data.photoCount || "all"} photos from your special day. Each image has been crafted to preserve those precious moments.</p>
             <a href="${data.galleryUrl}" style="display: inline-block; background: linear-gradient(135deg, #d4a853, #b8923d); color: #1a1814; padding: 15px 30px; text-decoration: none; border-radius: 4px; font-weight: 500; margin-top: 20px;">View Your Gallery</a>
-            <p style="margin-top: 40px; font-size: 12px; color: #666;">Ajanta Photography. All rights reserved.</p>
+            ${emailFooter}
           </div>
         `,
       };
 
     case "share_link":
       return {
-        subject: "Gallery Shared With You - Ajanta Photography",
+        subject: `Gallery Shared With You - ${studioConfig.name}`,
         html: `
           <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; background: #1a1814; color: #f5f0e8; padding: 40px;">
             <div style="text-align: center; margin-bottom: 30px;">
@@ -77,14 +103,14 @@ const getEmailContent = (type: string, data: Record<string, unknown>) => {
             ` : ""}
             ${data.expiresAt ? `<p style="color: #a09080;">This link expires on ${data.expiresAt}.</p>` : ""}
             <a href="${data.shareUrl}" style="display: inline-block; background: linear-gradient(135deg, #d4a853, #b8923d); color: #1a1814; padding: 15px 30px; text-decoration: none; border-radius: 4px; font-weight: 500; margin-top: 20px;">View Gallery</a>
-            <p style="margin-top: 40px; font-size: 12px; color: #666;">Ajanta Photography. All rights reserved.</p>
+            ${emailFooter}
           </div>
         `,
       };
 
     case "booking_confirmation":
       return {
-        subject: "Booking Request Received - Ajanta Photography",
+        subject: `Booking Request Received - ${studioConfig.name}`,
         html: `
           <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; background: #1a1814; color: #f5f0e8; padding: 40px;">
             <div style="text-align: center; margin-bottom: 30px;">
@@ -99,7 +125,12 @@ const getEmailContent = (type: string, data: Record<string, unknown>) => {
               <p style="margin: 5px 0; color: #a09080;"><strong style="color: #f5f0e8;">Date:</strong> ${data.eventDate}</p>
               ${data.message ? `<p style="margin: 5px 0; color: #a09080;"><strong style="color: #f5f0e8;">Message:</strong> ${data.message}</p>` : ""}
             </div>
-            <p style="margin-top: 40px; font-size: 12px; color: #666;">Ajanta Photography. All rights reserved.</p>
+            <p style="line-height: 1.8; color: #a09080;">Have questions? Contact us directly:</p>
+            <p style="line-height: 1.8; color: #a09080;">
+              📞 <a href="tel:+919443568486" style="color: #d4a853; text-decoration: none;">${studioConfig.phones[0]}</a><br />
+              💬 <a href="https://wa.me/919443568486" style="color: #25D366; text-decoration: none;">WhatsApp Us</a>
+            </p>
+            ${emailFooter}
           </div>
         `,
       };
@@ -119,7 +150,7 @@ const getEmailContent = (type: string, data: Record<string, unknown>) => {
               <p><strong>Message:</strong></p>
               <p style="background: #f9f9f9; padding: 10px; border-radius: 4px;">${data.message || "No message"}</p>
             </div>
-            <p style="color: #666; font-size: 12px;">This is an automated notification from Ajanta Photography booking system.</p>
+            <p style="color: #666; font-size: 12px;">This is an automated notification from ${studioConfig.name} booking system.</p>
           </div>
         `,
       };
