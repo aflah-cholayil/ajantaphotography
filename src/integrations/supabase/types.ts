@@ -225,6 +225,7 @@ export type Database = {
           created_at: string
           email: string
           id: string
+          is_active: boolean | null
           last_login: string | null
           must_change_password: boolean | null
           name: string
@@ -236,6 +237,7 @@ export type Database = {
           created_at?: string
           email: string
           id?: string
+          is_active?: boolean | null
           last_login?: string | null
           must_change_password?: boolean | null
           name: string
@@ -247,6 +249,7 @@ export type Database = {
           created_at?: string
           email?: string
           id?: string
+          is_active?: boolean | null
           last_login?: string | null
           must_change_password?: boolean | null
           name?: string
@@ -339,7 +342,7 @@ export type Database = {
     }
     Enums: {
       album_status: "pending" | "ready"
-      app_role: "admin" | "client"
+      app_role: "admin" | "client" | "owner" | "editor" | "viewer"
       booking_status: "new" | "contacted" | "confirmed" | "cancelled"
       email_status: "sent" | "failed" | "pending"
       media_type: "photo" | "video"
@@ -471,7 +474,7 @@ export const Constants = {
   public: {
     Enums: {
       album_status: ["pending", "ready"],
-      app_role: ["admin", "client"],
+      app_role: ["admin", "client", "owner", "editor", "viewer"],
       booking_status: ["new", "contacted", "confirmed", "cancelled"],
       email_status: ["sent", "failed", "pending"],
       media_type: ["photo", "video"],
