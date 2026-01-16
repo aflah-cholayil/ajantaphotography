@@ -30,13 +30,13 @@ const AdminDashboard = () => {
 
   const fetchDashboardData = async () => {
     try {
-      // Fetch counts
+      // Fetch counts and data
       const [
         { count: clientsCount },
         { count: albumsCount },
         { count: bookingsCount },
         { data: shareLinksData },
-        { data: clients },
+        { data: clientsData },
         { data: bookings },
       ] = await Promise.all([
         supabase.from('clients').select('*', { count: 'exact', head: true }),
@@ -48,10 +48,33 @@ const AdminDashboard = () => {
           event_name,
           event_date,
           created_at,
-          profiles!inner(name, email)
+          user_id
         `).order('created_at', { ascending: false }).limit(5),
         supabase.from('bookings').select('*').order('created_at', { ascending: false }).limit(5),
       ]);
+
+      // Fetch profiles for clients
+      const userIds = (clientsData || []).map(c => c.user_id).filter(Boolean);
+      let profilesMap: Record<string, { name: string; email: string }> = {};
+      
+      if (userIds.length > 0) {
+        const { data: profilesData } = await supabase
+          .from('profiles')
+          .select('user_id, name, email')
+          .in('user_id', userIds);
+        
+        if (profilesData) {
+          profilesMap = profilesData.reduce((acc, p) => {
+            acc[p.user_id] = { name: p.name, email: p.email };
+            return acc;
+          }, {} as Record<string, { name: string; email: string }>);
+        }
+      }
+
+      const clientsWithProfiles = (clientsData || []).map(client => ({
+        ...client,
+        profiles: profilesMap[client.user_id] || { name: 'Unknown', email: '' },
+      }));
 
       // Calculate totals
       const totalViews = shareLinksData?.reduce((sum, link) => sum + (link.view_count || 0), 0) || 0;
@@ -65,7 +88,7 @@ const AdminDashboard = () => {
         totalDownloads,
       });
 
-      setRecentClients(clients || []);
+      setRecentClients(clientsWithProfiles);
       setRecentBookings(bookings || []);
     } catch (error) {
       console.error('Error fetching dashboard data:', error);

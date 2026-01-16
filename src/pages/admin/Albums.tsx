@@ -102,10 +102,10 @@ const AdminAlbums = () => {
           created_at,
           ready_at,
           client_id,
-          clients!inner(
+          clients (
             id,
             event_name,
-            profiles!inner(name)
+            user_id
           ),
           media(id)
         `)
@@ -118,7 +118,34 @@ const AdminAlbums = () => {
       const { data, error } = await query;
 
       if (error) throw error;
-      setAlbums((data as unknown as Album[]) || []);
+
+      // Fetch profiles for clients
+      const userIds = (data || [])
+        .map(a => a.clients?.user_id)
+        .filter((id): id is string => !!id);
+      
+      let profilesMap: Record<string, string> = {};
+      if (userIds.length > 0) {
+        const { data: profilesData } = await supabase
+          .from('profiles')
+          .select('user_id, name')
+          .in('user_id', userIds);
+        
+        profilesData?.forEach(p => {
+          profilesMap[p.user_id] = p.name;
+        });
+      }
+
+      // Add profiles to albums
+      const albumsWithProfiles = (data || []).map(album => ({
+        ...album,
+        clients: {
+          ...album.clients,
+          profiles: { name: profilesMap[album.clients?.user_id || ''] || 'Unknown' },
+        },
+      }));
+
+      setAlbums(albumsWithProfiles as unknown as Album[]);
     } catch (error) {
       console.error('Error fetching albums:', error);
     } finally {
@@ -127,12 +154,32 @@ const AdminAlbums = () => {
   };
 
   const fetchClients = async () => {
-    const { data } = await supabase
+    const { data: clientsData } = await supabase
       .from('clients')
-      .select('id, event_name, profiles!inner(name)')
+      .select('id, event_name, user_id')
       .order('created_at', { ascending: false });
     
-    setClients((data as unknown as ClientOption[]) || []);
+    if (clientsData && clientsData.length > 0) {
+      const userIds = clientsData.map(c => c.user_id).filter(Boolean);
+      const { data: profilesData } = await supabase
+        .from('profiles')
+        .select('user_id, name')
+        .in('user_id', userIds);
+      
+      const profilesMap: Record<string, string> = {};
+      profilesData?.forEach(p => {
+        profilesMap[p.user_id] = p.name;
+      });
+
+      const clientsWithProfiles = clientsData.map(c => ({
+        ...c,
+        profiles: { name: profilesMap[c.user_id] || 'Unknown' },
+      }));
+      
+      setClients(clientsWithProfiles as unknown as ClientOption[]);
+    } else {
+      setClients([]);
+    }
   };
 
   useEffect(() => {
