@@ -1,9 +1,11 @@
 import { Link } from 'react-router-dom';
-import { Instagram, Facebook, Mail, Phone, MapPin } from 'lucide-react';
+import { Instagram, Facebook, Mail, Phone, MapPin, MessageCircle } from 'lucide-react';
+import { studioConfig, formatPhoneLink, formatWhatsAppLink } from '@/config/studio';
 
 const socialLinks = [
-  { icon: Instagram, href: '#', label: 'Instagram' },
-  { icon: Facebook, href: '#', label: 'Facebook' },
+  { icon: Instagram, href: studioConfig.social.instagramUrl, label: 'Instagram' },
+  { icon: Facebook, href: studioConfig.social.facebookUrl, label: 'Facebook' },
+  { icon: MessageCircle, href: formatWhatsAppLink('Hello! I would like to inquire about your photography services.'), label: 'WhatsApp' },
 ];
 
 const quickLinks = [
@@ -29,13 +31,15 @@ export const Footer = () => {
               </span>
             </Link>
             <p className="text-muted-foreground font-sans text-sm leading-relaxed mb-6">
-              Capturing timeless moments with artistry and elegance. Premium wedding and event photography.
+              {studioConfig.tagline}. {studioConfig.description}.
             </p>
             <div className="flex gap-4">
               {socialLinks.map((social) => (
                 <a
                   key={social.label}
                   href={social.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
                   aria-label={social.label}
                   className="w-10 h-10 rounded-full border border-border flex items-center justify-center text-muted-foreground hover:text-primary hover:border-primary transition-all duration-300"
                 >
@@ -80,20 +84,37 @@ export const Footer = () => {
             <ul className="space-y-4">
               <li className="flex items-start gap-3">
                 <MapPin size={18} className="text-primary mt-1 flex-shrink-0" />
-                <span className="font-sans text-sm text-muted-foreground">
-                  123 Photography Lane, Creative District, City 10001
-                </span>
-              </li>
-              <li className="flex items-center gap-3">
-                <Phone size={18} className="text-primary flex-shrink-0" />
-                <a href="tel:+1234567890" className="font-sans text-sm text-muted-foreground hover:text-primary transition-colors">
-                  +1 (234) 567-890
+                <a 
+                  href={studioConfig.address.googleMapsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-sans text-sm text-muted-foreground hover:text-primary transition-colors"
+                >
+                  {studioConfig.address.line1}<br />
+                  {studioConfig.address.line2} – {studioConfig.address.pincode}
                 </a>
+              </li>
+              <li className="flex items-start gap-3">
+                <Phone size={18} className="text-primary flex-shrink-0 mt-0.5" />
+                <div className="font-sans text-sm text-muted-foreground">
+                  {studioConfig.contact.phones.map((phone, index) => (
+                    <a 
+                      key={index}
+                      href={formatPhoneLink(phone)} 
+                      className="block hover:text-primary transition-colors"
+                    >
+                      {phone}
+                    </a>
+                  ))}
+                </div>
               </li>
               <li className="flex items-center gap-3">
                 <Mail size={18} className="text-primary flex-shrink-0" />
-                <a href="mailto:hello@ajanta.com" className="font-sans text-sm text-muted-foreground hover:text-primary transition-colors">
-                  hello@ajanta.com
+                <a 
+                  href={`mailto:${studioConfig.contact.email}`} 
+                  className="font-sans text-sm text-muted-foreground hover:text-primary transition-colors"
+                >
+                  {studioConfig.contact.email}
                 </a>
               </li>
             </ul>
@@ -103,7 +124,7 @@ export const Footer = () => {
         {/* Bottom Bar */}
         <div className="mt-12 pt-8 border-t border-border flex flex-col md:flex-row items-center justify-between gap-4">
           <p className="font-sans text-sm text-muted-foreground">
-            © {new Date().getFullYear()} Ajanta Photography. All rights reserved.
+            © {new Date().getFullYear()} {studioConfig.name}. All rights reserved.
           </p>
           <div className="flex gap-6 font-sans text-sm text-muted-foreground">
             <Link to="/privacy" className="hover:text-primary transition-colors">

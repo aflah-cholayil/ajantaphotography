@@ -5,9 +5,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Mail, Phone, MapPin, Send } from 'lucide-react';
+import { Mail, Phone, MapPin, Send, MessageCircle, Instagram, Clock } from 'lucide-react';
 import { useState } from 'react';
 import { useToast } from '@/hooks/use-toast';
+import { studioConfig, formatPhoneLink, formatWhatsAppLink } from '@/config/studio';
 
 const Contact = () => {
   const { toast } = useToast();
@@ -61,6 +62,55 @@ const Contact = () => {
               </div>
 
               <div className="space-y-6">
+                {/* Phone Numbers */}
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                    <Phone className="w-5 h-5 text-primary" />
+                  </div>
+                  <div>
+                    <h4 className="font-sans font-medium text-foreground mb-1">Phone</h4>
+                    <div className="space-y-1">
+                      {studioConfig.contact.phones.map((phone, index) => (
+                        <a 
+                          key={index}
+                          href={formatPhoneLink(phone)} 
+                          className="block font-sans text-muted-foreground hover:text-primary transition-colors"
+                        >
+                          {phone}
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* WhatsApp */}
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 rounded-full bg-green-500/10 flex items-center justify-center flex-shrink-0">
+                    <MessageCircle className="w-5 h-5 text-green-500" />
+                  </div>
+                  <div>
+                    <h4 className="font-sans font-medium text-foreground mb-1">WhatsApp</h4>
+                    <a 
+                      href={formatWhatsAppLink('Hello! I would like to inquire about your photography services.')}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-sans text-muted-foreground hover:text-green-500 transition-colors"
+                    >
+                      {studioConfig.contact.whatsapp}
+                    </a>
+                    <a 
+                      href={formatWhatsAppLink('Hello! I would like to inquire about your photography services.')}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-2 inline-flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded-full text-sm font-medium hover:bg-green-600 transition-colors"
+                    >
+                      <MessageCircle className="w-4 h-4" />
+                      Chat on WhatsApp
+                    </a>
+                  </div>
+                </div>
+
+                {/* Email */}
                 <div className="flex items-start gap-4">
                   <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
                     <Mail className="w-5 h-5 text-primary" />
@@ -68,50 +118,80 @@ const Contact = () => {
                   <div>
                     <h4 className="font-sans font-medium text-foreground mb-1">Email</h4>
                     <a 
-                      href="mailto:hello@ajanta.com" 
+                      href={`mailto:${studioConfig.contact.email}`} 
                       className="font-sans text-muted-foreground hover:text-primary transition-colors"
                     >
-                      hello@ajanta.com
+                      {studioConfig.contact.email}
                     </a>
                   </div>
                 </div>
 
+                {/* Instagram */}
                 <div className="flex items-start gap-4">
-                  <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                    <Phone className="w-5 h-5 text-primary" />
+                  <div className="w-12 h-12 rounded-full bg-pink-500/10 flex items-center justify-center flex-shrink-0">
+                    <Instagram className="w-5 h-5 text-pink-500" />
                   </div>
                   <div>
-                    <h4 className="font-sans font-medium text-foreground mb-1">Phone</h4>
+                    <h4 className="font-sans font-medium text-foreground mb-1">Instagram</h4>
                     <a 
-                      href="tel:+1234567890" 
-                      className="font-sans text-muted-foreground hover:text-primary transition-colors"
+                      href={studioConfig.social.instagramUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-sans text-muted-foreground hover:text-pink-500 transition-colors"
                     >
-                      +1 (234) 567-890
+                      {studioConfig.social.instagram}
                     </a>
                   </div>
                 </div>
 
+                {/* Address */}
                 <div className="flex items-start gap-4">
                   <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
                     <MapPin className="w-5 h-5 text-primary" />
                   </div>
                   <div>
                     <h4 className="font-sans font-medium text-foreground mb-1">Studio</h4>
-                    <p className="font-sans text-muted-foreground">
-                      123 Photography Lane<br />
-                      Creative District, City 10001
-                    </p>
+                    <a 
+                      href={studioConfig.address.googleMapsUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-sans text-muted-foreground hover:text-primary transition-colors"
+                    >
+                      {studioConfig.address.line1}<br />
+                      {studioConfig.address.line2} – {studioConfig.address.pincode}
+                    </a>
                   </div>
                 </div>
               </div>
 
               <div className="pt-8 border-t border-border">
-                <h4 className="font-sans font-medium text-foreground mb-4">Studio Hours</h4>
-                <div className="font-sans text-sm text-muted-foreground space-y-2">
-                  <p>Monday - Friday: 9:00 AM - 6:00 PM</p>
-                  <p>Saturday: 10:00 AM - 4:00 PM</p>
-                  <p>Sunday: By appointment only</p>
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                    <Clock className="w-5 h-5 text-primary" />
+                  </div>
+                  <div>
+                    <h4 className="font-sans font-medium text-foreground mb-2">Studio Hours</h4>
+                    <div className="font-sans text-sm text-muted-foreground space-y-1">
+                      <p>Monday - Friday: {studioConfig.hours.weekdays}</p>
+                      <p>Saturday: {studioConfig.hours.saturday}</p>
+                      <p>Sunday: {studioConfig.hours.sunday}</p>
+                    </div>
+                  </div>
                 </div>
+              </div>
+
+              {/* Google Maps Embed */}
+              <div className="rounded-lg overflow-hidden border border-border">
+                <iframe
+                  src={`https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3915.0!2d${studioConfig.address.coordinates.lng}!3d${studioConfig.address.coordinates.lat}!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x0%3A0x0!2zMTHCsDI5JzAwLjAiTiA3NsKwMzknMDAuMCJF!5e0!3m2!1sen!2sin!4v1234567890`}
+                  width="100%"
+                  height="200"
+                  style={{ border: 0 }}
+                  allowFullScreen
+                  loading="lazy"
+                  referrerPolicy="no-referrer-when-downgrade"
+                  title="Ajanta Photography Location"
+                />
               </div>
             </motion.div>
 
