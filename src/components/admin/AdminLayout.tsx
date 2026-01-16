@@ -7,7 +7,8 @@ import {
   Calendar, 
   LayoutDashboard, 
   LogOut,
-  Settings
+  Settings,
+  UserCog
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
@@ -21,12 +22,13 @@ const navItems = [
   { path: '/admin/clients', label: 'Clients', icon: Users },
   { path: '/admin/albums', label: 'Albums', icon: Image },
   { path: '/admin/bookings', label: 'Bookings', icon: Calendar },
+  { path: '/admin/users', label: 'Admin Users', icon: UserCog, ownerOnly: true },
 ];
 
 export const AdminLayout = ({ children }: AdminLayoutProps) => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, signOut } = useAuth();
+  const { user, signOut, isOwner, role } = useAuth();
 
   const handleSignOut = async () => {
     await signOut();
@@ -51,25 +53,27 @@ export const AdminLayout = ({ children }: AdminLayoutProps) => {
 
         {/* Navigation */}
         <nav className="flex-1 p-4 space-y-1">
-          {navItems.map((item) => {
-            const isActive = location.pathname === item.path || 
-              (item.path !== '/admin' && location.pathname.startsWith(item.path));
-            
-            return (
-              <Link
-                key={item.path}
-                to={item.path}
-                className={`flex items-center gap-3 px-4 py-3 rounded-lg font-sans text-sm transition-all duration-200 ${
-                  isActive
-                    ? 'bg-primary/10 text-primary border border-primary/20'
-                    : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
-                }`}
-              >
-                <item.icon size={18} />
-                {item.label}
-              </Link>
-            );
-          })}
+          {navItems
+            .filter(item => !item.ownerOnly || isOwner)
+            .map((item) => {
+              const isActive = location.pathname === item.path || 
+                (item.path !== '/admin' && location.pathname.startsWith(item.path));
+              
+              return (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  className={`flex items-center gap-3 px-4 py-3 rounded-lg font-sans text-sm transition-all duration-200 ${
+                    isActive
+                      ? 'bg-primary/10 text-primary border border-primary/20'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+                  }`}
+                >
+                  <item.icon size={18} />
+                  {item.label}
+                </Link>
+              );
+            })}
         </nav>
 
         {/* User section */}

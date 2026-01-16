@@ -325,7 +325,21 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      admin_users_view: {
+        Row: {
+          avatar_url: string | null
+          created_at: string | null
+          email: string | null
+          id: string | null
+          is_active: boolean | null
+          last_login: string | null
+          name: string | null
+          role: Database["public"]["Enums"]["app_role"] | null
+          updated_at: string | null
+          user_id: string | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       get_user_role: {
@@ -339,6 +353,8 @@ export type Database = {
         }
         Returns: boolean
       }
+      is_admin_user: { Args: { _user_id: string }; Returns: boolean }
+      is_owner: { Args: { _user_id: string }; Returns: boolean }
     }
     Enums: {
       album_status: "pending" | "ready"
