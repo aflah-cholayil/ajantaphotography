@@ -47,17 +47,18 @@ const handler = async (req: Request): Promise<Response> => {
       { global: { headers: { Authorization: authHeader } } }
     );
 
-    const token = authHeader.replace("Bearer ", "");
-    const { data: claims, error: authError } = await supabase.auth.getClaims(token);
+    // Get user from token
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
     
-    if (authError || !claims?.claims) {
+    if (authError || !user) {
+      console.error("Auth error:", authError);
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401,
         headers: { "Content-Type": "application/json", ...corsHeaders },
       });
     }
 
-    const userId = claims.claims.sub as string;
+    const userId = user.id;
 
     // Check if user is admin using service role
     const serviceSupabase = createClient(
@@ -71,7 +72,8 @@ const handler = async (req: Request): Promise<Response> => {
       .eq("user_id", userId)
       .single();
 
-    if (roleData?.role !== "admin") {
+    const allowedRoles = ["admin", "owner", "editor"];
+    if (!roleData?.role || !allowedRoles.includes(roleData.role)) {
       return new Response(JSON.stringify({ error: "Admin access required" }), {
         status: 403,
         headers: { "Content-Type": "application/json", ...corsHeaders },

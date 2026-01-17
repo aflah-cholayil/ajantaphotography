@@ -37,14 +37,16 @@ interface Album {
   status: AlbumStatus;
   created_at: string;
   ready_at: string | null;
+  client_id: string;
   clients: {
     id: string;
     event_name: string;
     event_date: string | null;
-    profiles: {
-      name: string;
-      email: string;
-    };
+    user_id: string;
+  };
+  clientProfile?: {
+    name: string;
+    email: string;
   };
 }
 
@@ -76,7 +78,8 @@ const AdminAlbumDetail = () => {
     if (!id) return;
 
     try {
-      const { data, error } = await supabase
+      // First fetch album with client info
+      const { data: albumData, error: albumError } = await supabase
         .from('albums')
         .select(`
           id,
@@ -85,18 +88,37 @@ const AdminAlbumDetail = () => {
           status,
           created_at,
           ready_at,
+          client_id,
           clients!inner(
             id,
             event_name,
             event_date,
-            profiles!inner(name, email)
+            user_id
           )
         `)
         .eq('id', id)
         .single();
 
-      if (error) throw error;
-      setAlbum(data as unknown as Album);
+      if (albumError) throw albumError;
+
+      // Then fetch the profile separately using the client's user_id
+      let clientProfile = { name: 'Unknown', email: '' };
+      if (albumData?.clients?.user_id) {
+        const { data: profileData } = await supabase
+          .from('profiles')
+          .select('name, email')
+          .eq('user_id', albumData.clients.user_id)
+          .single();
+        
+        if (profileData) {
+          clientProfile = profileData;
+        }
+      }
+
+      setAlbum({
+        ...albumData,
+        clientProfile,
+      } as unknown as Album);
     } catch (error) {
       console.error('Error fetching album:', error);
       toast({
@@ -243,7 +265,7 @@ const AdminAlbumDetail = () => {
               {album && (
                 <div className="mt-2 space-y-1">
                   <p className="text-muted-foreground">
-                    {album.clients.profiles.name} • {album.clients.event_name}
+                    {album.clientProfile?.name || 'Unknown'} • {album.clients.event_name}
                   </p>
                   {album.clients.event_date && (
                     <p className="text-sm text-muted-foreground">
