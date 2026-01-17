@@ -51,11 +51,10 @@ const handler = async (req: Request): Promise<Response> => {
         { global: { headers: { Authorization: authHeader } } }
       );
 
-      const token = authHeader.replace("Bearer ", "");
-      const { data: claims } = await userSupabase.auth.getClaims(token);
+      const { data: { user } } = await userSupabase.auth.getUser();
       
-      if (claims?.claims) {
-        const userId = claims.claims.sub as string;
+      if (user) {
+        const userId = user.id;
 
         // Check if admin
         const { data: roleData } = await supabase
@@ -64,7 +63,8 @@ const handler = async (req: Request): Promise<Response> => {
           .eq("user_id", userId)
           .single();
 
-        if (roleData?.role === "admin") {
+        const adminRoles = ["admin", "owner", "editor"];
+        if (roleData?.role && adminRoles.includes(roleData.role)) {
           hasAccess = true;
         } else if (albumId) {
           // Check if client owns this album
@@ -143,7 +143,7 @@ const handler = async (req: Request): Promise<Response> => {
     const presignedUrl = await getSignedUrl(s3Client, command, { expiresIn });
 
     return new Response(
-      JSON.stringify({ presignedUrl, expiresIn }),
+      JSON.stringify({ url: presignedUrl, expiresIn }),
       {
         status: 200,
         headers: { "Content-Type": "application/json", ...corsHeaders },
