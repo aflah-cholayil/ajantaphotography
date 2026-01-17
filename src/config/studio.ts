@@ -21,8 +21,8 @@ export const studioConfig = {
   
   // Social Media
   social: {
-    instagram: "@ajanta.photography",
-    instagramUrl: "https://instagram.com/ajanta.photography",
+    instagram: "@ajanta_photography",
+    instagramUrl: "https://instagram.com/ajanta_photography",
     facebook: "Ajanta Photography",
     facebookUrl: "#",
   },
