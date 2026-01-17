@@ -8,7 +8,10 @@ const corsHeaders = {
 };
 
 const resend = new Resend(Deno.env.get("RESEND_API_KEY"));
-const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "Ajanta Photography <onboarding@resend.dev>";
+// Use verified sender (onboarding@resend.dev) until custom domain is verified
+const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") && Deno.env.get("RESEND_FROM_EMAIL") !== "noreply@ajantaphotography.in"
+  ? Deno.env.get("RESEND_FROM_EMAIL")!
+  : "Ajanta Photography <onboarding@resend.dev>";
 const adminEmail = Deno.env.get("BOOKING_ADMIN_EMAIL") || "";
 
 // Default studio configuration (fallback if DB fetch fails)
