@@ -21,6 +21,7 @@ import AdminWorks from "./pages/admin/Works";
 import AdminSettings from "./pages/admin/Settings";
 import ClientDashboard from "./pages/client/Dashboard";
 import ClientAlbumView from "./pages/client/AlbumView";
+import ClientSettings from "./pages/client/Settings";
 import SharedGallery from "./pages/share/SharedGallery";
 
 const queryClient = new QueryClient();
@@ -42,6 +43,7 @@ const App = () => (
           {/* Client Portal Routes */}
           <Route path="/client" element={<ClientDashboard />} />
           <Route path="/client/album/:id" element={<ClientAlbumView />} />
+          <Route path="/client/settings" element={<ClientSettings />} />
           {/* Share Routes */}
           <Route path="/share/:token" element={<SharedGallery />} />
           {/* Admin Routes */}

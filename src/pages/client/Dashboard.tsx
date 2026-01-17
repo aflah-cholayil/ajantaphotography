@@ -2,12 +2,11 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { format } from 'date-fns';
-import { Image, Calendar, LogOut, User, FolderOpen } from 'lucide-react';
+import { Image, Calendar, LogOut, User, FolderOpen, Settings } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { AlbumStatusBadge } from '@/components/admin/AlbumStatusBadge';
 
 interface ClientData {
@@ -158,6 +157,14 @@ const ClientDashboard = () => {
                 <User size={16} />
                 <span>{profileName || user.email}</span>
               </div>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={() => navigate('/client/settings')}
+              >
+                <Settings size={16} className="mr-2" />
+                Settings
+              </Button>
               <Button variant="ghost" size="sm" onClick={handleSignOut}>
                 <LogOut size={16} className="mr-2" />
                 Sign Out
