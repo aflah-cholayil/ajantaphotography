@@ -1,22 +1,21 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { S3Client, PutObjectCommand } from "https://esm.sh/@aws-sdk/client-s3@3.540.0";
-import { getSignedUrl } from "https://esm.sh/@aws-sdk/s3-request-presigner@3.540.0";
+import { AwsClient } from "https://esm.sh/aws4fetch@1.0.20?target=deno";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const s3Client = new S3Client({
-  region: Deno.env.get("AWS_REGION") || "us-east-1",
-  credentials: {
-    accessKeyId: Deno.env.get("AWS_ACCESS_KEY_ID")!,
-    secretAccessKey: Deno.env.get("AWS_SECRET_ACCESS_KEY")!,
-  },
-});
-
+const awsRegion = Deno.env.get("AWS_REGION") || "us-east-1";
 const bucketName = Deno.env.get("AWS_BUCKET_NAME")!;
+
+const aws = new AwsClient({
+  accessKeyId: Deno.env.get("AWS_ACCESS_KEY_ID")!,
+  secretAccessKey: Deno.env.get("AWS_SECRET_ACCESS_KEY")!,
+  region: awsRegion,
+  service: "s3",
+});
 
 interface UploadRequest {
   albumId: string;
@@ -90,22 +89,27 @@ const handler = async (req: Request): Promise<Response> => {
 
     console.log(`Generating presigned URL for: ${s3Key}`);
 
-    // Generate presigned URL for upload
-    const command = new PutObjectCommand({
-      Bucket: bucketName,
-      Key: s3Key,
-      ContentType: fileType,
-      ContentLength: fileSize,
+    const objectUrl = `https://${bucketName}.s3.${awsRegion}.amazonaws.com/${s3Key}`;
+
+    // Generate presigned URL for upload (PUT)
+    const signedReq = await aws.sign(objectUrl, {
+      method: "PUT",
+      headers: {
+        "Content-Type": fileType,
+      },
+      aws: {
+        signQuery: true,
+      },
     });
 
-    const presignedUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+    const presignedUrl = signedReq.url;
 
     return new Response(
       JSON.stringify({
         presignedUrl,
         s3Key,
         bucket: bucketName,
-        region: Deno.env.get("AWS_REGION"),
+        region: awsRegion,
       }),
       {
         status: 200,
