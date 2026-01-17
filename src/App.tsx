@@ -19,6 +19,8 @@ import AdminBookings from "./pages/admin/Bookings";
 import AdminUsers from "./pages/admin/AdminUsers";
 import AdminWorks from "./pages/admin/Works";
 import AdminSettings from "./pages/admin/Settings";
+import ClientDashboard from "./pages/client/Dashboard";
+import ClientAlbumView from "./pages/client/AlbumView";
 
 const queryClient = new QueryClient();
 
@@ -36,6 +38,9 @@ const App = () => (
           <Route path="/booking" element={<Booking />} />
           <Route path="/contact" element={<Contact />} />
           <Route path="/login" element={<Login />} />
+          {/* Client Portal Routes */}
+          <Route path="/client" element={<ClientDashboard />} />
+          <Route path="/client/album/:id" element={<ClientAlbumView />} />
           {/* Admin Routes */}
           <Route path="/admin" element={<AdminDashboard />} />
           <Route path="/admin/clients" element={<AdminClients />} />

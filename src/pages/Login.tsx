@@ -23,7 +23,8 @@ const Login = () => {
       if (isAdmin) {
         navigate('/admin');
       } else {
-        navigate('/');
+        // Client users go to client portal
+        navigate('/client');
       }
     }
   }, [user, isAdmin, authLoading, navigate]);
