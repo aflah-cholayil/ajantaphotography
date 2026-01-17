@@ -1,10 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate, useParams, Link } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { ArrowLeft, Image, Download, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Image, Download, X, ChevronLeft, ChevronRight, FolderDown, Loader2 } from 'lucide-react';
+import JSZip from 'jszip';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
+import { Progress } from '@/components/ui/progress';
+import { toast } from 'sonner';
 
 interface Media {
   id: string;
@@ -32,6 +35,8 @@ const ClientAlbumView = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [selectedMedia, setSelectedMedia] = useState<Media | null>(null);
   const [mediaUrls, setMediaUrls] = useState<Record<string, string>>({});
+  const [isDownloadingAll, setIsDownloadingAll] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
 
   const fetchAlbumData = useCallback(async () => {
     if (!id || !user) return;
@@ -130,6 +135,80 @@ const ClientAlbumView = () => {
       }
     } catch (err) {
       console.error('Error downloading:', err);
+      toast.error('Failed to download file');
+    }
+  };
+
+  const handleDownloadAll = async () => {
+    if (media.length === 0 || !album) return;
+
+    setIsDownloadingAll(true);
+    setDownloadProgress(0);
+
+    try {
+      const zip = new JSZip();
+      const folder = zip.folder(album.title.replace(/[^a-zA-Z0-9]/g, '_'));
+      
+      if (!folder) {
+        throw new Error('Failed to create ZIP folder');
+      }
+
+      let completed = 0;
+      const total = media.length;
+
+      // Download each file and add to ZIP
+      for (const item of media) {
+        try {
+          // Get signed URL for the original file
+          const urlResponse = await supabase.functions.invoke('s3-signed-url', {
+            body: { key: item.s3_key, operation: 'get' },
+          });
+
+          if (urlResponse.data?.url) {
+            // Fetch the file
+            const fileResponse = await fetch(urlResponse.data.url);
+            if (fileResponse.ok) {
+              const blob = await fileResponse.blob();
+              folder.file(item.file_name, blob);
+            }
+          }
+        } catch (err) {
+          console.error(`Error downloading ${item.file_name}:`, err);
+        }
+
+        completed++;
+        setDownloadProgress(Math.round((completed / total) * 100));
+      }
+
+      // Generate and download ZIP
+      const zipBlob = await zip.generateAsync({ 
+        type: 'blob',
+        compression: 'DEFLATE',
+        compressionOptions: { level: 6 }
+      }, (metadata) => {
+        // Update progress during ZIP generation
+        if (metadata.percent) {
+          setDownloadProgress(Math.round(metadata.percent));
+        }
+      });
+
+      // Create download link
+      const url = URL.createObjectURL(zipBlob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${album.title.replace(/[^a-zA-Z0-9]/g, '_')}_photos.zip`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      toast.success(`Downloaded ${media.length} photos as ZIP`);
+    } catch (err) {
+      console.error('Error creating ZIP:', err);
+      toast.error('Failed to create ZIP file');
+    } finally {
+      setIsDownloadingAll(false);
+      setDownloadProgress(0);
     }
   };
 
@@ -171,12 +250,48 @@ const ClientAlbumView = () => {
                 )}
               </div>
             </div>
-            <span className="text-sm text-muted-foreground">
-              {media.length} photo{media.length !== 1 ? 's' : ''}
-            </span>
+            <div className="flex items-center gap-4">
+              <span className="text-sm text-muted-foreground hidden sm:inline">
+                {media.length} photo{media.length !== 1 ? 's' : ''}
+              </span>
+              {media.length > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleDownloadAll}
+                  disabled={isDownloadingAll}
+                  className="gap-2"
+                >
+                  {isDownloadingAll ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      <span className="hidden sm:inline">Downloading...</span>
+                    </>
+                  ) : (
+                    <>
+                      <FolderDown size={16} />
+                      <span className="hidden sm:inline">Download All</span>
+                    </>
+                  )}
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       </header>
+
+      {/* Download Progress */}
+      {isDownloadingAll && (
+        <div className="container mx-auto px-6 py-4">
+          <div className="bg-card border border-border rounded-lg p-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium">Preparing download...</span>
+              <span className="text-sm text-muted-foreground">{downloadProgress}%</span>
+            </div>
+            <Progress value={downloadProgress} className="h-2" />
+          </div>
+        </div>
+      )}
 
       {/* Gallery Grid */}
       <main className="container mx-auto px-6 py-8">
