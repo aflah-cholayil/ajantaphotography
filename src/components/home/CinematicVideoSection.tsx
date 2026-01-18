@@ -3,6 +3,7 @@ import { motion, useInView } from 'framer-motion';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useStudioSettings } from '@/hooks/useStudioSettings';
+import { Loader2 } from 'lucide-react';
 
 export const CinematicVideoSection = () => {
   const sectionRef = useRef<HTMLDivElement>(null);
@@ -10,15 +11,18 @@ export const CinematicVideoSection = () => {
   const [isVideoLoaded, setIsVideoLoaded] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [signedVideoUrl, setSignedVideoUrl] = useState<string | null>(null);
+  const [isFetchingUrl, setIsFetchingUrl] = useState(false);
   
   const prefersReducedMotion = useReducedMotion();
   const isMobile = useIsMobile();
   const { settings, isLoading } = useStudioSettings();
 
-  // Get video URL from studio settings - check both key exists AND visibility is true
+  // Get video URL from studio settings
   const showcaseVideoKey = settings.showcase_video_key?.trim();
   const isVideoVisible = settings.showcase_video_visible === 'true';
   const hasValidVideo = Boolean(showcaseVideoKey) && showcaseVideoKey.length > 0;
+  
+  // IMPORTANT: Show section if we have a valid video key AND visibility is enabled
   const shouldRenderSection = hasValidVideo && isVideoVisible;
 
   // Fetch signed URL for the video
@@ -29,6 +33,7 @@ export const CinematicVideoSection = () => {
     }
 
     const fetchSignedUrl = async () => {
+      setIsFetchingUrl(true);
       try {
         const response = await fetch(
           `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/s3-signed-url?key=${encodeURIComponent(showcaseVideoKey)}`
@@ -50,6 +55,8 @@ export const CinematicVideoSection = () => {
         console.error('[CinematicVideoSection] Failed to fetch signed URL:', error);
         setHasError(true);
         setSignedVideoUrl(null);
+      } finally {
+        setIsFetchingUrl(false);
       }
     };
 
@@ -111,12 +118,18 @@ export const CinematicVideoSection = () => {
     },
   };
 
-  // Don't render section if loading, no video, not visible, or has error
+  // Don't render if still loading settings
   if (isLoading) {
     return null;
   }
 
-  if (!shouldRenderSection || hasError || !signedVideoUrl) {
+  // Don't render if no video configured or visibility is off
+  if (!shouldRenderSection) {
+    return null;
+  }
+
+  // Don't render if there was an error fetching/loading
+  if (hasError && !isFetchingUrl) {
     return null;
   }
 
@@ -136,28 +149,31 @@ export const CinematicVideoSection = () => {
         <div 
           className="relative w-full overflow-hidden"
           style={{ 
-            // Use numeric ratios to avoid browser parsing issues with strings like "21/9"
             aspectRatio: isMobile ? 16 / 9 : 21 / 9,
           }}
         >
-          {/* Loading placeholder */}
-          {!isVideoLoaded && (
-            <div className="absolute inset-0 bg-card animate-pulse" />
+          {/* Loading placeholder - show while fetching URL or loading video */}
+          {(!isVideoLoaded || isFetchingUrl || !signedVideoUrl) && (
+            <div className="absolute inset-0 bg-card flex items-center justify-center">
+              <Loader2 className="h-8 w-8 animate-spin text-primary/50" />
+            </div>
           )}
 
-          {/* Video Element - Lazy loaded, no controls, muted, looping */}
-          <video
-            ref={videoRef}
-            key={signedVideoUrl}
-            className="absolute inset-0 w-full h-full object-cover"
-            src={signedVideoUrl}
-            muted
-            loop
-            playsInline
-            preload="metadata"
-            onLoadedData={handleVideoLoad}
-            onError={handleVideoError}
-          />
+          {/* Video Element - Only render when we have a URL */}
+          {signedVideoUrl && (
+            <video
+              ref={videoRef}
+              key={signedVideoUrl}
+              className="absolute inset-0 w-full h-full object-cover"
+              src={signedVideoUrl}
+              muted
+              loop
+              playsInline
+              preload="metadata"
+              onLoadedData={handleVideoLoad}
+              onError={handleVideoError}
+            />
+          )}
 
           {/* Subtle dark gradient overlay for cinematic feel */}
           <div className="absolute inset-0 bg-gradient-to-t from-background/40 via-transparent to-background/20 pointer-events-none" />
