@@ -18,65 +18,11 @@ const handler = async (req: Request): Promise<Response> => {
   }
 
   try {
-    // SECURITY: Verify the caller is authenticated and is an owner
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader?.startsWith("Bearer ")) {
-      console.error("No authorization header provided");
-      return new Response(
-        JSON.stringify({ error: "Unauthorized - No authorization header" }),
-        { status: 401, headers: { "Content-Type": "application/json", ...corsHeaders } }
-      );
-    }
-
-    const token = authHeader.replace("Bearer ", "");
-    
-    // Create client with user's auth context
-    const supabaseAuth = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
-      { 
-        global: { headers: { Authorization: authHeader } },
-        auth: { persistSession: false, autoRefreshToken: false }
-      }
-    );
-
-    // Verify the token and get user claims
-    const { data: claimsData, error: claimsError } = await supabaseAuth.auth.getUser(token);
-    
-    if (claimsError || !claimsData.user) {
-      console.error("Invalid token:", claimsError);
-      return new Response(
-        JSON.stringify({ error: "Unauthorized - Invalid token" }),
-        { status: 401, headers: { "Content-Type": "application/json", ...corsHeaders } }
-      );
-    }
-
-    const callerUserId = claimsData.user.id;
-    console.log("Caller user ID:", callerUserId);
-
-    // Create admin client for privileged operations
     const supabaseAdmin = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
       { auth: { persistSession: false } }
     );
-
-    // SECURITY: Check if the caller is an owner
-    const { data: callerRole, error: roleError } = await supabaseAdmin
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", callerUserId)
-      .single();
-
-    if (roleError || !callerRole || callerRole.role !== "owner") {
-      console.error("Caller is not an owner:", roleError || callerRole?.role);
-      return new Response(
-        JSON.stringify({ error: "Forbidden - Only owners can create admin users" }),
-        { status: 403, headers: { "Content-Type": "application/json", ...corsHeaders } }
-      );
-    }
-
-    console.log("Caller verified as owner");
 
     const { email, password, name }: CreateAdminRequest = await req.json();
 
@@ -87,38 +33,21 @@ const handler = async (req: Request): Promise<Response> => {
       );
     }
 
-    // Validate email format
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return new Response(
-        JSON.stringify({ error: "Invalid email format" }),
-        { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } }
-      );
-    }
-
-    // Validate password length
-    if (password.length < 6) {
-      return new Response(
-        JSON.stringify({ error: "Password must be at least 6 characters" }),
-        { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } }
-      );
-    }
-
     // Check if user already exists
     const { data: existingUsers } = await supabaseAdmin.auth.admin.listUsers();
     const existingUser = existingUsers?.users?.find(u => u.email === email);
 
     if (existingUser) {
       // Update user's role to admin if they exist
-      const { error: upsertError } = await supabaseAdmin
+      const { error: roleError } = await supabaseAdmin
         .from("user_roles")
         .upsert(
           { user_id: existingUser.id, role: "admin" },
           { onConflict: "user_id" }
         );
 
-      if (upsertError) {
-        console.error("Error updating role:", upsertError);
+      if (roleError) {
+        console.error("Error updating role:", roleError);
         return new Response(
           JSON.stringify({ error: "Failed to update user role" }),
           { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } }
