@@ -1,6 +1,4 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
-import { motion, useInView } from 'framer-motion';
-import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useStudioSettings } from '@/hooks/useStudioSettings';
 import { SectionHeading } from '@/components/ui/SectionHeading';
@@ -14,7 +12,6 @@ export const CinematicVideoSection = () => {
   const [signedVideoUrl, setSignedVideoUrl] = useState<string | null>(null);
   const [isFetchingUrl, setIsFetchingUrl] = useState(false);
   
-  const prefersReducedMotion = useReducedMotion();
   const isMobile = useIsMobile();
   const { settings, isLoading } = useStudioSettings();
 
@@ -77,25 +74,30 @@ export const CinematicVideoSection = () => {
     }
   }, [isLoading, showcaseVideoKey, isVideoVisible, shouldRenderSection, signedVideoUrl]);
   
-  // Use intersection observer for scroll-triggered playback
-  const isInView = useInView(sectionRef, {
-    amount: 0.3,
-    once: false,
-  });
-
-  // Handle video playback based on viewport
+  // Handle video playback based on viewport using IntersectionObserver
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !isVideoLoaded || hasError) return;
+    const section = sectionRef.current;
+    if (!video || !section || !isVideoLoaded || hasError) return;
 
-    if (isInView && !prefersReducedMotion) {
-      video.play().catch((err) => {
-        console.warn('Video autoplay prevented:', err);
-      });
-    } else {
-      video.pause();
-    }
-  }, [isInView, isVideoLoaded, prefersReducedMotion, hasError]);
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            video.play().catch((err) => {
+              console.warn('Video autoplay prevented:', err);
+            });
+          } else {
+            video.pause();
+          }
+        });
+      },
+      { threshold: 0.3 }
+    );
+
+    observer.observe(section);
+    return () => observer.disconnect();
+  }, [isVideoLoaded, hasError]);
 
   const handleVideoLoad = useCallback(() => {
     console.log('[CinematicVideoSection] Video loaded successfully');
@@ -108,16 +110,6 @@ export const CinematicVideoSection = () => {
     setHasError(true);
     setIsVideoLoaded(false);
   }, []);
-
-  // Animation variants with smooth zoom effect
-  const containerVariants = {
-    hidden: { opacity: 0, scale: 0.98 },
-    visible: {
-      opacity: 1,
-      scale: 1,
-      transition: { duration: 0.8, ease: [0.25, 0.1, 0.25, 1] as const },
-    },
-  };
 
   // Don't render if still loading settings
   if (isLoading) {
@@ -148,12 +140,7 @@ export const CinematicVideoSection = () => {
         />
 
         {/* Video Container */}
-        <motion.div
-          variants={containerVariants}
-          initial="hidden"
-          animate={isInView ? 'visible' : 'hidden'}
-          className="relative mt-16"
-        >
+        <div className="relative mt-16">
           {/* Decorative border frame */}
           <div className="absolute -inset-3 md:-inset-4 border border-primary/20 rounded-lg pointer-events-none" />
           <div className="absolute -inset-1 md:-inset-2 border border-primary/10 rounded-lg pointer-events-none" />
@@ -207,7 +194,7 @@ export const CinematicVideoSection = () => {
               <div className="absolute bottom-4 right-4 w-8 h-8 border-r-2 border-b-2 border-primary/40 pointer-events-none" />
             </div>
           </div>
-        </motion.div>
+        </div>
       </div>
     </section>
   );
