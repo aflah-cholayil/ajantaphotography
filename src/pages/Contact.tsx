@@ -52,6 +52,24 @@ const Contact = () => {
 
       if (error) throw error;
 
+      // Send email notifications (don't block on this)
+      const emailData = {
+        name: formData.name,
+        email: formData.email,
+        subject: formData.subject,
+        message: formData.message,
+      };
+
+      // Send confirmation to customer
+      supabase.functions.invoke('send-email', {
+        body: { type: 'contact_confirmation', to: formData.email, data: emailData }
+      }).catch(err => console.error('Failed to send customer email:', err));
+
+      // Notify admin
+      supabase.functions.invoke('send-email', {
+        body: { type: 'contact_admin', to: '', data: emailData }
+      }).catch(err => console.error('Failed to send admin email:', err));
+
       toast({
         title: 'Message Sent!',
         description: 'We will get back to you soon.',
