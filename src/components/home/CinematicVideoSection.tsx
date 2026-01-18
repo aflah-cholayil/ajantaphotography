@@ -3,6 +3,10 @@ import { motion, useInView, AnimatePresence } from 'framer-motion';
 import { Play, Pause, Volume2, VolumeX } from 'lucide-react';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useStudioSettings } from '@/hooks/useStudioSettings';
+
+// Default demo video URL
+const DEFAULT_VIDEO_URL = 'https://videos.pexels.com/video-files/3587080/3587080-uhd_2560_1440_25fps.mp4';
 
 export const CinematicVideoSection = () => {
   const sectionRef = useRef<HTMLDivElement>(null);
@@ -14,6 +18,12 @@ export const CinematicVideoSection = () => {
   
   const prefersReducedMotion = useReducedMotion();
   const isMobile = useIsMobile();
+  const { settings } = useStudioSettings();
+
+  // Get video URL - use custom uploaded video or fallback to demo
+  const videoUrl = settings.showcase_video_key
+    ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/s3-signed-url?key=${encodeURIComponent(settings.showcase_video_key)}`
+    : DEFAULT_VIDEO_URL;
   
   // Use intersection observer for scroll-triggered playback
   const isInView = useInView(sectionRef, {
@@ -125,6 +135,7 @@ export const CinematicVideoSection = () => {
             {/* Video Element */}
             <video
               ref={videoRef}
+              key={videoUrl}
               className="absolute inset-0 w-full h-full object-cover"
               muted={isMuted}
               loop
@@ -133,9 +144,8 @@ export const CinematicVideoSection = () => {
               onLoadedData={handleVideoLoad}
               poster=""
             >
-              {/* Using a sample wedding video - replace with actual video URL */}
               <source
-                src="https://videos.pexels.com/video-files/3587080/3587080-uhd_2560_1440_25fps.mp4"
+                src={videoUrl}
                 type="video/mp4"
               />
               Your browser does not support the video tag.
