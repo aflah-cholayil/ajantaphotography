@@ -199,11 +199,40 @@
     background: linear-gradient(135deg, hsl(var(--gold)), hsl(var(--gold-dark)));
     color: hsl(var(--charcoal));
     border: none;
+    position: relative;
+  }
+
+  .btn-gold::after {
+    content: '';
+    position: absolute;
+    inset: -2px;
+    background: linear-gradient(135deg, hsl(var(--gold)), hsl(var(--gold-light)));
+    border-radius: inherit;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    z-index: -1;
+    filter: blur(12px);
   }
 
   .btn-gold:hover {
     box-shadow: var(--shadow-gold);
     transform: translateY(-2px);
+  }
+
+  .btn-gold:hover::after {
+    opacity: 0.6;
+  }
+
+  /* Button hover glow animation */
+  @keyframes buttonGlow {
+    0%, 100% { box-shadow: 0 0 20px hsl(var(--gold) / 0.2); }
+    50% { box-shadow: 0 0 35px hsl(var(--gold) / 0.35); }
+  }
+
+  .btn-gold:focus-visible {
+    animation: buttonGlow 2s ease-in-out infinite;
+    outline: 2px solid hsl(var(--gold));
+    outline-offset: 2px;
   }
 
   /* Section divider */
