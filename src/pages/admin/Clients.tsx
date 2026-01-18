@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { format } from 'date-fns';
-import { Search, MoreVertical, Mail, Eye, RefreshCw, History, X } from 'lucide-react';
+import { Search, MoreVertical, Mail, Eye, RefreshCw, History, X, Filter } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { AdminLayout } from '@/components/admin/AdminLayout';
 import { CreateClientDialog } from '@/components/admin/CreateClientDialog';
@@ -46,6 +46,8 @@ interface Client {
   emailStatus: EmailStatus;
 }
 
+type EmailStatusFilter = 'all' | 'sent' | 'failed' | 'none' | 'pending';
+
 const AdminClients = () => {
   const navigate = useNavigate();
   const [clients, setClients] = useState<Client[]>([]);
@@ -53,6 +55,7 @@ const AdminClients = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkEmailOpen, setBulkEmailOpen] = useState(false);
+  const [emailStatusFilter, setEmailStatusFilter] = useState<EmailStatusFilter>('all');
 
   const fetchClients = useCallback(async () => {
     setIsLoading(true);
@@ -157,12 +160,27 @@ const AdminClients = () => {
     const searchLower = searchQuery.toLowerCase();
     const name = client.profiles?.name || '';
     const email = client.profiles?.email || '';
-    return (
+    
+    // Search filter
+    const matchesSearch = 
       name.toLowerCase().includes(searchLower) ||
       email.toLowerCase().includes(searchLower) ||
-      client.event_name.toLowerCase().includes(searchLower)
-    );
+      client.event_name.toLowerCase().includes(searchLower);
+    
+    // Email status filter
+    const matchesEmailStatus = 
+      emailStatusFilter === 'all' || client.emailStatus === emailStatusFilter;
+    
+    return matchesSearch && matchesEmailStatus;
   });
+
+  const emailStatusCounts = {
+    all: clients.length,
+    sent: clients.filter(c => c.emailStatus === 'sent').length,
+    failed: clients.filter(c => c.emailStatus === 'failed').length,
+    pending: clients.filter(c => c.emailStatus === 'pending').length,
+    none: clients.filter(c => c.emailStatus === 'none').length,
+  };
 
   // Selection handlers
   const toggleSelect = (id: string) => {
@@ -218,15 +236,71 @@ const AdminClients = () => {
           </div>
         </div>
 
-        {/* Search */}
-        <div className="relative w-full sm:max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search clients..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-10"
-          />
+        {/* Search and Filters */}
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="relative w-full sm:max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search clients..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-10"
+            />
+          </div>
+          
+          {/* Email Status Filter */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1 text-muted-foreground text-sm">
+              <Filter className="h-4 w-4" />
+              <span className="hidden sm:inline">Email:</span>
+            </div>
+            <div className="flex gap-1 flex-wrap">
+              <Button
+                variant={emailStatusFilter === 'all' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setEmailStatusFilter('all')}
+                className="h-8"
+              >
+                All ({emailStatusCounts.all})
+              </Button>
+              <Button
+                variant={emailStatusFilter === 'sent' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setEmailStatusFilter('sent')}
+                className="h-8 border-green-500/30 hover:bg-green-500/10"
+              >
+                <span className="w-2 h-2 rounded-full bg-green-500 mr-1.5" />
+                Sent ({emailStatusCounts.sent})
+              </Button>
+              <Button
+                variant={emailStatusFilter === 'failed' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setEmailStatusFilter('failed')}
+                className="h-8 border-destructive/30 hover:bg-destructive/10"
+              >
+                <span className="w-2 h-2 rounded-full bg-destructive mr-1.5" />
+                Failed ({emailStatusCounts.failed})
+              </Button>
+              <Button
+                variant={emailStatusFilter === 'pending' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setEmailStatusFilter('pending')}
+                className="h-8 border-yellow-500/30 hover:bg-yellow-500/10"
+              >
+                <span className="w-2 h-2 rounded-full bg-yellow-500 mr-1.5" />
+                Pending ({emailStatusCounts.pending})
+              </Button>
+              <Button
+                variant={emailStatusFilter === 'none' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setEmailStatusFilter('none')}
+                className="h-8 border-muted-foreground/30 hover:bg-muted/50"
+              >
+                <span className="w-2 h-2 rounded-full bg-muted-foreground mr-1.5" />
+                None ({emailStatusCounts.none})
+              </Button>
+            </div>
+          </div>
         </div>
 
         {/* Bulk Action Bar */}
