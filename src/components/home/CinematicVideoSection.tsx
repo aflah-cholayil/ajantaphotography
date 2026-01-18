@@ -129,7 +129,7 @@ export const CinematicVideoSection = () => {
   return (
     <section
       ref={sectionRef}
-      className="py-24 md:py-32 bg-background overflow-hidden"
+      className="py-16 md:py-20 bg-background overflow-hidden"
     >
       <div className="container mx-auto px-6">
         {/* Section Heading */}
@@ -140,7 +140,7 @@ export const CinematicVideoSection = () => {
         />
 
         {/* Video Container */}
-        <div className="relative mt-16">
+        <div className="relative mt-12">
           {/* Decorative border frame */}
           <div className="absolute -inset-3 md:-inset-4 border border-primary/20 rounded-lg pointer-events-none" />
           <div className="absolute -inset-1 md:-inset-2 border border-primary/10 rounded-lg pointer-events-none" />
@@ -154,9 +154,9 @@ export const CinematicVideoSection = () => {
                 aspectRatio: isMobile ? 16 / 9 : 21 / 9,
               }}
             >
-              {/* Loading placeholder - show while fetching URL or loading video */}
-              {(!isVideoLoaded || isFetchingUrl || !signedVideoUrl) && (
-                <div className="absolute inset-0 bg-card/80 flex flex-col items-center justify-center gap-4">
+              {/* Loading placeholder - only show while fetching URL */}
+              {(isFetchingUrl || !signedVideoUrl) && (
+                <div className="absolute inset-0 bg-card/80 flex flex-col items-center justify-center gap-4 z-10">
                   <div className="relative">
                     <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
                       <Play className="w-8 h-8 text-primary/50" />
