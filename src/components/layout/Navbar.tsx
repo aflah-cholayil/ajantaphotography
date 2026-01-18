@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Menu, X } from 'lucide-react';
+import { Logo } from '@/components/shared/Logo';
 
 const navLinks = [
   { name: 'Home', path: '/' },
@@ -41,19 +42,9 @@ export const Navbar = () => {
       >
         <div className="container mx-auto px-6 flex items-center justify-between">
           {/* Logo */}
-          <Link to="/" className="group">
-            <motion.div
-              whileHover={{ scale: 1.02 }}
-              className="flex flex-col items-start"
-            >
-              <span className="font-serif text-2xl md:text-3xl font-light tracking-wider text-foreground">
-                Ajanta
-              </span>
-              <span className="text-[10px] uppercase tracking-[0.3em] text-primary font-sans font-medium">
-                Photography
-              </span>
-            </motion.div>
-          </Link>
+          <motion.div whileHover={{ scale: 1.02 }}>
+            <Logo variant="default" linkTo="/" />
+          </motion.div>
 
           {/* Desktop Navigation */}
           <nav className="hidden lg:flex items-center gap-8">

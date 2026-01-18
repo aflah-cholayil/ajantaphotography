@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Eye, EyeOff, ArrowRight } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
+import { Logo } from '@/components/shared/Logo';
 
 const Login = () => {
   const [email, setEmail] = useState('');
@@ -15,19 +16,18 @@ const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
-  const { user, isAdmin, signIn, isLoading: authLoading } = useAuth();
+  const { user, isAdmin, role, signIn, isLoading: authLoading } = useAuth();
 
-  // Redirect authenticated users
+  // Redirect authenticated users based on role
   useEffect(() => {
-    if (!authLoading && user) {
+    if (!authLoading && user && role) {
       if (isAdmin) {
-        navigate('/admin');
-      } else {
-        // Client users go to client portal
-        navigate('/client');
+        navigate('/admin', { replace: true });
+      } else if (role === 'client') {
+        navigate('/client', { replace: true });
       }
     }
-  }, [user, isAdmin, authLoading, navigate]);
+  }, [user, isAdmin, role, authLoading, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -67,6 +67,17 @@ const Login = () => {
     );
   }
 
+  // Don't render form if user is already authenticated
+  if (user && role) {
+    return (
+      <Layout hideFooter>
+        <div className="min-h-screen flex items-center justify-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        </div>
+      </Layout>
+    );
+  }
+
   return (
     <Layout hideFooter>
       <div className="min-h-screen flex items-center justify-center px-6 py-24">
@@ -76,15 +87,10 @@ const Login = () => {
           transition={{ duration: 0.6 }}
           className="w-full max-w-md"
         >
-          <div className="text-center mb-8">
-            <Link to="/" className="inline-block mb-6">
-              <span className="font-serif text-3xl font-light tracking-wider text-foreground">
-                Ajanta
-              </span>
-              <span className="block text-[10px] uppercase tracking-[0.3em] text-primary font-sans font-medium">
-                Photography
-              </span>
-            </Link>
+          <div className="text-center mb-8 flex flex-col items-center">
+            <div className="mb-6">
+              <Logo variant="large" linkTo="/" />
+            </div>
             <h1 className="font-serif text-3xl font-light text-foreground">
               Welcome Back
             </h1>

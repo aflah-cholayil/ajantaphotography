@@ -2,13 +2,14 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { format } from 'date-fns';
-import { Image, Calendar, LogOut, User, FolderOpen, Settings } from 'lucide-react';
+import { Image, Calendar, LogOut, User, FolderOpen, Settings, RefreshCw } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { AlbumStatusBadge } from '@/components/admin/AlbumStatusBadge';
 import { PullToRefresh } from '@/components/ui/PullToRefresh';
+import { Logo } from '@/components/shared/Logo';
 
 interface ClientData {
   id: string;
@@ -34,6 +35,7 @@ const ClientDashboard = () => {
   const [clientData, setClientData] = useState<ClientData | null>(null);
   const [albums, setAlbums] = useState<Album[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isDataLoaded, setIsDataLoaded] = useState(false);
   const [profileName, setProfileName] = useState<string>('');
 
   const fetchClientData = useCallback(async () => {
@@ -97,6 +99,7 @@ const ClientDashboard = () => {
       console.error('Error in fetchClientData:', error);
     } finally {
       setIsLoading(false);
+      setIsDataLoaded(true);
     }
   }, [user]);
 
@@ -104,12 +107,12 @@ const ClientDashboard = () => {
     // Redirect if not authenticated or not a client
     if (!authLoading) {
       if (!user) {
-        navigate('/login');
+        navigate('/login', { replace: true });
         return;
       }
       // If user is admin, redirect to admin
       if (role && role !== 'client') {
-        navigate('/admin');
+        navigate('/admin', { replace: true });
         return;
       }
     }
@@ -126,16 +129,37 @@ const ClientDashboard = () => {
     navigate('/login');
   };
 
-  if (authLoading || isLoading) {
+  // Show loading spinner while checking auth or loading data
+  if (authLoading || (role === 'client' && isLoading && !isDataLoaded)) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4">
+        <Logo variant="large" linkTo={undefined} />
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        <p className="text-muted-foreground text-sm">Loading your gallery...</p>
       </div>
     );
   }
 
-  if (!user || role !== 'client') {
-    return null;
+  // Redirect guard - don't render anything if user shouldn't be here
+  if (!user || (role && role !== 'client')) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4">
+        <Logo variant="large" linkTo={undefined} />
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        <p className="text-muted-foreground text-sm">Redirecting...</p>
+      </div>
+    );
+  }
+
+  // Still waiting for role to load
+  if (!role) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4">
+        <Logo variant="large" linkTo={undefined} />
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        <p className="text-muted-foreground text-sm">Verifying access...</p>
+      </div>
+    );
   }
 
   const handleRefresh = useCallback(async () => {
@@ -148,14 +172,7 @@ const ClientDashboard = () => {
       <header className="border-b border-border bg-card sticky top-0 z-40">
         <div className="container mx-auto px-4 sm:px-6 py-3 sm:py-4">
           <div className="flex items-center justify-between gap-3">
-            <Link to="/" className="block flex-shrink-0">
-              <span className="font-serif text-xl sm:text-2xl font-light tracking-wider text-foreground">
-                Ajanta
-              </span>
-              <span className="block text-[8px] sm:text-[9px] uppercase tracking-[0.2em] sm:tracking-[0.3em] text-primary font-sans font-medium">
-                Client Portal
-              </span>
-            </Link>
+            <Logo variant="small" subtitle="Client Portal" linkTo="/" />
             
             <div className="flex items-center gap-2 sm:gap-4">
               <div className="hidden sm:flex items-center gap-2 text-sm text-muted-foreground">

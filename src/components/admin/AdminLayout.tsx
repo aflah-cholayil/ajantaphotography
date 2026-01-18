@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
+import { Logo } from '@/components/shared/Logo';
 
 interface AdminLayoutProps {
   children: ReactNode;
@@ -34,8 +35,22 @@ const navItems = [
 export const AdminLayout = ({ children }: AdminLayoutProps) => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, signOut, isOwner } = useAuth();
+  const { user, signOut, isOwner, isAdmin, role, isLoading: authLoading } = useAuth();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  // Redirect non-admin users
+  useEffect(() => {
+    if (!authLoading) {
+      if (!user) {
+        navigate('/login', { replace: true });
+        return;
+      }
+      if (role && !isAdmin) {
+        navigate('/client', { replace: true });
+        return;
+      }
+    }
+  }, [user, role, isAdmin, authLoading, navigate]);
 
   // Close mobile menu on route change
   useEffect(() => {
@@ -61,19 +76,34 @@ export const AdminLayout = ({ children }: AdminLayoutProps) => {
 
   const filteredNavItems = navItems.filter(item => !item.ownerOnly || isOwner);
 
+  // Show loading while checking auth
+  if (authLoading || !user || !role) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4">
+        <Logo variant="large" linkTo={undefined} />
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        <p className="text-muted-foreground text-sm">Loading admin panel...</p>
+      </div>
+    );
+  }
+
+  // Don't render if user is not admin
+  if (!isAdmin) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4">
+        <Logo variant="large" linkTo={undefined} />
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        <p className="text-muted-foreground text-sm">Redirecting...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background flex flex-col lg:flex-row">
       {/* Mobile Header */}
       <header className="lg:hidden fixed top-0 left-0 right-0 z-50 bg-card border-b border-border">
         <div className="flex items-center justify-between px-4 py-3">
-          <Link to="/" className="block">
-            <span className="font-serif text-xl font-light tracking-wider text-foreground">
-              Ajanta
-            </span>
-            <span className="block text-[8px] uppercase tracking-[0.2em] text-primary font-sans font-medium">
-              Admin Panel
-            </span>
-          </Link>
+          <Logo variant="small" subtitle="Admin Panel" linkTo="/" />
           <Button
             variant="ghost"
             size="icon"
@@ -106,16 +136,9 @@ export const AdminLayout = ({ children }: AdminLayoutProps) => {
               transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
               className="fixed top-0 left-0 bottom-0 z-50 w-72 max-w-[85vw] bg-card border-r border-border flex flex-col lg:hidden"
             >
-              {/* Drawer Header */}
+            {/* Drawer Header */}
               <div className="p-4 border-b border-border flex items-center justify-between">
-                <Link to="/" className="block">
-                  <span className="font-serif text-xl font-light tracking-wider text-foreground">
-                    Ajanta
-                  </span>
-                  <span className="block text-[8px] uppercase tracking-[0.2em] text-primary font-sans font-medium">
-                    Admin Panel
-                  </span>
-                </Link>
+                <Logo variant="small" subtitle="Admin Panel" linkTo="/" />
                 <Button
                   variant="ghost"
                   size="icon"
@@ -188,14 +211,7 @@ export const AdminLayout = ({ children }: AdminLayoutProps) => {
       <aside className="hidden lg:flex w-64 bg-card border-r border-border flex-col fixed top-0 left-0 bottom-0 z-40">
         {/* Logo */}
         <div className="p-6 border-b border-border">
-          <Link to="/" className="block">
-            <span className="font-serif text-2xl font-light tracking-wider text-foreground">
-              Ajanta
-            </span>
-            <span className="block text-[9px] uppercase tracking-[0.3em] text-primary font-sans font-medium">
-              Admin Panel
-            </span>
-          </Link>
+          <Logo variant="default" subtitle="Admin Panel" linkTo="/" />
         </div>
 
         {/* Navigation */}

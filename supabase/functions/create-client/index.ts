@@ -152,32 +152,54 @@ const handler = async (req: Request): Promise<Response> => {
       console.error("Error creating album:", albumError);
     }
 
-    // Send welcome email
-    const loginUrl = `${req.headers.get("origin") || "https://ajanta.com"}/login`;
+    // Send welcome email with retry
+    const origin = req.headers.get("origin") || "https://studio-shines-77.lovable.app";
+    const loginUrl = `${origin}/login`;
     
-    try {
-      await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/send-email`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-        },
-        body: JSON.stringify({
-          type: "welcome",
-          to: email,
-          data: {
-            name,
-            email,
-            password,
-            eventName,
-            loginUrl,
+    const sendWelcomeEmail = async (retryCount = 0): Promise<void> => {
+      try {
+        const response = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/send-email`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
           },
-        }),
-      });
-      console.log("Welcome email sent");
-    } catch (emailError) {
-      console.error("Failed to send welcome email:", emailError);
-    }
+          body: JSON.stringify({
+            type: "welcome",
+            to: email,
+            data: {
+              name,
+              email,
+              password,
+              eventName,
+              loginUrl,
+            },
+          }),
+        });
+        
+        if (!response.ok && retryCount < 2) {
+          console.log(`Email send failed, retrying... (attempt ${retryCount + 2})`);
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          return sendWelcomeEmail(retryCount + 1);
+        }
+        
+        if (response.ok) {
+          console.log("Welcome email sent successfully");
+        } else {
+          console.error("Failed to send welcome email after retries");
+        }
+      } catch (emailError) {
+        if (retryCount < 2) {
+          console.log(`Email error, retrying... (attempt ${retryCount + 2})`);
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          return sendWelcomeEmail(retryCount + 1);
+        }
+        console.error("Failed to send welcome email:", emailError);
+      }
+    };
+    
+    // Send email (don't await to avoid blocking response)
+    sendWelcomeEmail();
 
     return new Response(
       JSON.stringify({
