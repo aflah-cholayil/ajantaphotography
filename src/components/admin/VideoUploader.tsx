@@ -51,10 +51,15 @@ export function VideoUploader({ currentVideoKey, onUploadComplete, onRemove }: V
       const objectUrl = URL.createObjectURL(file);
       setPreviewUrl(objectUrl);
 
-      // Get presigned URL from edge function
-      const { data: session } = await supabase.auth.getSession();
-      if (!session.session) {
-        throw new Error('Not authenticated');
+      // Refresh and get current session
+      const { data: sessionData, error: sessionError } = await supabase.auth.refreshSession();
+      
+      if (sessionError || !sessionData.session) {
+        // Try getting existing session as fallback
+        const { data: existingSession } = await supabase.auth.getSession();
+        if (!existingSession.session) {
+          throw new Error('Not authenticated. Please log in again.');
+        }
       }
 
       const { data: uploadData, error: uploadError } = await supabase.functions.invoke('upload-asset', {
@@ -67,7 +72,12 @@ export function VideoUploader({ currentVideoKey, onUploadComplete, onRemove }: V
       });
 
       if (uploadError) {
+        console.error('Edge function error:', uploadError);
         throw new Error(uploadError.message || 'Failed to get upload URL');
+      }
+
+      if (!uploadData?.presignedUrl || !uploadData?.s3Key) {
+        throw new Error('Invalid response from upload service');
       }
 
       const { presignedUrl, s3Key } = uploadData;

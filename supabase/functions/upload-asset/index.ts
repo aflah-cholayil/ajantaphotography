@@ -32,30 +32,43 @@ const handler = async (req: Request): Promise<Response> => {
   try {
     // Verify authentication
     const authHeader = req.headers.get("Authorization");
+    console.log("Auth header present:", !!authHeader);
+    
     if (!authHeader?.startsWith("Bearer ")) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      console.error("Missing or invalid Authorization header");
+      return new Response(JSON.stringify({ error: "Unauthorized - Missing auth header" }), {
         status: 401,
         headers: { "Content-Type": "application/json", ...corsHeaders },
       });
     }
+
+    const token = authHeader.replace("Bearer ", "");
+    console.log("Token length:", token.length);
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_ANON_KEY")!,
-      { global: { headers: { Authorization: authHeader } } }
+      { 
+        global: { headers: { Authorization: authHeader } },
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false,
+        }
+      }
     );
 
     // Get user from token
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
     
     if (authError || !user) {
-      console.error("Auth error:", authError);
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+      console.error("Auth error:", authError?.message || "No user found");
+      return new Response(JSON.stringify({ error: "Unauthorized - Invalid token" }), {
         status: 401,
         headers: { "Content-Type": "application/json", ...corsHeaders },
       });
     }
 
+    console.log("Authenticated user:", user.id);
     const userId = user.id;
 
     // Check if user is admin using service role
