@@ -11,7 +11,8 @@ import {
   UserCog,
   MessageSquare,
   Menu,
-  X
+  X,
+  ExternalLink
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
@@ -104,14 +105,25 @@ export const AdminLayout = ({ children }: AdminLayoutProps) => {
       <header className="lg:hidden fixed top-0 left-0 right-0 z-50 bg-card border-b border-border">
         <div className="flex items-center justify-between px-4 py-3">
           <Logo variant="small" linkTo="/" />
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-            aria-label="Toggle menu"
-          >
-            {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => window.open('/', '_blank')}
+              className="gap-1.5"
+            >
+              <ExternalLink size={14} />
+              <span className="hidden sm:inline">Preview</span>
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+              aria-label="Toggle menu"
+            >
+              {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -209,9 +221,21 @@ export const AdminLayout = ({ children }: AdminLayoutProps) => {
 
       {/* Desktop Sidebar */}
       <aside className="hidden lg:flex w-64 bg-card border-r border-border flex-col fixed top-0 left-0 bottom-0 z-40">
-        {/* Logo */}
+        {/* Logo & Preview Button */}
         <div className="p-6 border-b border-border">
-          <Logo variant="default" linkTo="/" />
+          <div className="flex items-center justify-between">
+            <Logo variant="default" linkTo="/" />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => window.open('/', '_blank')}
+              className="gap-1.5"
+              title="Preview website"
+            >
+              <ExternalLink size={14} />
+              Preview
+            </Button>
+          </div>
         </div>
 
         {/* Navigation */}
