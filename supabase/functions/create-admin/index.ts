@@ -18,11 +18,50 @@ const handler = async (req: Request): Promise<Response> => {
   }
 
   try {
+    // Verify authentication
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      console.error("Missing or invalid authorization header");
+      return new Response(
+        JSON.stringify({ error: "Unauthorized" }),
+        { status: 401, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
+    }
+
     const supabaseAdmin = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
       { auth: { persistSession: false } }
     );
+
+    // Verify the caller's JWT and get their user ID
+    const token = authHeader.replace("Bearer ", "");
+    const { data: claimsData, error: claimsError } = await supabaseAdmin.auth.getClaims(token);
+    
+    if (claimsError || !claimsData?.claims) {
+      console.error("Invalid JWT:", claimsError);
+      return new Response(
+        JSON.stringify({ error: "Unauthorized" }),
+        { status: 401, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
+    }
+
+    const callerUserId = claimsData.claims.sub;
+
+    // Check if the caller is an owner (only owners can create admin users)
+    const { data: callerRole, error: roleError } = await supabaseAdmin
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", callerUserId)
+      .single();
+
+    if (roleError || !callerRole || callerRole.role !== "owner") {
+      console.error("Caller is not an owner:", roleError || callerRole?.role);
+      return new Response(
+        JSON.stringify({ error: "Forbidden: Only owners can create admin users" }),
+        { status: 403, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
+    }
 
     const { email, password, name }: CreateAdminRequest = await req.json();
 
@@ -39,15 +78,15 @@ const handler = async (req: Request): Promise<Response> => {
 
     if (existingUser) {
       // Update user's role to admin if they exist
-      const { error: roleError } = await supabaseAdmin
+      const { error: roleUpdateError } = await supabaseAdmin
         .from("user_roles")
         .upsert(
           { user_id: existingUser.id, role: "admin" },
           { onConflict: "user_id" }
         );
 
-      if (roleError) {
-        console.error("Error updating role:", roleError);
+      if (roleUpdateError) {
+        console.error("Error updating role:", roleUpdateError);
         return new Response(
           JSON.stringify({ error: "Failed to update user role" }),
           { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } }
@@ -83,7 +122,7 @@ const handler = async (req: Request): Promise<Response> => {
       );
     }
 
-    console.log("Admin user created successfully:", newUser.user?.id);
+    console.log("Admin user created successfully by owner:", callerUserId, "->", newUser.user?.id);
 
     return new Response(
       JSON.stringify({ 
