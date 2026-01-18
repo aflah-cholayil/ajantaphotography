@@ -3,7 +3,8 @@ import { motion, useInView } from 'framer-motion';
 import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useStudioSettings } from '@/hooks/useStudioSettings';
-import { Loader2 } from 'lucide-react';
+import { SectionHeading } from '@/components/ui/SectionHeading';
+import { Loader2, Play } from 'lucide-react';
 
 export const CinematicVideoSection = () => {
   const sectionRef = useRef<HTMLDivElement>(null);
@@ -136,54 +137,78 @@ export const CinematicVideoSection = () => {
   return (
     <section
       ref={sectionRef}
-      className="relative w-full bg-background overflow-hidden"
+      className="py-24 md:py-32 bg-background overflow-hidden"
     >
-      {/* Full-width cinematic container */}
-      <motion.div
-        variants={containerVariants}
-        initial="hidden"
-        animate={isInView ? 'visible' : 'hidden'}
-        className="relative w-full"
-      >
-        {/* Video Container - Responsive aspect ratio */}
-        <div 
-          className="relative w-full overflow-hidden"
-          style={{ 
-            aspectRatio: isMobile ? 16 / 9 : 21 / 9,
-          }}
+      <div className="container mx-auto px-6">
+        {/* Section Heading */}
+        <SectionHeading
+          subtitle="Showcase"
+          title="Our Cinematic Work"
+          description="Experience the artistry and emotion we bring to every frame. A glimpse into the stories we tell."
+        />
+
+        {/* Video Container */}
+        <motion.div
+          variants={containerVariants}
+          initial="hidden"
+          animate={isInView ? 'visible' : 'hidden'}
+          className="relative mt-16"
         >
-          {/* Loading placeholder - show while fetching URL or loading video */}
-          {(!isVideoLoaded || isFetchingUrl || !signedVideoUrl) && (
-            <div className="absolute inset-0 bg-card flex items-center justify-center">
-              <Loader2 className="h-8 w-8 animate-spin text-primary/50" />
-            </div>
-          )}
-
-          {/* Video Element - Only render when we have a URL */}
-          {signedVideoUrl && (
-            <video
-              ref={videoRef}
-              key={signedVideoUrl}
-              className="absolute inset-0 w-full h-full object-cover"
-              src={signedVideoUrl}
-              muted
-              loop
-              playsInline
-              preload="metadata"
-              onLoadedData={handleVideoLoad}
-              onError={handleVideoError}
-            />
-          )}
-
-          {/* Subtle dark gradient overlay for cinematic feel */}
-          <div className="absolute inset-0 bg-gradient-to-t from-background/40 via-transparent to-background/20 pointer-events-none" />
-          <div className="absolute inset-0 bg-gradient-to-r from-background/20 via-transparent to-background/20 pointer-events-none" />
+          {/* Decorative border frame */}
+          <div className="absolute -inset-3 md:-inset-4 border border-primary/20 rounded-lg pointer-events-none" />
+          <div className="absolute -inset-1 md:-inset-2 border border-primary/10 rounded-lg pointer-events-none" />
           
-          {/* Top and bottom edge blending */}
-          <div className="absolute top-0 left-0 right-0 h-8 sm:h-12 bg-gradient-to-b from-background to-transparent pointer-events-none" />
-          <div className="absolute bottom-0 left-0 right-0 h-8 sm:h-12 bg-gradient-to-t from-background to-transparent pointer-events-none" />
-        </div>
-      </motion.div>
+          {/* Main video card */}
+          <div className="relative bg-card rounded-lg overflow-hidden border border-border shadow-2xl">
+            {/* Video wrapper with aspect ratio */}
+            <div 
+              className="relative w-full overflow-hidden"
+              style={{ 
+                aspectRatio: isMobile ? 16 / 9 : 21 / 9,
+              }}
+            >
+              {/* Loading placeholder - show while fetching URL or loading video */}
+              {(!isVideoLoaded || isFetchingUrl || !signedVideoUrl) && (
+                <div className="absolute inset-0 bg-card/80 flex flex-col items-center justify-center gap-4">
+                  <div className="relative">
+                    <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
+                      <Play className="w-8 h-8 text-primary/50" />
+                    </div>
+                    <Loader2 className="absolute inset-0 w-16 h-16 animate-spin text-primary/30" />
+                  </div>
+                  <span className="text-sm text-muted-foreground font-sans">Loading cinematic preview...</span>
+                </div>
+              )}
+
+              {/* Video Element - Only render when we have a URL */}
+              {signedVideoUrl && (
+                <video
+                  ref={videoRef}
+                  key={signedVideoUrl}
+                  className="absolute inset-0 w-full h-full object-cover"
+                  src={signedVideoUrl}
+                  muted
+                  loop
+                  playsInline
+                  preload="metadata"
+                  onLoadedData={handleVideoLoad}
+                  onError={handleVideoError}
+                />
+              )}
+
+              {/* Subtle dark gradient overlay for cinematic feel */}
+              <div className="absolute inset-0 bg-gradient-to-t from-background/40 via-transparent to-background/20 pointer-events-none" />
+              <div className="absolute inset-0 bg-gradient-to-r from-background/20 via-transparent to-background/20 pointer-events-none" />
+              
+              {/* Corner accents */}
+              <div className="absolute top-4 left-4 w-8 h-8 border-l-2 border-t-2 border-primary/40 pointer-events-none" />
+              <div className="absolute top-4 right-4 w-8 h-8 border-r-2 border-t-2 border-primary/40 pointer-events-none" />
+              <div className="absolute bottom-4 left-4 w-8 h-8 border-l-2 border-b-2 border-primary/40 pointer-events-none" />
+              <div className="absolute bottom-4 right-4 w-8 h-8 border-r-2 border-b-2 border-primary/40 pointer-events-none" />
+            </div>
+          </div>
+        </motion.div>
+      </div>
     </section>
   );
 };
