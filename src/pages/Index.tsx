@@ -11,10 +11,10 @@ const Index = () => {
   return (
     <Layout>
       <HeroSection />
-      <CinematicVideoSection />
       <ServicesSection />
       <GalleryPreview />
       <AboutPreview />
+      <CinematicVideoSection />
       <TestimonialsSection />
       <CTASection />
     </Layout>
