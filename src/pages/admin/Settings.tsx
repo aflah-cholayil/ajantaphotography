@@ -444,20 +444,18 @@ const Settings = () => {
                     Save Video Settings
                   </Button>
                   
-                  {/* Status indicator */}
-                  <div className={`text-sm flex items-center gap-2 ${
-                    settings.showcase_video_visible === 'true' 
-                      ? 'text-green-600' 
-                      : 'text-muted-foreground'
-                  }`}>
+                  {/* Status indicator - shows actual saved state */}
+                  <div className="text-sm text-muted-foreground flex items-center gap-2">
                     <div className={`w-2 h-2 rounded-full ${
-                      settings.showcase_video_visible === 'true' 
+                      settings.showcase_video_visible === 'true' && settings.showcase_video_key
                         ? 'bg-green-500' 
-                        : 'bg-muted-foreground'
+                        : 'bg-amber-500'
                     }`} />
-                    {settings.showcase_video_visible === 'true' 
-                      ? 'Video is currently visible on homepage' 
-                      : 'Video is currently hidden from homepage'}
+                    {hasVideoChanges 
+                      ? 'Unsaved changes — click Save Video Settings to apply'
+                      : settings.showcase_video_visible === 'true' && settings.showcase_video_key
+                        ? 'Video is live on homepage'
+                        : 'Video will appear on homepage when enabled and saved'}
                   </div>
                 </div>
               )}

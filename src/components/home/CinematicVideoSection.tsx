@@ -9,19 +9,65 @@ export const CinematicVideoSection = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isVideoLoaded, setIsVideoLoaded] = useState(false);
   const [hasError, setHasError] = useState(false);
+  const [signedVideoUrl, setSignedVideoUrl] = useState<string | null>(null);
   
   const prefersReducedMotion = useReducedMotion();
   const isMobile = useIsMobile();
   const { settings, isLoading } = useStudioSettings();
 
-  // Get video URL from studio settings
+  // Get video URL from studio settings - check both key exists AND visibility is true
   const showcaseVideoKey = settings.showcase_video_key?.trim();
   const isVideoVisible = settings.showcase_video_visible === 'true';
-  const hasCustomVideo = Boolean(showcaseVideoKey) && isVideoVisible;
-  
-  const videoUrl = hasCustomVideo
-    ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/s3-signed-url?key=${encodeURIComponent(showcaseVideoKey)}`
-    : null;
+  const hasValidVideo = Boolean(showcaseVideoKey) && showcaseVideoKey.length > 0;
+  const shouldRenderSection = hasValidVideo && isVideoVisible;
+
+  // Fetch signed URL for the video
+  useEffect(() => {
+    if (!shouldRenderSection || !showcaseVideoKey) {
+      setSignedVideoUrl(null);
+      return;
+    }
+
+    const fetchSignedUrl = async () => {
+      try {
+        const response = await fetch(
+          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/s3-signed-url?key=${encodeURIComponent(showcaseVideoKey)}`
+        );
+        
+        if (!response.ok) {
+          throw new Error(`Failed to fetch signed URL: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        if (data.url) {
+          console.log('[CinematicVideoSection] Signed URL fetched successfully');
+          setSignedVideoUrl(data.url);
+          setHasError(false);
+        } else {
+          throw new Error('No URL in response');
+        }
+      } catch (error) {
+        console.error('[CinematicVideoSection] Failed to fetch signed URL:', error);
+        setHasError(true);
+        setSignedVideoUrl(null);
+      }
+    };
+
+    fetchSignedUrl();
+  }, [shouldRenderSection, showcaseVideoKey]);
+
+  // Debug logging
+  useEffect(() => {
+    if (!isLoading) {
+      console.log('[CinematicVideoSection] Settings loaded:', {
+        hasVideoKey: Boolean(showcaseVideoKey),
+        videoKey: showcaseVideoKey ? showcaseVideoKey.substring(0, 30) + '...' : 'none',
+        isVisible: isVideoVisible,
+        shouldRender: shouldRenderSection,
+        hasSignedUrl: Boolean(signedVideoUrl),
+      });
+    }
+  }, [isLoading, showcaseVideoKey, isVideoVisible, shouldRenderSection, signedVideoUrl]);
   
   // Use intersection observer for scroll-triggered playback
   const isInView = useInView(sectionRef, {
@@ -44,28 +90,33 @@ export const CinematicVideoSection = () => {
   }, [isInView, isVideoLoaded, prefersReducedMotion, hasError]);
 
   const handleVideoLoad = useCallback(() => {
+    console.log('[CinematicVideoSection] Video loaded successfully');
     setIsVideoLoaded(true);
     setHasError(false);
   }, []);
 
   const handleVideoError = useCallback(() => {
-    console.error('Showcase video failed to load');
+    console.error('[CinematicVideoSection] Showcase video failed to load');
     setHasError(true);
     setIsVideoLoaded(false);
   }, []);
 
   // Animation variants with smooth zoom effect
   const containerVariants = {
-    hidden: { opacity: 0, scale: 0.96 },
+    hidden: { opacity: 0, scale: 0.98 },
     visible: {
       opacity: 1,
       scale: 1,
-      transition: { duration: 1, ease: [0.25, 0.1, 0.25, 1] as const },
+      transition: { duration: 0.8, ease: [0.25, 0.1, 0.25, 1] as const },
     },
   };
 
-  // Don't render section if loading, no custom video configured, not visible, or has error
-  if (isLoading || !hasCustomVideo || hasError) {
+  // Don't render section if loading, no video, not visible, or has error
+  if (isLoading) {
+    return null;
+  }
+
+  if (!shouldRenderSection || hasError || !signedVideoUrl) {
     return null;
   }
 
@@ -94,20 +145,18 @@ export const CinematicVideoSection = () => {
           )}
 
           {/* Video Element - Lazy loaded, no controls, muted, looping */}
-          {videoUrl && (
-            <video
-              ref={videoRef}
-              key={videoUrl}
-              className="absolute inset-0 w-full h-full object-cover"
-              src={videoUrl}
-              muted
-              loop
-              playsInline
-              preload="metadata"
-              onLoadedData={handleVideoLoad}
-              onError={handleVideoError}
-            />
-          )}
+          <video
+            ref={videoRef}
+            key={signedVideoUrl}
+            className="absolute inset-0 w-full h-full object-cover"
+            src={signedVideoUrl}
+            muted
+            loop
+            playsInline
+            preload="metadata"
+            onLoadedData={handleVideoLoad}
+            onError={handleVideoError}
+          />
 
           {/* Subtle dark gradient overlay for cinematic feel */}
           <div className="absolute inset-0 bg-gradient-to-t from-background/40 via-transparent to-background/20 pointer-events-none" />
