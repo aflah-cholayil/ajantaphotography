@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
 import { format } from 'date-fns';
-import { Search, MoreVertical, Mail, Trash2, Eye, EyeOff, MessageSquare } from 'lucide-react';
+import { Search, MoreVertical, Mail, Trash2, Eye, EyeOff, MessageSquare, Send, Reply } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { AdminLayout } from '@/components/admin/AdminLayout';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Table,
   TableBody,
@@ -67,6 +68,9 @@ const AdminMessages = () => {
   const [selectedMessage, setSelectedMessage] = useState<ContactMessage | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [messageToDelete, setMessageToDelete] = useState<string | null>(null);
+  const [replyMode, setReplyMode] = useState(false);
+  const [replyText, setReplyText] = useState('');
+  const [isSendingReply, setIsSendingReply] = useState(false);
 
   const fetchMessages = async () => {
     try {
@@ -160,6 +164,8 @@ const AdminMessages = () => {
 
   const openMessageDetails = async (message: ContactMessage) => {
     setSelectedMessage(message);
+    setReplyMode(false);
+    setReplyText('');
     
     // Mark as read when opening
     if (!message.is_read) {
@@ -168,6 +174,46 @@ const AdminMessages = () => {
         .update({ is_read: true })
         .eq('id', message.id);
       fetchMessages();
+    }
+  };
+
+  const handleSendReply = async () => {
+    if (!selectedMessage || !replyText.trim()) return;
+
+    setIsSendingReply(true);
+    try {
+      const { error } = await supabase.functions.invoke('send-email', {
+        body: {
+          type: 'contact_reply',
+          to: selectedMessage.email,
+          data: {
+            recipientName: selectedMessage.name,
+            replyMessage: replyText.trim(),
+            originalSubject: selectedMessage.subject,
+            originalMessage: selectedMessage.message,
+          }
+        }
+      });
+
+      if (error) throw error;
+
+      toast({
+        title: 'Reply sent!',
+        description: `Email sent to ${selectedMessage.email}`,
+      });
+
+      setReplyMode(false);
+      setReplyText('');
+      setSelectedMessage(null);
+    } catch (error) {
+      console.error('Failed to send reply:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to send reply. Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSendingReply(false);
     }
   };
 
@@ -342,16 +388,21 @@ const AdminMessages = () => {
       </div>
 
       {/* Message Details Dialog */}
-      <Dialog open={!!selectedMessage} onOpenChange={() => setSelectedMessage(null)}>
+      <Dialog open={!!selectedMessage} onOpenChange={() => { setSelectedMessage(null); setReplyMode(false); setReplyText(''); }}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle className="font-serif text-2xl">Message Details</DialogTitle>
+            <DialogTitle className="font-serif text-2xl">
+              {replyMode ? 'Reply to Message' : 'Message Details'}
+            </DialogTitle>
             <DialogDescription>
-              Received {selectedMessage && format(new Date(selectedMessage.created_at), 'MMMM d, yyyy \'at\' h:mm a')}
+              {replyMode 
+                ? `Replying to ${selectedMessage?.name}`
+                : selectedMessage && `Received ${format(new Date(selectedMessage.created_at), 'MMMM d, yyyy \'at\' h:mm a')}`
+              }
             </DialogDescription>
           </DialogHeader>
           
-          {selectedMessage && (
+          {selectedMessage && !replyMode && (
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -386,11 +437,56 @@ const AdminMessages = () => {
                   Close
                 </Button>
                 <Button 
-                  onClick={() => window.open(`mailto:${selectedMessage.email}?subject=Re: ${selectedMessage.subject || 'Your message'}`)} 
+                  onClick={() => setReplyMode(true)} 
                   className="flex-1 btn-gold"
                 >
-                  <Mail size={16} className="mr-2" />
+                  <Reply size={16} className="mr-2" />
                   Reply
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {selectedMessage && replyMode && (
+            <div className="space-y-4">
+              <div className="p-3 bg-muted/50 rounded-lg border border-border">
+                <p className="text-xs text-muted-foreground mb-1">Original message from {selectedMessage.name}:</p>
+                <p className="text-sm text-muted-foreground line-clamp-3">{selectedMessage.message}</p>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground uppercase tracking-wider">Your Reply</p>
+                <Textarea
+                  placeholder="Type your reply here..."
+                  value={replyText}
+                  onChange={(e) => setReplyText(e.target.value)}
+                  rows={6}
+                  className="resize-none"
+                />
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <Button 
+                  variant="outline" 
+                  onClick={() => { setReplyMode(false); setReplyText(''); }} 
+                  className="flex-1"
+                  disabled={isSendingReply}
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  onClick={handleSendReply}
+                  disabled={!replyText.trim() || isSendingReply}
+                  className="flex-1 btn-gold"
+                >
+                  {isSendingReply ? (
+                    'Sending...'
+                  ) : (
+                    <>
+                      <Send size={16} className="mr-2" />
+                      Send Reply
+                    </>
+                  )}
                 </Button>
               </div>
             </div>
