@@ -36,6 +36,7 @@ interface StudioConfig {
 }
 
 // Fetch studio settings from database
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function getStudioConfig(supabase: any): Promise<StudioConfig> {
   try {
     const { data, error } = await supabase
@@ -108,10 +109,17 @@ const getEmailContent = (type: string, data: Record<string, unknown>, config: St
   const primaryPhone = config.phones.split(",")[0]?.trim() || config.phones;
 
   switch (type) {
-    case "welcome":
+    case "welcome": {
+      // Include email in login URL for pre-fill
+      const loginUrl = data.loginUrl as string || "";
+      const emailForUrl = data.email as string || "";
+      const loginUrlWithEmail = loginUrl.includes('?') 
+        ? `${loginUrl}&email=${encodeURIComponent(emailForUrl)}`
+        : `${loginUrl}?email=${encodeURIComponent(emailForUrl)}`;
+      
       return {
         subject: `Your Ajanta Photography Client Login Details`,
-        text: `Hello ${data.name},\n\nYour private client account has been created with Ajanta Photography.\n\nLogin details:\nEmail: ${data.email}\nPassword: ${data.password}\n\nLogin here:\n${data.loginUrl}\n\nPlease log in and change your password after first login.\n\n– Ajanta Photography`,
+        text: `Hello ${data.name},\n\nYour private client account has been created with Ajanta Photography.\n\nLogin details:\nEmail: ${data.email}\nPassword: ${data.password}\n\nLogin here:\n${loginUrlWithEmail}\n\nPlease log in and change your password after first login.\n\n– Ajanta Photography`,
         html: `
           <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; background: #1a1814; color: #f5f0e8; padding: 40px;">
             ${emailHeader}
@@ -125,8 +133,8 @@ const getEmailContent = (type: string, data: Record<string, unknown>, config: St
               <p style="margin: 5px 0; color: #a09080;"><strong style="color: #f5f0e8;">Password:</strong> <code style="background: #1a1814; padding: 4px 8px; border-radius: 4px; color: #d4a853;">${data.password}</code></p>
             </div>
 
-            <p style="line-height: 1.8; color: #a09080; margin: 0 0 16px 0;">Login here:</p>
-            <a href="${data.loginUrl}" style="display: inline-block; background: linear-gradient(135deg, #d4a853, #b8923d); color: #1a1814; padding: 14px 26px; text-decoration: none; border-radius: 4px; font-weight: 600;">${data.loginUrl}</a>
+            <p style="line-height: 1.8; color: #a09080; margin: 0 0 16px 0;">Click below to login to your account:</p>
+            <a href="${loginUrlWithEmail}" style="display: inline-block; background: linear-gradient(135deg, #d4a853, #b8923d); color: #1a1814; padding: 14px 26px; text-decoration: none; border-radius: 4px; font-weight: 600;">Login to Your Account</a>
 
             <p style="line-height: 1.8; color: #a09080; margin-top: 20px;">Please log in and change your password after first login.</p>
 
@@ -134,6 +142,7 @@ const getEmailContent = (type: string, data: Record<string, unknown>, config: St
           </div>
         `,
       };
+    }
 
     case "gallery_ready":
       return {
@@ -321,10 +330,18 @@ const handler = async (req: Request): Promise<Response> => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
   );
 
+  // Pre-create pending log entry for tracking
+  let logId: string | null = null;
+
   try {
     const { type, to, data }: EmailRequest = await req.json();
     
-    console.log(`Sending ${type} email to ${to}`);
+    // Validate email format
+    if (!to || !to.includes('@')) {
+      throw new Error("Invalid recipient email address");
+    }
+    
+    console.log(`[send-email] Starting ${type} email to ${to}`);
     
     // Fetch studio config from database
     const studioConfig = await getStudioConfig(supabase);
@@ -341,46 +358,126 @@ const handler = async (req: Request): Promise<Response> => {
       throw new Error("No recipient email provided");
     }
 
+    // Create pending log entry BEFORE sending
+    const safeData = (() => {
+      const copy: Record<string, unknown> = { ...(data as Record<string, unknown>) };
+      if ("password" in copy) delete copy.password;
+      return copy;
+    })();
+
+    const { data: pendingLog, error: pendingLogError } = await supabase
+      .from("email_logs")
+      .insert({
+        to_email: recipient,
+        subject: emailContent.subject,
+        template_type: type,
+        status: "pending",
+        metadata: { data: safeData },
+        client_id: (data.clientId as string) || null,
+      })
+      .select("id")
+      .single();
+
+    if (pendingLogError) {
+      console.error("[send-email] Failed to create pending log:", pendingLogError);
+    } else {
+      logId = pendingLog?.id;
+      console.log(`[send-email] Created pending log: ${logId}`);
+    }
+
+    // Send email via Resend
+    console.log(`[send-email] Calling Resend API for ${recipient}`);
     const { data: emailResult, error } = await resend.emails.send({
       from: fromEmail,
       to: [recipient],
       subject: emailContent.subject,
       html: emailContent.html,
-      text: (emailContent as any).text,
+      text: (emailContent as { text?: string }).text,
     });
 
-    // Log the email (NEVER store passwords in logs)
-    const safeData = (() => {
-      const copy: Record<string, unknown> = { ...(data as Record<string, unknown>) };
-      if ("password" in copy) delete (copy as any).password;
-      return copy;
-    })();
-
-    await supabase.from("email_logs").insert({
-      to_email: recipient,
-      subject: emailContent.subject,
-      template_type: type,
-      status: error ? "failed" : "sent",
-      error_message: error?.message,
-      metadata: { data: safeData, resend_id: emailResult?.id },
+    console.log("[send-email] Resend response:", { 
+      success: !error, 
+      id: emailResult?.id,
+      error: error?.message 
     });
 
-    if (error) {
-      console.error("Resend error:", error);
-      throw error;
+    // Update log with actual result
+    if (logId) {
+      const updateData: {
+        status: string;
+        error_message?: string;
+        metadata: Record<string, unknown>;
+      } = {
+        status: error ? "failed" : "sent",
+        metadata: { data: safeData, resend_id: emailResult?.id || null },
+      };
+      
+      if (error) {
+        updateData.error_message = error.message;
+      }
+
+      const { error: updateError } = await supabase
+        .from("email_logs")
+        .update(updateData)
+        .eq("id", logId);
+
+      if (updateError) {
+        console.error("[send-email] Failed to update log:", updateError);
+      } else {
+        console.log(`[send-email] Updated log ${logId} to status: ${updateData.status}`);
+      }
     }
 
-    console.log("Email sent successfully:", emailResult);
+    if (error) {
+      console.error("[send-email] Resend error:", error);
+      // Return error but with proper status code
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: error.message,
+          logId 
+        }),
+        {
+          status: 200, // Return 200 so the caller can parse the response
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        }
+      );
+    }
 
-    return new Response(JSON.stringify({ success: true, id: emailResult?.id }), {
-      status: 200,
-      headers: { "Content-Type": "application/json", ...corsHeaders },
-    });
-  } catch (error: unknown) {
-    console.error("Error in send-email function:", error);
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    console.log("[send-email] Email sent successfully:", emailResult);
+
     return new Response(
-      JSON.stringify({ error: errorMessage }),
+      JSON.stringify({ 
+        success: true, 
+        id: emailResult?.id,
+        logId 
+      }), 
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      }
+    );
+  } catch (error: unknown) {
+    console.error("[send-email] Error:", error);
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    
+    // Update log to failed if we have one
+    if (logId) {
+      await supabase
+        .from("email_logs")
+        .update({
+          status: "failed",
+          error_message: errorMessage,
+        })
+        .eq("id", logId);
+    }
+    
+    return new Response(
+      JSON.stringify({ 
+        success: false, 
+        error: errorMessage,
+        logId 
+      }),
       {
         status: 500,
         headers: { "Content-Type": "application/json", ...corsHeaders },

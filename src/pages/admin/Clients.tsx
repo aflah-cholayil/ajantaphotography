@@ -239,6 +239,7 @@ const AdminClients = () => {
                       status={client.emailStatus}
                       email={client.profiles?.email || ''}
                       clientName={client.profiles?.name || 'Client'}
+                      clientId={client.id}
                       onRetrySuccess={fetchClients}
                     />
                   </div>
@@ -300,6 +301,7 @@ const AdminClients = () => {
                         status={client.emailStatus}
                         email={client.profiles?.email || ''}
                         clientName={client.profiles?.name || 'Client'}
+                        clientId={client.id}
                         onRetrySuccess={fetchClients}
                       />
                     </TableCell>

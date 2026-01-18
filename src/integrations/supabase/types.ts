@@ -165,6 +165,7 @@ export type Database = {
       }
       email_logs: {
         Row: {
+          client_id: string | null
           created_at: string
           error_message: string | null
           id: string
@@ -175,6 +176,7 @@ export type Database = {
           to_email: string
         }
         Insert: {
+          client_id?: string | null
           created_at?: string
           error_message?: string | null
           id?: string
@@ -185,6 +187,7 @@ export type Database = {
           to_email: string
         }
         Update: {
+          client_id?: string | null
           created_at?: string
           error_message?: string | null
           id?: string
@@ -194,7 +197,15 @@ export type Database = {
           template_type?: string
           to_email?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "email_logs_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       media: {
         Row: {
