@@ -16,6 +16,7 @@ import AdminClients from "./pages/admin/Clients";
 import AdminAlbums from "./pages/admin/Albums";
 import AdminAlbumDetail from "./pages/admin/AlbumDetail";
 import AdminBookings from "./pages/admin/Bookings";
+import AdminMessages from "./pages/admin/Messages";
 import AdminUsers from "./pages/admin/AdminUsers";
 import AdminWorks from "./pages/admin/Works";
 import AdminSettings from "./pages/admin/Settings";
@@ -53,6 +54,7 @@ const App = () => (
           <Route path="/admin/albums/:id" element={<AdminAlbumDetail />} />
           <Route path="/admin/works" element={<AdminWorks />} />
           <Route path="/admin/bookings" element={<AdminBookings />} />
+          <Route path="/admin/messages" element={<AdminMessages />} />
           <Route path="/admin/users" element={<AdminUsers />} />
           <Route path="/admin/settings" element={<AdminSettings />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

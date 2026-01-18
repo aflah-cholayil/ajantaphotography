@@ -10,24 +10,51 @@ import { useState } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { useStudioSettings } from '@/hooks/useStudioSettings';
 import { studioConfig } from '@/config/studio';
+import { supabase } from '@/integrations/supabase/client';
 
 const Contact = () => {
   const { toast } = useToast();
   const { settings, formatPhoneLink, formatWhatsAppLink, getPhoneArray } = useStudioSettings();
   const phones = getPhoneArray();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [formData, setFormData] = useState({
+    name: '',
+    email: '',
+    subject: '',
+    message: '',
+  });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
     
-    setTimeout(() => {
-      setIsSubmitting(false);
+    try {
+      const { error } = await supabase.from('contact_messages').insert({
+        name: formData.name,
+        email: formData.email,
+        subject: formData.subject || null,
+        message: formData.message,
+      });
+
+      if (error) throw error;
+
       toast({
         title: 'Message Sent!',
         description: 'We will get back to you soon.',
       });
-    }, 1000);
+      
+      // Reset form
+      setFormData({ name: '', email: '', subject: '', message: '' });
+    } catch (error) {
+      console.error('Contact form error:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to send message. Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -218,6 +245,8 @@ const Contact = () => {
                       id="name"
                       placeholder="Your name"
                       required
+                      value={formData.name}
+                      onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
                       className="bg-background/50 border-border focus:border-primary"
                     />
                   </div>
@@ -230,6 +259,8 @@ const Contact = () => {
                       type="email"
                       placeholder="your@email.com"
                       required
+                      value={formData.email}
+                      onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
                       className="bg-background/50 border-border focus:border-primary"
                     />
                   </div>
@@ -242,7 +273,8 @@ const Contact = () => {
                   <Input
                     id="subject"
                     placeholder="What is this about?"
-                    required
+                    value={formData.subject}
+                    onChange={(e) => setFormData(prev => ({ ...prev, subject: e.target.value }))}
                     className="bg-background/50 border-border focus:border-primary"
                   />
                 </div>
@@ -256,6 +288,8 @@ const Contact = () => {
                     placeholder="Your message..."
                     rows={5}
                     required
+                    value={formData.message}
+                    onChange={(e) => setFormData(prev => ({ ...prev, message: e.target.value }))}
                     className="bg-background/50 border-border focus:border-primary resize-none"
                   />
                 </div>
