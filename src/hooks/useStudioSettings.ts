@@ -20,6 +20,7 @@ export interface StudioSettings {
   hours_saturday: string;
   hours_sunday: string;
   showcase_video_key: string;
+  showcase_video_visible: string;
 }
 
 // Default values from static config
@@ -41,6 +42,7 @@ const defaultSettings: StudioSettings = {
   hours_saturday: studioConfig.hours.saturday,
   hours_sunday: studioConfig.hours.sunday,
   showcase_video_key: '',
+  showcase_video_visible: 'false',
 };
 
 export function useStudioSettings() {
