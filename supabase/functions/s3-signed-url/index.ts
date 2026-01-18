@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { AwsClient } from "https://esm.sh/aws4fetch@1.0.20?target=deno";
+import * as bcrypt from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -106,8 +107,9 @@ const handler = async (req: Request): Promise<Response> => {
               headers: { "Content-Type": "application/json", ...corsHeaders },
             });
           }
-          // Simple password check (in production, use bcrypt)
-          if (shareLink.password_hash !== sharePassword) {
+          // Verify password using bcrypt
+          const isValidPassword = await bcrypt.compare(sharePassword, shareLink.password_hash);
+          if (!isValidPassword) {
             return new Response(JSON.stringify({ error: "Invalid password" }), {
               status: 401,
               headers: { "Content-Type": "application/json", ...corsHeaders },
