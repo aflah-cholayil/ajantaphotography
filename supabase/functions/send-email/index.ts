@@ -84,7 +84,7 @@ function getEmailFooter(config: StudioConfig): string {
 }
 
 interface EmailRequest {
-  type: "welcome" | "gallery_ready" | "share_link" | "booking_confirmation" | "booking_admin";
+  type: "welcome" | "gallery_ready" | "share_link" | "booking_confirmation" | "booking_admin" | "contact_confirmation" | "contact_admin";
   to: string;
   data: Record<string, unknown>;
 }
@@ -204,6 +204,51 @@ const getEmailContent = (type: string, data: Record<string, unknown>, config: St
         `,
       };
 
+    case "contact_confirmation":
+      return {
+        subject: `Message Received - ${config.name}`,
+        html: `
+          <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; background: #1a1814; color: #f5f0e8; padding: 40px;">
+            <div style="text-align: center; margin-bottom: 30px;">
+              <h1 style="font-size: 32px; font-weight: 300; color: #d4a853; margin: 0;">Ajanta</h1>
+              <p style="font-size: 10px; letter-spacing: 4px; color: #d4a853; margin: 5px 0;">PHOTOGRAPHY</p>
+            </div>
+            <h2 style="color: #f5f0e8; font-weight: 300;">Thank You, ${data.name}!</h2>
+            <p style="line-height: 1.8; color: #a09080;">We have received your message and will get back to you soon.</p>
+            <div style="background: #252118; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 3px solid #d4a853;">
+              ${data.subject ? `<p style="margin: 5px 0; color: #a09080;"><strong style="color: #f5f0e8;">Subject:</strong> ${data.subject}</p>` : ""}
+              <p style="margin: 5px 0; color: #a09080;"><strong style="color: #f5f0e8;">Your Message:</strong></p>
+              <p style="margin: 5px 0; color: #a09080;">${data.message}</p>
+            </div>
+            <p style="line-height: 1.8; color: #a09080;">Have urgent questions? Contact us directly:</p>
+            <p style="line-height: 1.8; color: #a09080;">
+              📞 <a href="tel:${primaryPhone.replace(/\s/g, "")}" style="color: #d4a853; text-decoration: none;">${primaryPhone}</a><br />
+              💬 <a href="https://wa.me/${whatsappNumber}" style="color: #25D366; text-decoration: none;">WhatsApp Us</a>
+            </p>
+            ${emailFooter}
+          </div>
+        `,
+      };
+
+    case "contact_admin":
+      return {
+        subject: `New Contact Message: ${data.subject || "General Inquiry"} - ${data.name}`,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #f5f5f5; padding: 20px;">
+            <h2 style="color: #333;">New Contact Message</h2>
+            <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0;">
+              <p><strong>Name:</strong> ${data.name}</p>
+              <p><strong>Email:</strong> <a href="mailto:${data.email}">${data.email}</a></p>
+              ${data.phone ? `<p><strong>Phone:</strong> ${data.phone}</p>` : ""}
+              ${data.subject ? `<p><strong>Subject:</strong> ${data.subject}</p>` : ""}
+              <p><strong>Message:</strong></p>
+              <p style="background: #f9f9f9; padding: 10px; border-radius: 4px; white-space: pre-wrap;">${data.message}</p>
+            </div>
+            <p style="color: #666; font-size: 12px;">This is an automated notification from ${config.name} contact form.</p>
+          </div>
+        `,
+      };
+
     default:
       throw new Error(`Unknown email type: ${type}`);
   }
@@ -230,8 +275,9 @@ const handler = async (req: Request): Promise<Response> => {
     
     const emailContent = getEmailContent(type, data, studioConfig, emailFooter);
     
-    // For booking admin notification, send to admin email
-    const recipient = type === "booking_admin" ? adminEmail : to;
+    // For admin notifications, send to admin email
+    const adminTypes = ["booking_admin", "contact_admin"];
+    const recipient = adminTypes.includes(type) ? adminEmail : to;
     
     if (!recipient) {
       throw new Error("No recipient email provided");

@@ -59,6 +59,26 @@ const Booking = () => {
 
       if (error) throw error;
 
+      // Send email notifications (don't block on this)
+      const emailData = {
+        name: formData.name,
+        email: formData.email,
+        phone: formData.phone,
+        eventType: formData.eventType,
+        eventDate: formData.eventDate,
+        message: formData.message,
+      };
+
+      // Send confirmation to customer
+      supabase.functions.invoke('send-email', {
+        body: { type: 'booking_confirmation', to: formData.email, data: emailData }
+      }).catch(err => console.error('Failed to send customer email:', err));
+
+      // Notify admin
+      supabase.functions.invoke('send-email', {
+        body: { type: 'booking_admin', to: '', data: emailData }
+      }).catch(err => console.error('Failed to send admin email:', err));
+
       setIsSubmitted(true);
       toast({
         title: 'Booking Request Sent!',
