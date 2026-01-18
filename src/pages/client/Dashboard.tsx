@@ -8,6 +8,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { AlbumStatusBadge } from '@/components/admin/AlbumStatusBadge';
+import { PullToRefresh } from '@/components/ui/PullToRefresh';
 
 interface ClientData {
   id: string;
@@ -137,8 +138,12 @@ const ClientDashboard = () => {
     return null;
   }
 
+  const handleRefresh = useCallback(async () => {
+    await fetchClientData();
+  }, [fetchClientData]);
+
   return (
-    <div className="min-h-screen bg-background">
+    <PullToRefresh onRefresh={handleRefresh} className="min-h-screen bg-background">
       {/* Header */}
       <header className="border-b border-border bg-card sticky top-0 z-40">
         <div className="container mx-auto px-4 sm:px-6 py-3 sm:py-4">
@@ -318,7 +323,7 @@ const ClientDashboard = () => {
           <p>© {new Date().getFullYear()} Ajanta Photography. All rights reserved.</p>
         </div>
       </footer>
-    </div>
+    </PullToRefresh>
   );
 };
 
