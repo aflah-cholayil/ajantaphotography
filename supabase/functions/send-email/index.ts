@@ -84,7 +84,7 @@ function getEmailFooter(config: StudioConfig): string {
 }
 
 interface EmailRequest {
-  type: "welcome" | "gallery_ready" | "share_link" | "booking_confirmation" | "booking_admin" | "contact_confirmation" | "contact_admin" | "contact_reply";
+  type: "welcome" | "gallery_ready" | "share_link" | "booking_confirmation" | "booking_admin" | "contact_confirmation" | "contact_admin" | "contact_reply" | "password_changed";
   to: string;
   data: Record<string, unknown>;
 }
@@ -274,6 +274,33 @@ const getEmailContent = (type: string, data: Record<string, unknown>, config: St
               Have more questions? Feel free to reply to this email or contact us directly:<br />
               📞 <a href="tel:${primaryPhone.replace(/\s/g, "")}" style="color: #d4a853; text-decoration: none;">${primaryPhone}</a><br />
               💬 <a href="https://wa.me/${whatsappNumber}" style="color: #25D366; text-decoration: none;">WhatsApp Us</a>
+            </p>
+            ${emailFooter}
+          </div>
+        `,
+      };
+
+    case "password_changed":
+      return {
+        subject: `Password Changed - ${config.name}`,
+        html: `
+          <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; background: #1a1814; color: #f5f0e8; padding: 40px;">
+            <div style="text-align: center; margin-bottom: 30px;">
+              <h1 style="font-size: 32px; font-weight: 300; color: #d4a853; margin: 0;">Ajanta</h1>
+              <p style="font-size: 10px; letter-spacing: 4px; color: #d4a853; margin: 5px 0;">PHOTOGRAPHY</p>
+            </div>
+            <h2 style="color: #f5f0e8; font-weight: 300;">Password Updated</h2>
+            <p style="line-height: 1.8; color: #a09080;">Hello ${data.name},</p>
+            <p style="line-height: 1.8; color: #a09080;">Your password for your Ajanta Photography client account has been successfully changed.</p>
+            <div style="background: #252118; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 3px solid #d4a853;">
+              <p style="margin: 5px 0; color: #a09080;"><strong style="color: #f5f0e8;">Account:</strong> ${data.email}</p>
+              <p style="margin: 5px 0; color: #a09080;"><strong style="color: #f5f0e8;">Changed at:</strong> ${data.changedAt}</p>
+            </div>
+            <p style="line-height: 1.8; color: #a09080;">If you did not make this change, please contact us immediately:</p>
+            <p style="line-height: 1.8; color: #a09080;">
+              📞 <a href="tel:${primaryPhone.replace(/\s/g, "")}" style="color: #d4a853; text-decoration: none;">${primaryPhone}</a><br />
+              💬 <a href="https://wa.me/${whatsappNumber}" style="color: #25D366; text-decoration: none;">WhatsApp Us</a><br />
+              ✉️ <a href="mailto:${config.email}" style="color: #d4a853; text-decoration: none;">${config.email}</a>
             </p>
             ${emailFooter}
           </div>

@@ -73,6 +73,14 @@ export const ChangePasswordDialog = ({ open, userId, onPasswordChanged }: Change
         throw updateError;
       }
 
+      // Get user profile info for email
+      const { data: { user } } = await supabase.auth.getUser();
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('name, email')
+        .eq('user_id', userId)
+        .maybeSingle();
+
       // Update must_change_password flag in profiles
       const { error: profileError } = await supabase
         .from('profiles')
@@ -83,6 +91,28 @@ export const ChangePasswordDialog = ({ open, userId, onPasswordChanged }: Change
         console.error('Error updating profile:', profileError);
         // Continue anyway since password was changed successfully
       }
+
+      // Send password change notification email (fire and forget)
+      const emailData = {
+        name: profileData?.name || 'Client',
+        email: profileData?.email || user?.email || '',
+        changedAt: new Date().toLocaleString('en-IN', { 
+          dateStyle: 'medium', 
+          timeStyle: 'short',
+          timeZone: 'Asia/Kolkata'
+        }),
+      };
+
+      supabase.functions.invoke('send-email', {
+        body: {
+          type: 'password_changed',
+          to: emailData.email,
+          data: emailData,
+        },
+      }).catch((err) => {
+        console.error('Failed to send password change notification:', err);
+        // Don't block the flow if email fails
+      });
 
       toast({
         title: 'Password changed successfully',
