@@ -1,16 +1,18 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
-import { Users, Image, Calendar, Eye, Download, TrendingUp } from 'lucide-react';
+import { Users, Image, Calendar, Eye, Download, MessageSquare } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { AdminLayout } from '@/components/admin/AdminLayout';
 import { CreateClientDialog } from '@/components/admin/CreateClientDialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 
 interface DashboardStats {
   totalClients: number;
   totalAlbums: number;
   pendingBookings: number;
+  unreadMessages: number;
   totalViews: number;
   totalDownloads: number;
 }
@@ -21,6 +23,7 @@ const AdminDashboard = () => {
     totalClients: 0,
     totalAlbums: 0,
     pendingBookings: 0,
+    unreadMessages: 0,
     totalViews: 0,
     totalDownloads: 0,
   });
@@ -28,13 +31,14 @@ const AdminDashboard = () => {
   const [recentBookings, setRecentBookings] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  const fetchDashboardData = async () => {
+  const fetchDashboardData = useCallback(async () => {
     try {
       // Fetch counts and data
       const [
         { count: clientsCount },
         { count: albumsCount },
         { count: bookingsCount },
+        { count: messagesCount },
         { data: shareLinksData },
         { data: clientsData },
         { data: bookings },
@@ -42,6 +46,7 @@ const AdminDashboard = () => {
         supabase.from('clients').select('*', { count: 'exact', head: true }),
         supabase.from('albums').select('*', { count: 'exact', head: true }),
         supabase.from('bookings').select('*', { count: 'exact', head: true }).eq('status', 'new'),
+        supabase.from('contact_messages').select('*', { count: 'exact', head: true }).eq('is_read', false),
         supabase.from('share_links').select('view_count, download_count'),
         supabase.from('clients').select(`
           id,
@@ -84,6 +89,7 @@ const AdminDashboard = () => {
         totalClients: clientsCount || 0,
         totalAlbums: albumsCount || 0,
         pendingBookings: bookingsCount || 0,
+        unreadMessages: messagesCount || 0,
         totalViews,
         totalDownloads,
       });
@@ -95,16 +101,41 @@ const AdminDashboard = () => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchDashboardData();
-  }, []);
+
+    // Subscribe to realtime changes for bookings and messages
+    const bookingsChannel = supabase
+      .channel('dashboard_bookings')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'bookings' },
+        () => fetchDashboardData()
+      )
+      .subscribe();
+
+    const messagesChannel = supabase
+      .channel('dashboard_messages')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'contact_messages' },
+        () => fetchDashboardData()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(bookingsChannel);
+      supabase.removeChannel(messagesChannel);
+    };
+  }, [fetchDashboardData]);
 
   const statCards = [
     { label: 'Total Clients', value: stats.totalClients, icon: Users, color: 'text-blue-500' },
     { label: 'Albums', value: stats.totalAlbums, icon: Image, color: 'text-green-500' },
     { label: 'Pending Bookings', value: stats.pendingBookings, icon: Calendar, color: 'text-yellow-500' },
+    { label: 'Unread Messages', value: stats.unreadMessages, icon: MessageSquare, color: 'text-pink-500' },
     { label: 'Gallery Views', value: stats.totalViews, icon: Eye, color: 'text-purple-500' },
     { label: 'Downloads', value: stats.totalDownloads, icon: Download, color: 'text-primary' },
   ];
@@ -122,7 +153,7 @@ const AdminDashboard = () => {
         </div>
 
         {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
           {statCards.map((stat) => (
             <Card key={stat.label} className="bg-card border-border">
               <CardContent className="p-6">

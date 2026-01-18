@@ -9,7 +9,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Calendar, Clock, CheckCircle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-
+import { supabase } from '@/integrations/supabase/client';
 const eventTypes = [
   'Wedding',
   'Pre-Wedding Shoot',
@@ -37,15 +37,33 @@ const Booking = () => {
     e.preventDefault();
     setIsSubmitting(true);
     
-    // TODO: Implement booking submission with Lovable Cloud
-    setTimeout(() => {
-      setIsSubmitting(false);
+    try {
+      const { error } = await supabase.from('bookings').insert({
+        client_name: formData.name,
+        client_email: formData.email,
+        phone: formData.phone || null,
+        event_type: formData.eventType,
+        event_date: formData.eventDate || null,
+        message: formData.message || null,
+      });
+
+      if (error) throw error;
+
       setIsSubmitted(true);
       toast({
         title: 'Booking Request Sent!',
         description: 'We will get back to you within 24 hours.',
       });
-    }, 1500);
+    } catch (error) {
+      console.error('Booking submission error:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to submit booking. Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleChange = (field: string, value: string) => {
