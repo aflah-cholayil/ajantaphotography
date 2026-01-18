@@ -4,6 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { useStudioSettings, StudioSettings } from "@/hooks/useStudioSettings";
@@ -23,7 +24,8 @@ import {
   Loader2,
   Pencil,
   X,
-  Video
+  Video,
+  Eye
 } from "lucide-react";
 
 const Settings = () => {
@@ -31,6 +33,13 @@ const Settings = () => {
   const { settings, isLoading, updateMultipleSettings, isUpdating } = useStudioSettings();
   const [isEditing, setIsEditing] = useState(false);
   const [formData, setFormData] = useState<Partial<StudioSettings>>({});
+  const [videoVisible, setVideoVisible] = useState<boolean | null>(null);
+  const [hasVideoChanges, setHasVideoChanges] = useState(false);
+
+  // Initialize videoVisible from settings
+  const isVideoVisible = videoVisible !== null 
+    ? videoVisible 
+    : settings.showcase_video_visible === 'true';
 
   const handleVideoUploadComplete = useCallback((s3Key: string) => {
     updateMultipleSettings(
@@ -38,14 +47,15 @@ const Settings = () => {
       {
         onSuccess: () => {
           toast({
-            title: "Video saved",
-            description: "Your showcase video has been updated",
+            title: "Video uploaded",
+            description: "Don't forget to enable 'Show on Homepage' and save!",
           });
+          setHasVideoChanges(true);
         },
         onError: () => {
           toast({
             title: "Error",
-            description: "Failed to save video setting",
+            description: "Failed to save video",
             variant: "destructive",
           });
         },
@@ -53,15 +63,46 @@ const Settings = () => {
     );
   }, [updateMultipleSettings, toast]);
 
+  const handleVideoVisibilityToggle = useCallback((checked: boolean) => {
+    setVideoVisible(checked);
+    setHasVideoChanges(true);
+  }, []);
+
+  const handleSaveVideoSettings = useCallback(() => {
+    updateMultipleSettings(
+      { showcase_video_visible: isVideoVisible ? 'true' : 'false' },
+      {
+        onSuccess: () => {
+          toast({
+            title: "Video settings saved",
+            description: isVideoVisible 
+              ? "Video is now visible on the homepage" 
+              : "Video is hidden from the homepage",
+          });
+          setHasVideoChanges(false);
+        },
+        onError: () => {
+          toast({
+            title: "Error",
+            description: "Failed to save video settings",
+            variant: "destructive",
+          });
+        },
+      }
+    );
+  }, [updateMultipleSettings, toast, isVideoVisible]);
+
   const handleVideoRemove = useCallback(() => {
     updateMultipleSettings(
-      { showcase_video_key: '' },
+      { showcase_video_key: '', showcase_video_visible: 'false' },
       {
         onSuccess: () => {
           toast({
             title: "Video removed",
-            description: "The showcase video has been removed",
+            description: "The showcase video has been removed from the homepage",
           });
+          setVideoVisible(false);
+          setHasVideoChanges(false);
         },
       }
     );
@@ -358,12 +399,68 @@ const Settings = () => {
                 Upload a cinematic wedding video to display on the homepage. This video will autoplay (muted) when visitors scroll to the video section.
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-6">
               <VideoUploader
                 currentVideoKey={settings.showcase_video_key || undefined}
                 onUploadComplete={handleVideoUploadComplete}
                 onRemove={handleVideoRemove}
               />
+              
+              {/* Show on Homepage Toggle */}
+              {settings.showcase_video_key && (
+                <div className="border-t pt-6 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                        <Eye className="w-5 h-5 text-primary" />
+                      </div>
+                      <div>
+                        <Label htmlFor="video-visibility" className="text-base font-medium">
+                          Show on Homepage
+                        </Label>
+                        <p className="text-sm text-muted-foreground">
+                          Toggle to show or hide the video section on the homepage
+                        </p>
+                      </div>
+                    </div>
+                    <Switch
+                      id="video-visibility"
+                      checked={isVideoVisible}
+                      onCheckedChange={handleVideoVisibilityToggle}
+                    />
+                  </div>
+                  
+                  {/* Save Button */}
+                  <Button 
+                    onClick={handleSaveVideoSettings} 
+                    disabled={isUpdating || !hasVideoChanges}
+                    className="w-full sm:w-auto"
+                  >
+                    {isUpdating ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Save className="h-4 w-4 mr-2" />
+                    )}
+                    Save Video Settings
+                  </Button>
+                  
+                  {/* Status indicator */}
+                  <div className={`text-sm flex items-center gap-2 ${
+                    settings.showcase_video_visible === 'true' 
+                      ? 'text-green-600' 
+                      : 'text-muted-foreground'
+                  }`}>
+                    <div className={`w-2 h-2 rounded-full ${
+                      settings.showcase_video_visible === 'true' 
+                        ? 'bg-green-500' 
+                        : 'bg-muted-foreground'
+                    }`} />
+                    {settings.showcase_video_visible === 'true' 
+                      ? 'Video is currently visible on homepage' 
+                      : 'Video is currently hidden from homepage'}
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>

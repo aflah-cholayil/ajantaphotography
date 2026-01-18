@@ -14,9 +14,10 @@ export const CinematicVideoSection = () => {
   const isMobile = useIsMobile();
   const { settings, isLoading } = useStudioSettings();
 
-  // Get video URL from studio settings - only show if a custom video is configured
+  // Get video URL from studio settings
   const showcaseVideoKey = settings.showcase_video_key?.trim();
-  const hasCustomVideo = Boolean(showcaseVideoKey);
+  const isVideoVisible = settings.showcase_video_visible === 'true';
+  const hasCustomVideo = Boolean(showcaseVideoKey) && isVideoVisible;
   
   const videoUrl = hasCustomVideo
     ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/s3-signed-url?key=${encodeURIComponent(showcaseVideoKey)}`
@@ -63,7 +64,7 @@ export const CinematicVideoSection = () => {
     },
   };
 
-  // Don't render section if loading, no custom video configured, or has error
+  // Don't render section if loading, no custom video configured, not visible, or has error
   if (isLoading || !hasCustomVideo || hasError) {
     return null;
   }
