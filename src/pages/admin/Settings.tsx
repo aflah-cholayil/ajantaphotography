@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { AdminLayout } from "@/components/admin/AdminLayout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -8,6 +8,7 @@ import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { useStudioSettings, StudioSettings } from "@/hooks/useStudioSettings";
 import { studioConfig } from "@/config/studio";
+import { VideoUploader } from "@/components/admin/VideoUploader";
 import { 
   Building2, 
   Phone, 
@@ -21,7 +22,8 @@ import {
   Save,
   Loader2,
   Pencil,
-  X
+  X,
+  Video
 } from "lucide-react";
 
 const Settings = () => {
@@ -29,6 +31,41 @@ const Settings = () => {
   const { settings, isLoading, updateMultipleSettings, isUpdating } = useStudioSettings();
   const [isEditing, setIsEditing] = useState(false);
   const [formData, setFormData] = useState<Partial<StudioSettings>>({});
+
+  const handleVideoUploadComplete = useCallback((s3Key: string) => {
+    updateMultipleSettings(
+      { showcase_video_key: s3Key },
+      {
+        onSuccess: () => {
+          toast({
+            title: "Video saved",
+            description: "Your showcase video has been updated",
+          });
+        },
+        onError: () => {
+          toast({
+            title: "Error",
+            description: "Failed to save video setting",
+            variant: "destructive",
+          });
+        },
+      }
+    );
+  }, [updateMultipleSettings, toast]);
+
+  const handleVideoRemove = useCallback(() => {
+    updateMultipleSettings(
+      { showcase_video_key: '' },
+      {
+        onSuccess: () => {
+          toast({
+            title: "Video removed",
+            description: "The showcase video has been removed",
+          });
+        },
+      }
+    );
+  }, [updateMultipleSettings, toast]);
 
   const handleStartEditing = () => {
     setFormData({ ...settings });
@@ -307,6 +344,26 @@ const Settings = () => {
                   )}
                 </div>
               </div>
+            </CardContent>
+          </Card>
+
+          {/* Showcase Video */}
+          <Card className="md:col-span-2">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Video className="h-5 w-5 text-primary" />
+                Homepage Showcase Video
+              </CardTitle>
+              <CardDescription>
+                Upload a cinematic wedding video to display on the homepage. This video will autoplay (muted) when visitors scroll to the video section.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <VideoUploader
+                currentVideoKey={settings.showcase_video_key || undefined}
+                onUploadComplete={handleVideoUploadComplete}
+                onRemove={handleVideoRemove}
+              />
             </CardContent>
           </Card>
         </div>

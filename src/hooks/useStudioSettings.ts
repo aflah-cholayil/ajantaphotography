@@ -19,6 +19,7 @@ export interface StudioSettings {
   hours_weekdays: string;
   hours_saturday: string;
   hours_sunday: string;
+  showcase_video_key: string;
 }
 
 // Default values from static config
@@ -39,6 +40,7 @@ const defaultSettings: StudioSettings = {
   hours_weekdays: studioConfig.hours.weekdays,
   hours_saturday: studioConfig.hours.saturday,
   hours_sunday: studioConfig.hours.sunday,
+  showcase_video_key: '',
 };
 
 export function useStudioSettings() {
@@ -93,13 +95,13 @@ export function useStudioSettings() {
       const promises = Object.entries(updates).map(([key, value]) =>
         supabase
           .from('studio_settings')
-          .update({ setting_value: value })
-          .eq('setting_key', key)
+          .upsert({ setting_key: key, setting_value: value || '' }, { onConflict: 'setting_key' })
       );
 
       const results = await Promise.all(promises);
       const errors = results.filter((r) => r.error);
       if (errors.length > 0) {
+        console.error('Settings update errors:', errors);
         throw new Error('Failed to update some settings');
       }
     },
