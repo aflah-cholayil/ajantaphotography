@@ -4,6 +4,7 @@ import { Search, MoreVertical, Mail, Eye, RefreshCw } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { AdminLayout } from '@/components/admin/AdminLayout';
 import { CreateClientDialog } from '@/components/admin/CreateClientDialog';
+import { EmailStatusBadge, type EmailStatus } from '@/components/admin/EmailStatusBadge';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import {
@@ -38,6 +39,7 @@ interface Client {
     title: string;
     status: string;
   }[];
+  emailStatus: EmailStatus;
 }
 
 const AdminClients = () => {
@@ -97,12 +99,40 @@ const AdminClients = () => {
         }
       }
 
+      // Fetch email logs for welcome emails to these clients
+      const emails = Object.values(profilesMap).map(p => p.email).filter(Boolean);
+      let emailStatusMap: Record<string, EmailStatus> = {};
+
+      if (emails.length > 0) {
+        const { data: emailLogs, error: emailLogsError } = await supabase
+          .from('email_logs')
+          .select('to_email, status, created_at')
+          .eq('template_type', 'welcome')
+          .in('to_email', emails)
+          .order('created_at', { ascending: false });
+
+        if (emailLogsError) {
+          console.error('Error fetching email logs:', emailLogsError);
+        } else if (emailLogs) {
+          // Get the most recent status for each email
+          emailLogs.forEach((log) => {
+            if (!emailStatusMap[log.to_email]) {
+              emailStatusMap[log.to_email] = log.status as EmailStatus;
+            }
+          });
+        }
+      }
+
       // Combine the data
-      const clientsWithProfiles = (clientsData || []).map(client => ({
-        ...client,
-        profiles: profilesMap[client.user_id] || { name: 'Unknown', email: 'N/A' },
-        albums: client.albums || [],
-      }));
+      const clientsWithProfiles = (clientsData || []).map(client => {
+        const profile = profilesMap[client.user_id] || { name: 'Unknown', email: 'N/A' };
+        return {
+          ...client,
+          profiles: profile,
+          albums: client.albums || [],
+          emailStatus: (emailStatusMap[profile.email] || 'none') as EmailStatus,
+        };
+      });
 
       console.log('Clients with profiles:', clientsWithProfiles);
       setClients(clientsWithProfiles);
@@ -204,8 +234,13 @@ const AdminClients = () => {
                     <p>{client.albums.length} album{client.albums.length !== 1 ? 's' : ''}</p>
                   </div>
                   <div>
-                    <p className="text-muted-foreground text-xs">Created</p>
-                    <p>{format(new Date(client.created_at), 'MMM d, yyyy')}</p>
+                    <p className="text-muted-foreground text-xs">Welcome Email</p>
+                    <EmailStatusBadge
+                      status={client.emailStatus}
+                      email={client.profiles?.email || ''}
+                      clientName={client.profiles?.name || 'Client'}
+                      onRetrySuccess={fetchClients}
+                    />
                   </div>
                 </div>
               </div>
@@ -222,20 +257,20 @@ const AdminClients = () => {
                 <TableHead>Event</TableHead>
                 <TableHead className="hidden md:table-cell">Event Date</TableHead>
                 <TableHead className="hidden lg:table-cell">Albums</TableHead>
-                <TableHead className="hidden lg:table-cell">Created</TableHead>
+                <TableHead>Email Status</TableHead>
                 <TableHead className="w-12"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                     Loading clients...
                   </TableCell>
                 </TableRow>
               ) : filteredClients.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                     {searchQuery ? 'No clients found matching your search' : 'No clients yet'}
                   </TableCell>
                 </TableRow>
@@ -260,8 +295,13 @@ const AdminClients = () => {
                         {client.albums.length} album{client.albums.length !== 1 ? 's' : ''}
                       </span>
                     </TableCell>
-                    <TableCell className="hidden lg:table-cell text-muted-foreground">
-                      {format(new Date(client.created_at), 'MMM d, yyyy')}
+                    <TableCell>
+                      <EmailStatusBadge
+                        status={client.emailStatus}
+                        email={client.profiles?.email || ''}
+                        clientName={client.profiles?.name || 'Client'}
+                        onRetrySuccess={fetchClients}
+                      />
                     </TableCell>
                     <TableCell>
                       <DropdownMenu>
