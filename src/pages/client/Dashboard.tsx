@@ -103,6 +103,15 @@ const ClientDashboard = () => {
     }
   }, [user]);
 
+  const handleRefresh = useCallback(async () => {
+    await fetchClientData();
+  }, [fetchClientData]);
+
+  const handleSignOut = useCallback(async () => {
+    await signOut();
+    navigate('/login');
+  }, [signOut, navigate]);
+
   useEffect(() => {
     // Redirect if not authenticated or not a client
     if (!authLoading) {
@@ -123,11 +132,6 @@ const ClientDashboard = () => {
       fetchClientData();
     }
   }, [user, role, fetchClientData]);
-
-  const handleSignOut = async () => {
-    await signOut();
-    navigate('/login');
-  };
 
   // Show loading spinner while checking auth or loading data
   if (authLoading || (role === 'client' && isLoading && !isDataLoaded)) {
@@ -161,10 +165,6 @@ const ClientDashboard = () => {
       </div>
     );
   }
-
-  const handleRefresh = useCallback(async () => {
-    await fetchClientData();
-  }, [fetchClientData]);
 
   return (
     <PullToRefresh onRefresh={handleRefresh} className="min-h-screen bg-background">
