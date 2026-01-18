@@ -103,11 +103,16 @@ export const GalleryPreview = () => {
                   index === 0 ? 'md:row-span-2' : ''
                 }`}
               >
-                <div className="aspect-[4/5] md:h-full">
-                  <img
+                <div className="aspect-[4/5] md:h-full overflow-hidden">
+                  <motion.img
                     src={image.src}
                     alt={image.alt}
-                    className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+                    className="w-full h-full object-cover"
+                    initial={{ scale: 1 }}
+                    whileInView={{ scale: 1.08 }}
+                    viewport={{ once: true }}
+                    transition={{ duration: 8, ease: 'linear' }}
+                    whileHover={{ scale: 1.15 }}
                   />
                 </div>
                 <div className="absolute inset-0 bg-gradient-to-t from-background/80 via-background/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />

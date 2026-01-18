@@ -1,10 +1,20 @@
-import { motion } from 'framer-motion';
+import { motion, useScroll, useTransform } from 'framer-motion';
+import { useRef } from 'react';
 import { SectionHeading } from '@/components/ui/SectionHeading';
 import photographerImage from '@/assets/photographer.jpg';
 
 export const AboutPreview = () => {
+  const sectionRef = useRef<HTMLDivElement>(null);
+  const { scrollYProgress } = useScroll({
+    target: sectionRef,
+    offset: ['start end', 'end start'],
+  });
+
+  const imageScale = useTransform(scrollYProgress, [0, 0.5], [1, 1.08]);
+  const imageOpacity = useTransform(scrollYProgress, [0, 0.2], [0.8, 1]);
+
   return (
-    <section className="py-24 md:py-32 bg-background overflow-hidden">
+    <section ref={sectionRef} className="py-24 md:py-32 bg-background overflow-hidden">
       <div className="container mx-auto px-6">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-20 items-center">
           {/* Image */}
@@ -16,15 +26,28 @@ export const AboutPreview = () => {
             className="relative"
           >
             <div className="relative aspect-[3/4] rounded-lg overflow-hidden">
-              <img
+              <motion.img
                 src={photographerImage}
                 alt="Lead photographer"
                 className="w-full h-full object-cover"
+                style={{ scale: imageScale, opacity: imageOpacity }}
               />
             </div>
             {/* Decorative Frame */}
-            <div className="absolute -top-4 -left-4 w-32 h-32 border-l-2 border-t-2 border-primary/30" />
-            <div className="absolute -bottom-4 -right-4 w-32 h-32 border-r-2 border-b-2 border-primary/30" />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.8 }}
+              whileInView={{ opacity: 1, scale: 1 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.6, delay: 0.3 }}
+              className="absolute -top-4 -left-4 w-32 h-32 border-l-2 border-t-2 border-primary/30"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.8 }}
+              whileInView={{ opacity: 1, scale: 1 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.6, delay: 0.4 }}
+              className="absolute -bottom-4 -right-4 w-32 h-32 border-r-2 border-b-2 border-primary/30"
+            />
 
             {/* Stats Card */}
             <motion.div
