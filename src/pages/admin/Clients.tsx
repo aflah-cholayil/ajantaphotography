@@ -1,13 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
 import { format } from 'date-fns';
-import { Search, MoreVertical, Mail, Eye, RefreshCw, History } from 'lucide-react';
+import { Search, MoreVertical, Mail, Eye, RefreshCw, History, X } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { AdminLayout } from '@/components/admin/AdminLayout';
 import { CreateClientDialog } from '@/components/admin/CreateClientDialog';
 import { EmailStatusBadge, type EmailStatus } from '@/components/admin/EmailStatusBadge';
 import { EmailHistoryDialog } from '@/components/admin/EmailHistoryDialog';
+import { BulkEmailDialog } from '@/components/admin/BulkEmailDialog';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Table,
   TableBody,
@@ -23,6 +25,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useNavigate } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
 
 interface Client {
   id: string;
@@ -48,6 +51,8 @@ const AdminClients = () => {
   const [clients, setClients] = useState<Client[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkEmailOpen, setBulkEmailOpen] = useState(false);
 
   const fetchClients = useCallback(async () => {
     setIsLoading(true);
@@ -159,6 +164,43 @@ const AdminClients = () => {
     );
   });
 
+  // Selection handlers
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === filteredClients.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredClients.map(c => c.id)));
+    }
+  };
+
+  const clearSelection = () => {
+    setSelectedIds(new Set());
+  };
+
+  const selectedClients = filteredClients
+    .filter(c => selectedIds.has(c.id))
+    .map(c => ({
+      id: c.id,
+      name: c.profiles?.name || 'Unknown',
+      email: c.profiles?.email || '',
+    }))
+    .filter(c => c.email && c.email !== 'N/A');
+
+  const isAllSelected = filteredClients.length > 0 && selectedIds.size === filteredClients.length;
+  const isSomeSelected = selectedIds.size > 0;
+
   return (
     <AdminLayout>
       <div className="space-y-4 sm:space-y-6">
@@ -187,6 +229,38 @@ const AdminClients = () => {
           />
         </div>
 
+        {/* Bulk Action Bar */}
+        <AnimatePresence>
+          {isSomeSelected && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="flex items-center justify-between gap-4 p-3 bg-primary/10 border border-primary/20 rounded-lg"
+            >
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-medium">
+                  {selectedIds.size} client{selectedIds.size !== 1 ? 's' : ''} selected
+                </span>
+                <Button variant="ghost" size="sm" onClick={clearSelection}>
+                  <X className="h-4 w-4 mr-1" />
+                  Clear
+                </Button>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  onClick={() => setBulkEmailOpen(true)}
+                  disabled={selectedClients.length === 0}
+                >
+                  <Mail className="h-4 w-4 mr-2" />
+                  Send Email ({selectedClients.length})
+                </Button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Mobile Card View */}
         <div className="block sm:hidden space-y-3">
           {isLoading ? (
@@ -197,11 +271,23 @@ const AdminClients = () => {
             </div>
           ) : (
             filteredClients.map((client) => (
-              <div key={client.id} className="bg-card border border-border rounded-lg p-4 space-y-3">
+              <div 
+                key={client.id} 
+                className={`bg-card border rounded-lg p-4 space-y-3 transition-colors ${
+                  selectedIds.has(client.id) ? 'border-primary bg-primary/5' : 'border-border'
+                }`}
+              >
                 <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0 flex-1">
-                    <p className="font-medium truncate">{client.profiles?.name || 'Unknown'}</p>
-                    <p className="text-sm text-muted-foreground truncate">{client.profiles?.email || 'N/A'}</p>
+                  <div className="flex items-start gap-3 min-w-0 flex-1">
+                    <Checkbox
+                      checked={selectedIds.has(client.id)}
+                      onCheckedChange={() => toggleSelect(client.id)}
+                      className="mt-1"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium truncate">{client.profiles?.name || 'Unknown'}</p>
+                      <p className="text-sm text-muted-foreground truncate">{client.profiles?.email || 'N/A'}</p>
+                    </div>
                   </div>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -265,6 +351,13 @@ const AdminClients = () => {
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/30">
+                <TableHead className="w-12">
+                  <Checkbox
+                    checked={isAllSelected}
+                    onCheckedChange={toggleSelectAll}
+                    aria-label="Select all"
+                  />
+                </TableHead>
                 <TableHead>Client</TableHead>
                 <TableHead>Event</TableHead>
                 <TableHead className="hidden md:table-cell">Event Date</TableHead>
@@ -288,7 +381,17 @@ const AdminClients = () => {
                 </TableRow>
               ) : (
                 filteredClients.map((client) => (
-                  <TableRow key={client.id} className="hover:bg-muted/20">
+                  <TableRow 
+                    key={client.id} 
+                    className={`hover:bg-muted/20 ${selectedIds.has(client.id) ? 'bg-primary/5' : ''}`}
+                  >
+                    <TableCell>
+                      <Checkbox
+                        checked={selectedIds.has(client.id)}
+                        onCheckedChange={() => toggleSelect(client.id)}
+                        aria-label={`Select ${client.profiles?.name}`}
+                      />
+                    </TableCell>
                     <TableCell>
                       <div>
                         <p className="font-medium">{client.profiles?.name || 'Unknown'}</p>
@@ -351,6 +454,17 @@ const AdminClients = () => {
             </TableBody>
           </Table>
         </div>
+
+        {/* Bulk Email Dialog */}
+        <BulkEmailDialog
+          open={bulkEmailOpen}
+          onOpenChange={setBulkEmailOpen}
+          clients={selectedClients}
+          onComplete={() => {
+            fetchClients();
+            clearSelection();
+          }}
+        />
       </div>
     </AdminLayout>
   );
