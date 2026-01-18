@@ -136,7 +136,8 @@ export const CinematicVideoSection = () => {
         <div 
           className="relative w-full overflow-hidden"
           style={{ 
-            aspectRatio: isMobile ? '16/9' : '21/9',
+            // Use numeric ratios to avoid browser parsing issues with strings like "21/9"
+            aspectRatio: isMobile ? 16 / 9 : 21 / 9,
           }}
         >
           {/* Loading placeholder */}
