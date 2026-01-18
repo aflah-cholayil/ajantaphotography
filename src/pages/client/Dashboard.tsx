@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { format } from 'date-fns';
-import { Image, Calendar, LogOut, User, FolderOpen, Settings, RefreshCw } from 'lucide-react';
+import { Image, Calendar, LogOut, User, FolderOpen, Settings } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { AlbumStatusBadge } from '@/components/admin/AlbumStatusBadge';
 import { PullToRefresh } from '@/components/ui/PullToRefresh';
 import { Logo } from '@/components/shared/Logo';
+import { ChangePasswordDialog } from '@/components/client/ChangePasswordDialog';
 
 interface ClientData {
   id: string;
@@ -37,6 +38,7 @@ const ClientDashboard = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isDataLoaded, setIsDataLoaded] = useState(false);
   const [profileName, setProfileName] = useState<string>('');
+  const [mustChangePassword, setMustChangePassword] = useState(false);
 
   const fetchClientData = useCallback(async () => {
     if (!user) return;
@@ -85,15 +87,16 @@ const ClientDashboard = () => {
         }
       }
 
-      // Fetch profile name
+      // Fetch profile data including must_change_password
       const { data: profileData } = await supabase
         .from('profiles')
-        .select('name')
+        .select('name, must_change_password')
         .eq('user_id', user.id)
         .maybeSingle();
 
       if (profileData) {
         setProfileName(profileData.name);
+        setMustChangePassword(profileData.must_change_password ?? false);
       }
     } catch (error) {
       console.error('Error in fetchClientData:', error);
@@ -106,6 +109,9 @@ const ClientDashboard = () => {
   const handleRefresh = useCallback(async () => {
     await fetchClientData();
   }, [fetchClientData]);
+  const handlePasswordChanged = useCallback(() => {
+    setMustChangePassword(false);
+  }, []);
 
   const handleSignOut = useCallback(async () => {
     await signOut();
@@ -167,7 +173,15 @@ const ClientDashboard = () => {
   }
 
   return (
-    <PullToRefresh onRefresh={handleRefresh} className="min-h-screen bg-background">
+    <>
+      {/* Password Change Dialog - blocks interaction until password is changed */}
+      <ChangePasswordDialog
+        open={mustChangePassword}
+        userId={user.id}
+        onPasswordChanged={handlePasswordChanged}
+      />
+
+      <PullToRefresh onRefresh={handleRefresh} className="min-h-screen bg-background">
       {/* Header */}
       <header className="border-b border-border bg-card sticky top-0 z-40">
         <div className="container mx-auto px-4 sm:px-6 py-3 sm:py-4">
@@ -341,6 +355,7 @@ const ClientDashboard = () => {
         </div>
       </footer>
     </PullToRefresh>
+    </>
   );
 };
 
