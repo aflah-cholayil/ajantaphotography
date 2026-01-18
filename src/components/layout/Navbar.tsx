@@ -37,7 +37,7 @@ export const Navbar = () => {
         animate={{ y: 0 }}
         transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
         className={`fixed top-0 left-0 right-0 z-50 transition-all duration-500 ${
-          isScrolled ? 'glass py-4' : 'py-6'
+          isScrolled ? 'glass py-2' : 'py-3'
         }`}
       >
         <div className="container mx-auto px-6 flex items-center justify-between">
