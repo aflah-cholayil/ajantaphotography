@@ -32,9 +32,19 @@ const Booking = () => {
     eventDate: '',
     message: '',
   });
+  // Honeypot field - bots will fill this, humans won't see it
+  const [honeypot, setHoneypot] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Honeypot check - if filled, it's a bot
+    if (honeypot) {
+      // Silently "succeed" to not alert the bot
+      setIsSubmitted(true);
+      return;
+    }
+    
     setIsSubmitting(true);
     
     try {
@@ -123,6 +133,19 @@ const Booking = () => {
               className="glass p-8 md:p-12 rounded-lg"
             >
               <form onSubmit={handleSubmit} className="space-y-6">
+                {/* Honeypot field - hidden from users, bots will fill it */}
+                <div className="absolute -left-[9999px] opacity-0 h-0 overflow-hidden" aria-hidden="true">
+                  <label htmlFor="website">Website</label>
+                  <input
+                    type="text"
+                    id="website"
+                    name="website"
+                    tabIndex={-1}
+                    autoComplete="off"
+                    value={honeypot}
+                    onChange={(e) => setHoneypot(e.target.value)}
+                  />
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
                     <Label htmlFor="name" className="text-foreground font-sans">
