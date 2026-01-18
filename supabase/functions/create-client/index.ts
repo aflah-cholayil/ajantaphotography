@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { z } from "npm:zod@3.25.76";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -10,9 +11,18 @@ interface CreateClientRequest {
   name: string;
   email: string;
   eventName: string;
-  eventDate?: string;
-  notes?: string;
+  eventDate?: string | null;
+  notes?: string | null;
 }
+
+const createClientSchema = z.object({
+  name: z.string().trim().min(2).max(100),
+  email: z.string().trim().email().max(255),
+  eventName: z.string().trim().min(2).max(200),
+  eventDate: z.string().nullable().optional(),
+  notes: z.string().trim().max(1000).nullable().optional(),
+});
+
 
 // Generate a secure random password
 const generatePassword = (): string => {
@@ -80,7 +90,20 @@ const handler = async (req: Request): Promise<Response> => {
       });
     }
 
-    const { name, email, eventName, eventDate, notes }: CreateClientRequest = await req.json();
+    const payload: CreateClientRequest = await req.json();
+
+    const parsed = createClientSchema.safeParse(payload);
+    if (!parsed.success) {
+      return new Response(
+        JSON.stringify({ error: "Invalid input" }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        }
+      );
+    }
+
+    const { name, email, eventName, eventDate, notes } = parsed.data;
 
     // Check if user already exists
     const { data: existingUser } = await serviceSupabase
@@ -137,7 +160,68 @@ const handler = async (req: Request): Promise<Response> => {
 
     console.log("Client created:", clientData.id);
 
-    // Create default album
+    // Send welcome email (MANDATORY) - retry once and fail the flow if it cannot be sent
+    const origin = req.headers.get("origin");
+    const referer = req.headers.get("referer");
+    const baseUrl = origin || (referer ? new URL(referer).origin : "https://studio-shines-77.lovable.app");
+    const loginUrl = `${baseUrl}/login`;
+
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    const sendWelcomeEmail = async (): Promise<string | null> => {
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        const { data: emailData, error: emailError } = await serviceSupabase.functions.invoke(
+          "send-email",
+          {
+            body: {
+              type: "welcome",
+              to: email,
+              data: {
+                name,
+                email,
+                password,
+                loginUrl,
+              },
+            },
+          }
+        );
+
+        if (!emailError) {
+          console.log("Welcome email sent successfully", { to: email, id: (emailData as any)?.id });
+          return (emailData as any)?.id ?? null;
+        }
+
+        console.error("Welcome email failed", { to: email, attempt, message: emailError.message });
+        if (attempt < 2) await sleep(1000);
+      }
+
+      return null;
+    };
+
+    const emailId = await sendWelcomeEmail();
+
+    if (!emailId) {
+      // Best-effort cleanup so admin can retry creation safely
+      console.error("Welcome email failed after retry. Rolling back client creation.");
+      try {
+        await serviceSupabase.from("clients").delete().eq("id", clientData.id);
+        await serviceSupabase.from("profiles").delete().eq("user_id", authData.user.id);
+        await serviceSupabase.from("user_roles").delete().eq("user_id", authData.user.id);
+        await serviceSupabase.auth.admin.deleteUser(authData.user.id);
+      } catch (cleanupError) {
+        console.error("Rollback cleanup failed", cleanupError);
+      }
+
+      return new Response(
+        JSON.stringify({ error: "Welcome email failed to send. Please try again." }),
+        {
+          status: 500,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        }
+      );
+    }
+
+    // Create default album (optional)
     const { data: albumData, error: albumError } = await serviceSupabase
       .from("albums")
       .insert({
@@ -152,55 +236,6 @@ const handler = async (req: Request): Promise<Response> => {
       console.error("Error creating album:", albumError);
     }
 
-    // Send welcome email with retry
-    const origin = req.headers.get("origin") || "https://studio-shines-77.lovable.app";
-    const loginUrl = `${origin}/login`;
-    
-    const sendWelcomeEmail = async (retryCount = 0): Promise<void> => {
-      try {
-        const response = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/send-email`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-          },
-          body: JSON.stringify({
-            type: "welcome",
-            to: email,
-            data: {
-              name,
-              email,
-              password,
-              eventName,
-              loginUrl,
-            },
-          }),
-        });
-        
-        if (!response.ok && retryCount < 2) {
-          console.log(`Email send failed, retrying... (attempt ${retryCount + 2})`);
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          return sendWelcomeEmail(retryCount + 1);
-        }
-        
-        if (response.ok) {
-          console.log("Welcome email sent successfully");
-        } else {
-          console.error("Failed to send welcome email after retries");
-        }
-      } catch (emailError) {
-        if (retryCount < 2) {
-          console.log(`Email error, retrying... (attempt ${retryCount + 2})`);
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          return sendWelcomeEmail(retryCount + 1);
-        }
-        console.error("Failed to send welcome email:", emailError);
-      }
-    };
-    
-    // Send email (don't await to avoid blocking response)
-    sendWelcomeEmail();
-
     return new Response(
       JSON.stringify({
         success: true,
@@ -208,6 +243,8 @@ const handler = async (req: Request): Promise<Response> => {
         album: albumData,
         userId: authData.user.id,
         temporaryPassword: password,
+        emailSent: true,
+        emailId,
       }),
       {
         status: 200,
