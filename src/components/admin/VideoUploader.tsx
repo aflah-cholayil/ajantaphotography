@@ -148,12 +148,13 @@ export function VideoUploader({ currentVideoKey, onUploadComplete, onRemove }: V
         disabled={isUploading}
       />
 
-      {/* Current Video Preview */}
+      {/* Current Video Preview - Compact size for admin */}
       {hasVideo && !isUploading && (
-        <div className="relative rounded-lg overflow-hidden bg-muted aspect-video">
+        <div className="relative rounded-lg overflow-hidden bg-muted" style={{ maxHeight: '180px' }}>
           <video
             src={previewUrl || `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/s3-signed-url?key=${currentVideoKey}`}
             className="w-full h-full object-cover"
+            style={{ maxHeight: '180px' }}
             muted
             loop
             playsInline

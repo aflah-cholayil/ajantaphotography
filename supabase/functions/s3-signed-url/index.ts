@@ -37,93 +37,125 @@ const handler = async (req: Request): Promise<Response> => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    const { s3Key, expiresIn = 3600, albumId, shareToken, sharePassword }: SignedUrlRequest = await req.json();
+    let s3Key: string;
+    let expiresIn = 3600;
+    let albumId: string | undefined;
+    let shareToken: string | undefined;
+    let sharePassword: string | undefined;
+    let isPublicAsset = false;
 
-    let hasAccess = false;
-
-    // Check authentication first
-    const authHeader = req.headers.get("Authorization");
-    
-    if (authHeader?.startsWith("Bearer ")) {
-      const userSupabase = createClient(
-        Deno.env.get("SUPABASE_URL")!,
-        Deno.env.get("SUPABASE_ANON_KEY")!,
-        { global: { headers: { Authorization: authHeader } } }
-      );
-
-      const { data: { user } } = await userSupabase.auth.getUser();
+    // Support both GET (for simple public assets) and POST (for authenticated access)
+    if (req.method === "GET") {
+      const url = new URL(req.url);
+      s3Key = url.searchParams.get("key") || "";
       
-      if (user) {
-        const userId = user.id;
+      // Check if this is a public showcase asset (no auth required)
+      if (s3Key.startsWith("assets/showcase_video/") || s3Key.startsWith("assets/public/")) {
+        isPublicAsset = true;
+      }
+    } else {
+      const body = await req.json();
+      s3Key = body.s3Key;
+      expiresIn = body.expiresIn || 3600;
+      albumId = body.albumId;
+      shareToken = body.shareToken;
+      sharePassword = body.sharePassword;
+    }
 
-        // Check if admin
-        const { data: roleData } = await supabase
-          .from("user_roles")
-          .select("role")
-          .eq("user_id", userId)
-          .single();
+    if (!s3Key) {
+      return new Response(JSON.stringify({ error: "Missing s3Key or key parameter" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
 
-        const adminRoles = ["admin", "owner", "editor"];
-        if (roleData?.role && adminRoles.includes(roleData.role)) {
-          hasAccess = true;
-        } else if (albumId) {
-          // Check if client owns this album
-          const { data: album } = await supabase
-            .from("albums")
-            .select("client_id, clients!inner(user_id)")
-            .eq("id", albumId)
+    let hasAccess = isPublicAsset;
+
+    // Check authentication if not a public asset
+    if (!hasAccess) {
+      const authHeader = req.headers.get("Authorization");
+      
+      if (authHeader?.startsWith("Bearer ")) {
+        const userSupabase = createClient(
+          Deno.env.get("SUPABASE_URL")!,
+          Deno.env.get("SUPABASE_ANON_KEY")!,
+          { global: { headers: { Authorization: authHeader } } }
+        );
+
+        const { data: { user } } = await userSupabase.auth.getUser();
+        
+        if (user) {
+          const userId = user.id;
+
+          // Check if admin
+          const { data: roleData } = await supabase
+            .from("user_roles")
+            .select("role")
+            .eq("user_id", userId)
             .single();
 
-          if (album && (album as any).clients?.user_id === userId) {
+          const adminRoles = ["admin", "owner", "editor"];
+          if (roleData?.role && adminRoles.includes(roleData.role)) {
             hasAccess = true;
+          } else if (albumId) {
+            // Check if client owns this album
+            const { data: album } = await supabase
+              .from("albums")
+              .select("client_id, clients!inner(user_id)")
+              .eq("id", albumId)
+              .single();
+
+            if (album && (album as any).clients?.user_id === userId) {
+              hasAccess = true;
+            }
           }
         }
       }
-    }
 
-    // Check share token access
-    if (!hasAccess && shareToken && albumId) {
-      const { data: shareLink } = await supabase
-        .from("share_links")
-        .select("*")
-        .eq("token", shareToken)
-        .eq("album_id", albumId)
-        .single();
-
-      if (shareLink) {
-        // Check expiry
-        if (shareLink.expires_at && new Date(shareLink.expires_at) < new Date()) {
-          return new Response(JSON.stringify({ error: "Link has expired" }), {
-            status: 403,
-            headers: { "Content-Type": "application/json", ...corsHeaders },
-          });
-        }
-
-        // Check password if required
-        if (shareLink.password_hash) {
-          if (!sharePassword) {
-            return new Response(JSON.stringify({ error: "Password required" }), {
-              status: 401,
-              headers: { "Content-Type": "application/json", ...corsHeaders },
-            });
-          }
-          // Verify password using bcrypt
-          const isValidPassword = await bcrypt.compare(sharePassword, shareLink.password_hash);
-          if (!isValidPassword) {
-            return new Response(JSON.stringify({ error: "Invalid password" }), {
-              status: 401,
-              headers: { "Content-Type": "application/json", ...corsHeaders },
-            });
-          }
-        }
-
-        hasAccess = true;
-
-        // Increment view count
-        await supabase
+      // Check share token access
+      if (!hasAccess && shareToken && albumId) {
+        const { data: shareLink } = await supabase
           .from("share_links")
-          .update({ view_count: shareLink.view_count + 1 })
-          .eq("id", shareLink.id);
+          .select("*")
+          .eq("token", shareToken)
+          .eq("album_id", albumId)
+          .single();
+
+        if (shareLink) {
+          // Check expiry
+          if (shareLink.expires_at && new Date(shareLink.expires_at) < new Date()) {
+            return new Response(JSON.stringify({ error: "Link has expired" }), {
+              status: 403,
+              headers: { "Content-Type": "application/json", ...corsHeaders },
+            });
+          }
+
+          // Check password if required
+          if (shareLink.password_hash) {
+            if (!sharePassword) {
+              return new Response(JSON.stringify({ error: "Password required" }), {
+                status: 401,
+                headers: { "Content-Type": "application/json", ...corsHeaders },
+              });
+            }
+            // Verify password using bcrypt
+            const isValidPassword = await bcrypt.compare(sharePassword, shareLink.password_hash);
+            if (!isValidPassword) {
+              return new Response(JSON.stringify({ error: "Invalid password" }), {
+                status: 401,
+                headers: { "Content-Type": "application/json", ...corsHeaders },
+              });
+            }
+          }
+
+          hasAccess = true;
+
+          // Increment view count
+          await supabase
+            .from("share_links")
+            .update({ view_count: shareLink.view_count + 1 })
+            .eq("id", shareLink.id);
+        }
       }
     }
 
