@@ -164,7 +164,8 @@ const handler = async (req: Request): Promise<Response> => {
     const origin = req.headers.get("origin");
     const referer = req.headers.get("referer");
     const baseUrl = origin || (referer ? new URL(referer).origin : "https://studio-shines-77.lovable.app");
-    const loginUrl = `${baseUrl}/login`;
+    // Include email in URL for pre-fill
+    const loginUrl = `${baseUrl}/login?email=${encodeURIComponent(email)}`;
 
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -181,6 +182,7 @@ const handler = async (req: Request): Promise<Response> => {
                 email,
                 password,
                 loginUrl,
+                clientId: clientData.id,
               },
             },
           }
