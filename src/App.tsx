@@ -11,6 +11,8 @@ import Booking from "./pages/Booking";
 import Contact from "./pages/Contact";
 import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
+import PrivacyPolicy from "./pages/PrivacyPolicy";
+import TermsOfService from "./pages/TermsOfService";
 import AdminDashboard from "./pages/admin/Dashboard";
 import AdminClients from "./pages/admin/Clients";
 import AdminAlbums from "./pages/admin/Albums";
@@ -41,6 +43,8 @@ const App = () => (
           <Route path="/booking" element={<Booking />} />
           <Route path="/contact" element={<Contact />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+          <Route path="/terms-of-service" element={<TermsOfService />} />
           {/* Client Portal Routes */}
           <Route path="/client" element={<ClientDashboard />} />
           <Route path="/client/album/:id" element={<ClientAlbumView />} />
