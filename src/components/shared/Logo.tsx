@@ -12,11 +12,11 @@ export const Logo = ({
   className = '',
   linkTo = '/',
 }: LogoProps) => {
-  // Increased sizes for better visibility
+  // Increased sizes for stronger branding (25-40% larger)
   const sizeClasses = {
-    small: 'h-10 md:h-12',
-    default: 'h-12 md:h-14',
-    large: 'h-16 md:h-20',
+    small: 'h-14 md:h-16',      // Mobile: 56px, Desktop: 64px
+    default: 'h-16 md:h-20',    // Mobile: 64px, Desktop: 80px  
+    large: 'h-20 md:h-24',      // Mobile: 80px, Desktop: 96px
   };
 
   const content = (

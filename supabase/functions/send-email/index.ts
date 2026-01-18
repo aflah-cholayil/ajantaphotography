@@ -74,7 +74,7 @@ const logoUrl = "https://storage.googleapis.com/gpt-engineer-file-uploads/ndpHLP
 function getEmailHeader(): string {
   return `
     <div style="text-align: center; margin-bottom: 30px;">
-      <img src="${logoUrl}" alt="Ajanta Photography" style="height: 80px; width: auto; object-fit: contain;" />
+      <img src="${logoUrl}" alt="Ajanta Photography" style="height: 100px; width: auto; object-fit: contain;" />
     </div>
   `;
 }
@@ -84,7 +84,7 @@ function getEmailFooter(config: StudioConfig): string {
   return `
     <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #333;">
       <div style="text-align: center; margin-bottom: 15px;">
-        <img src="${logoUrl}" alt="Ajanta Photography" style="height: 50px; width: auto; object-fit: contain;" />
+        <img src="${logoUrl}" alt="Ajanta Photography" style="height: 60px; width: auto; object-fit: contain;" />
       </div>
       <p style="font-size: 12px; color: #a09080; margin: 0; line-height: 1.8; text-align: center;">
         ${config.address_line1}<br />
