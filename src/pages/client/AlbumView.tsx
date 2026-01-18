@@ -325,71 +325,59 @@ const ClientAlbumView = () => {
     <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="border-b border-border bg-card sticky top-0 z-40">
-        <div className="container mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <Button variant="ghost" size="icon" onClick={() => navigate('/client')}>
+        <div className="container mx-auto px-4 sm:px-6 py-3 sm:py-4">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-1">
+              <Button variant="ghost" size="icon" onClick={() => navigate('/client')} className="flex-shrink-0">
                 <ArrowLeft size={20} />
               </Button>
-              <div>
-                <h1 className="font-serif text-xl font-light text-foreground">{album.title}</h1>
+              <div className="min-w-0">
+                <h1 className="font-serif text-base sm:text-xl font-light text-foreground truncate">{album.title}</h1>
                 {album.description && (
-                  <p className="text-sm text-muted-foreground">{album.description}</p>
+                  <p className="text-xs sm:text-sm text-muted-foreground truncate hidden sm:block">{album.description}</p>
                 )}
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
               {isSelectionMode && selectedItems.size > 0 && (
                 <>
-                  <span className="text-sm text-muted-foreground">
+                  <span className="text-xs sm:text-sm text-muted-foreground hidden sm:inline">
                     {selectedItems.size} selected
                   </span>
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={handleDownloadSelected}
-                    className="gap-2"
+                    className="gap-1 sm:gap-2 px-2 sm:px-3"
                   >
-                    <Download size={16} />
-                    <span className="hidden sm:inline">Download Selected</span>
+                    <Download size={14} />
+                    <span className="hidden sm:inline">Download</span>
                   </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={clearSelection}
-                  >
-                    Clear
+                  <Button variant="ghost" size="sm" onClick={clearSelection} className="px-2 sm:px-3">
+                    <X size={14} className="sm:hidden" />
+                    <span className="hidden sm:inline">Clear</span>
                   </Button>
                 </>
               )}
               {!isSelectionMode && media.length > 0 && (
                 <>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setIsSelectionMode(true)}
-                  >
-                    <Check size={16} className="mr-2" />
-                    Select
+                  <Button variant="ghost" size="sm" onClick={() => setIsSelectionMode(true)} className="px-2 sm:px-3">
+                    <Check size={14} className="sm:mr-2" />
+                    <span className="hidden sm:inline">Select</span>
                   </Button>
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={handleDownloadAll}
                     disabled={isDownloadingAll}
-                    className="gap-2"
+                    className="gap-1 sm:gap-2 px-2 sm:px-3"
                   >
                     {isDownloadingAll ? (
-                      <>
-                        <Loader2 size={16} className="animate-spin" />
-                        <span className="hidden sm:inline">Downloading...</span>
-                      </>
+                      <Loader2 size={14} className="animate-spin" />
                     ) : (
-                      <>
-                        <FolderDown size={16} />
-                        <span className="hidden sm:inline">Download All</span>
-                      </>
+                      <FolderDown size={14} />
                     )}
+                    <span className="hidden sm:inline">{isDownloadingAll ? 'Downloading...' : 'Download All'}</span>
                   </Button>
                 </>
               )}
@@ -400,11 +388,11 @@ const ClientAlbumView = () => {
 
       {/* Download Progress */}
       {isDownloadingAll && (
-        <div className="container mx-auto px-6 py-4">
-          <div className="bg-card border border-border rounded-lg p-4">
+        <div className="container mx-auto px-4 sm:px-6 py-3 sm:py-4">
+          <div className="bg-card border border-border rounded-lg p-3 sm:p-4">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-medium">Preparing download...</span>
-              <span className="text-sm text-muted-foreground">{downloadProgress}%</span>
+              <span className="text-xs sm:text-sm font-medium">Preparing download...</span>
+              <span className="text-xs sm:text-sm text-muted-foreground">{downloadProgress}%</span>
             </div>
             <Progress value={downloadProgress} className="h-2" />
           </div>
@@ -412,20 +400,20 @@ const ClientAlbumView = () => {
       )}
 
       {/* Tabs */}
-      <main className="container mx-auto px-6 py-8">
+      <main className="container mx-auto px-4 sm:px-6 py-4 sm:py-8">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="mb-6 bg-card border border-border">
-            <TabsTrigger value="photos" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <Image size={16} />
-              Photos ({photos.length})
+          <TabsList className="mb-4 sm:mb-6 bg-card border border-border w-full sm:w-auto overflow-x-auto flex-nowrap">
+            <TabsTrigger value="photos" className="gap-1 sm:gap-2 text-xs sm:text-sm flex-1 sm:flex-none data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+              <Image size={14} className="sm:w-4 sm:h-4" />
+              <span className="hidden xs:inline">Photos</span> ({photos.length})
             </TabsTrigger>
-            <TabsTrigger value="videos" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <Video size={16} />
-              Videos ({videos.length})
+            <TabsTrigger value="videos" className="gap-1 sm:gap-2 text-xs sm:text-sm flex-1 sm:flex-none data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+              <Video size={14} className="sm:w-4 sm:h-4" />
+              <span className="hidden xs:inline">Videos</span> ({videos.length})
             </TabsTrigger>
-            <TabsTrigger value="share" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <Share2 size={16} />
-              Share Gallery
+            <TabsTrigger value="share" className="gap-1 sm:gap-2 text-xs sm:text-sm flex-1 sm:flex-none data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+              <Share2 size={14} className="sm:w-4 sm:h-4" />
+              <span className="hidden xs:inline">Share</span>
             </TabsTrigger>
           </TabsList>
 
@@ -439,12 +427,12 @@ const ClientAlbumView = () => {
               </div>
             )}
             {photos.length === 0 ? (
-              <div className="text-center py-16">
-                <Image size={64} className="mx-auto mb-4 text-muted-foreground/30" />
-                <p className="text-muted-foreground">No photos in this album yet.</p>
+              <div className="text-center py-12 sm:py-16">
+                <Image size={48} className="mx-auto mb-4 text-muted-foreground/30" />
+                <p className="text-muted-foreground text-sm sm:text-base">No photos in this album yet.</p>
               </div>
             ) : (
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-4">
                 {photos.map((item, index) => (
                   <motion.div
                     key={item.id}
