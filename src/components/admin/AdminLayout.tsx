@@ -103,7 +103,7 @@ export const AdminLayout = ({ children }: AdminLayoutProps) => {
       {/* Mobile Header */}
       <header className="lg:hidden fixed top-0 left-0 right-0 z-50 bg-card border-b border-border">
         <div className="flex items-center justify-between px-4 py-3">
-          <Logo variant="small" subtitle="Admin Panel" linkTo="/" />
+          <Logo variant="small" linkTo="/" />
           <Button
             variant="ghost"
             size="icon"
@@ -138,7 +138,7 @@ export const AdminLayout = ({ children }: AdminLayoutProps) => {
             >
             {/* Drawer Header */}
               <div className="p-4 border-b border-border flex items-center justify-between">
-                <Logo variant="small" subtitle="Admin Panel" linkTo="/" />
+                <Logo variant="small" linkTo="/" />
                 <Button
                   variant="ghost"
                   size="icon"
@@ -211,7 +211,7 @@ export const AdminLayout = ({ children }: AdminLayoutProps) => {
       <aside className="hidden lg:flex w-64 bg-card border-r border-border flex-col fixed top-0 left-0 bottom-0 z-40">
         {/* Logo */}
         <div className="p-6 border-b border-border">
-          <Logo variant="default" subtitle="Admin Panel" linkTo="/" />
+          <Logo variant="default" linkTo="/" />
         </div>
 
         {/* Navigation */}

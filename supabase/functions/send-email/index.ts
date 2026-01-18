@@ -67,12 +67,26 @@ async function getStudioConfig(supabase: any): Promise<StudioConfig> {
   }
 }
 
+// Logo image URL (hosted externally for email compatibility)
+const logoUrl = "https://storage.googleapis.com/gpt-engineer-file-uploads/ndpHLPayMuMPzXAya3Y5GR4ixrb2/uploads/1768713761500-Untitled-1-removebg-preview.png";
+
+// Generate email header with logo image only (no text branding)
+function getEmailHeader(): string {
+  return `
+    <div style="text-align: center; margin-bottom: 30px;">
+      <img src="${logoUrl}" alt="Ajanta Photography" style="height: 80px; width: auto; object-fit: contain;" />
+    </div>
+  `;
+}
+
 // Generate email footer with contact details
 function getEmailFooter(config: StudioConfig): string {
   return `
     <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #333;">
-      <p style="font-size: 14px; color: #d4a853; margin: 0 0 10px 0; font-weight: 500;">${config.name}</p>
-      <p style="font-size: 12px; color: #a09080; margin: 0; line-height: 1.8;">
+      <div style="text-align: center; margin-bottom: 15px;">
+        <img src="${logoUrl}" alt="Ajanta Photography" style="height: 50px; width: auto; object-fit: contain;" />
+      </div>
+      <p style="font-size: 12px; color: #a09080; margin: 0; line-height: 1.8; text-align: center;">
         ${config.address_line1}<br />
         ${config.address_line2}<br />
         Phone: ${config.phones}<br />
@@ -89,7 +103,7 @@ interface EmailRequest {
   data: Record<string, unknown>;
 }
 
-const getEmailContent = (type: string, data: Record<string, unknown>, config: StudioConfig, emailFooter: string) => {
+const getEmailContent = (type: string, data: Record<string, unknown>, config: StudioConfig, emailHeader: string, emailFooter: string) => {
   const whatsappNumber = config.whatsapp.replace(/[^0-9]/g, "");
   const primaryPhone = config.phones.split(",")[0]?.trim() || config.phones;
 
@@ -100,13 +114,10 @@ const getEmailContent = (type: string, data: Record<string, unknown>, config: St
         text: `Hello ${data.name},\n\nYour private client account has been created with Ajanta Photography.\n\nLogin details:\nEmail: ${data.email}\nPassword: ${data.password}\n\nLogin here:\n${data.loginUrl}\n\nPlease log in and change your password after first login.\n\n– Ajanta Photography`,
         html: `
           <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; background: #1a1814; color: #f5f0e8; padding: 40px;">
-            <div style="text-align: center; margin-bottom: 30px;">
-              <h1 style="font-size: 32px; font-weight: 300; color: #d4a853; margin: 0;">Ajanta</h1>
-              <p style="font-size: 10px; letter-spacing: 4px; color: #d4a853; margin: 5px 0;">PHOTOGRAPHY</p>
-            </div>
+            ${emailHeader}
 
             <h2 style="color: #f5f0e8; font-weight: 300;">Hello ${data.name},</h2>
-            <p style="line-height: 1.8; color: #a09080;">Your private client account has been created with Ajanta Photography.</p>
+            <p style="line-height: 1.8; color: #a09080;">Your private client account has been created.</p>
 
             <div style="background: #252118; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 3px solid #d4a853;">
               <p style="margin: 0 0 10px 0; color: #f5f0e8; font-weight: 500;">Login details:</p>
@@ -118,7 +129,6 @@ const getEmailContent = (type: string, data: Record<string, unknown>, config: St
             <a href="${data.loginUrl}" style="display: inline-block; background: linear-gradient(135deg, #d4a853, #b8923d); color: #1a1814; padding: 14px 26px; text-decoration: none; border-radius: 4px; font-weight: 600;">${data.loginUrl}</a>
 
             <p style="line-height: 1.8; color: #a09080; margin-top: 20px;">Please log in and change your password after first login.</p>
-            <p style="color: #666; font-size: 12px; margin-top: 30px;">– Ajanta Photography</p>
 
             ${emailFooter}
           </div>
@@ -130,10 +140,7 @@ const getEmailContent = (type: string, data: Record<string, unknown>, config: St
         subject: `Your Gallery is Ready! - ${config.name}`,
         html: `
           <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; background: #1a1814; color: #f5f0e8; padding: 40px;">
-            <div style="text-align: center; margin-bottom: 30px;">
-              <h1 style="font-size: 32px; font-weight: 300; color: #d4a853; margin: 0;">Ajanta</h1>
-              <p style="font-size: 10px; letter-spacing: 4px; color: #d4a853; margin: 5px 0;">PHOTOGRAPHY</p>
-            </div>
+            ${emailHeader}
             <h2 style="color: #f5f0e8; font-weight: 300;">Great News, ${data.name}!</h2>
             <p style="line-height: 1.8; color: #a09080;">Your gallery for <strong style="color: #d4a853;">${data.albumTitle}</strong> is now ready for viewing.</p>
             <p style="line-height: 1.8; color: #a09080;">We have carefully curated and edited ${data.photoCount || "all"} photos from your special day. Each image has been crafted to preserve those precious moments.</p>
@@ -148,10 +155,7 @@ const getEmailContent = (type: string, data: Record<string, unknown>, config: St
         subject: `Gallery Shared With You - ${config.name}`,
         html: `
           <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; background: #1a1814; color: #f5f0e8; padding: 40px;">
-            <div style="text-align: center; margin-bottom: 30px;">
-              <h1 style="font-size: 32px; font-weight: 300; color: #d4a853; margin: 0;">Ajanta</h1>
-              <p style="font-size: 10px; letter-spacing: 4px; color: #d4a853; margin: 5px 0;">PHOTOGRAPHY</p>
-            </div>
+            ${emailHeader}
             <h2 style="color: #f5f0e8; font-weight: 300;">A Gallery Has Been Shared With You</h2>
             <p style="line-height: 1.8; color: #a09080;">You have been given access to view <strong style="color: #d4a853;">${data.albumTitle}</strong>.</p>
             ${data.password ? `
@@ -171,10 +175,7 @@ const getEmailContent = (type: string, data: Record<string, unknown>, config: St
         subject: `Booking Request Received - ${config.name}`,
         html: `
           <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; background: #1a1814; color: #f5f0e8; padding: 40px;">
-            <div style="text-align: center; margin-bottom: 30px;">
-              <h1 style="font-size: 32px; font-weight: 300; color: #d4a853; margin: 0;">Ajanta</h1>
-              <p style="font-size: 10px; letter-spacing: 4px; color: #d4a853; margin: 5px 0;">PHOTOGRAPHY</p>
-            </div>
+            ${emailHeader}
             <h2 style="color: #f5f0e8; font-weight: 300;">Thank You, ${data.name}!</h2>
             <p style="line-height: 1.8; color: #a09080;">We have received your booking request for a <strong style="color: #d4a853;">${data.eventType}</strong> on <strong style="color: #d4a853;">${data.eventDate}</strong>.</p>
             <p style="line-height: 1.8; color: #a09080;">Our team will review your request and get back to you within 24 hours to discuss your vision and confirm availability.</p>
@@ -218,10 +219,7 @@ const getEmailContent = (type: string, data: Record<string, unknown>, config: St
         subject: `Message Received - ${config.name}`,
         html: `
           <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; background: #1a1814; color: #f5f0e8; padding: 40px;">
-            <div style="text-align: center; margin-bottom: 30px;">
-              <h1 style="font-size: 32px; font-weight: 300; color: #d4a853; margin: 0;">Ajanta</h1>
-              <p style="font-size: 10px; letter-spacing: 4px; color: #d4a853; margin: 5px 0;">PHOTOGRAPHY</p>
-            </div>
+            ${emailHeader}
             <h2 style="color: #f5f0e8; font-weight: 300;">Thank You, ${data.name}!</h2>
             <p style="line-height: 1.8; color: #a09080;">We have received your message and will get back to you soon.</p>
             <div style="background: #252118; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 3px solid #d4a853;">
@@ -263,10 +261,7 @@ const getEmailContent = (type: string, data: Record<string, unknown>, config: St
         subject: `Re: ${data.originalSubject || "Your Message"} - ${config.name}`,
         html: `
           <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; background: #1a1814; color: #f5f0e8; padding: 40px;">
-            <div style="text-align: center; margin-bottom: 30px;">
-              <h1 style="font-size: 32px; font-weight: 300; color: #d4a853; margin: 0;">Ajanta</h1>
-              <p style="font-size: 10px; letter-spacing: 4px; color: #d4a853; margin: 5px 0;">PHOTOGRAPHY</p>
-            </div>
+            ${emailHeader}
             <h2 style="color: #f5f0e8; font-weight: 300;">Hello ${data.recipientName},</h2>
             <div style="line-height: 1.8; color: #a09080; white-space: pre-wrap;">${data.replyMessage}</div>
             
@@ -292,13 +287,10 @@ const getEmailContent = (type: string, data: Record<string, unknown>, config: St
         subject: `Password Changed - ${config.name}`,
         html: `
           <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; background: #1a1814; color: #f5f0e8; padding: 40px;">
-            <div style="text-align: center; margin-bottom: 30px;">
-              <h1 style="font-size: 32px; font-weight: 300; color: #d4a853; margin: 0;">Ajanta</h1>
-              <p style="font-size: 10px; letter-spacing: 4px; color: #d4a853; margin: 5px 0;">PHOTOGRAPHY</p>
-            </div>
+            ${emailHeader}
             <h2 style="color: #f5f0e8; font-weight: 300;">Password Updated</h2>
             <p style="line-height: 1.8; color: #a09080;">Hello ${data.name},</p>
-            <p style="line-height: 1.8; color: #a09080;">Your password for your Ajanta Photography client account has been successfully changed.</p>
+            <p style="line-height: 1.8; color: #a09080;">Your password has been successfully changed.</p>
             <div style="background: #252118; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 3px solid #d4a853;">
               <p style="margin: 5px 0; color: #a09080;"><strong style="color: #f5f0e8;">Account:</strong> ${data.email}</p>
               <p style="margin: 5px 0; color: #a09080;"><strong style="color: #f5f0e8;">Changed at:</strong> ${data.changedAt}</p>
@@ -336,9 +328,10 @@ const handler = async (req: Request): Promise<Response> => {
     
     // Fetch studio config from database
     const studioConfig = await getStudioConfig(supabase);
+    const emailHeader = getEmailHeader();
     const emailFooter = getEmailFooter(studioConfig);
     
-    const emailContent = getEmailContent(type, data, studioConfig, emailFooter);
+    const emailContent = getEmailContent(type, data, studioConfig, emailHeader, emailFooter);
     
     // For admin notifications, send to admin email
     const adminTypes = ["booking_admin", "contact_admin"];

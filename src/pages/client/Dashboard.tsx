@@ -186,7 +186,7 @@ const ClientDashboard = () => {
       <header className="border-b border-border bg-card sticky top-0 z-40">
         <div className="container mx-auto px-4 sm:px-6 py-3 sm:py-4">
           <div className="flex items-center justify-between gap-3">
-            <Logo variant="small" subtitle="Client Portal" linkTo="/" />
+            <Logo variant="small" linkTo="/" />
             
             <div className="flex items-center gap-2 sm:gap-4">
               <div className="hidden sm:flex items-center gap-2 text-sm text-muted-foreground">
@@ -351,7 +351,7 @@ const ClientDashboard = () => {
       {/* Footer */}
       <footer className="border-t border-border bg-card mt-8 sm:mt-12">
         <div className="container mx-auto px-4 sm:px-6 py-4 sm:py-6 text-center text-xs sm:text-sm text-muted-foreground">
-          <p>© {new Date().getFullYear()} Ajanta Photography. All rights reserved.</p>
+          <p>© {new Date().getFullYear()} All rights reserved.</p>
         </div>
       </footer>
     </PullToRefresh>

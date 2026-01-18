@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { ArrowLeft, User, Lock, Save, Eye, EyeOff, Settings as SettingsIcon, Camera, Trash2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { Separator } from '@/components/ui/separator';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Logo } from '@/components/shared/Logo';
 
 const ClientSettings = () => {
   const navigate = useNavigate();
@@ -305,14 +306,7 @@ const ClientSettings = () => {
       <header className="border-b border-border bg-card">
         <div className="container mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
-            <Link to="/" className="block">
-              <span className="font-serif text-2xl font-light tracking-wider text-foreground">
-                Ajanta
-              </span>
-              <span className="block text-[9px] uppercase tracking-[0.3em] text-primary font-sans font-medium">
-                Client Portal
-              </span>
-            </Link>
+            <Logo variant="small" linkTo="/" />
             
             <Button variant="ghost" size="sm" onClick={() => navigate('/client')}>
               <ArrowLeft size={16} className="mr-2" />
@@ -551,7 +545,7 @@ const ClientSettings = () => {
       {/* Footer */}
       <footer className="border-t border-border bg-card mt-12">
         <div className="container mx-auto px-6 py-6 text-center text-sm text-muted-foreground">
-          <p>© {new Date().getFullYear()} Ajanta Photography. All rights reserved.</p>
+          <p>© {new Date().getFullYear()} All rights reserved.</p>
         </div>
       </footer>
     </div>
