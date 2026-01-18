@@ -11,9 +11,9 @@ const Index = () => {
   return (
     <Layout>
       <HeroSection />
+      <CinematicVideoSection />
       <ServicesSection />
       <GalleryPreview />
-      <CinematicVideoSection />
       <AboutPreview />
       <TestimonialsSection />
       <CTASection />
