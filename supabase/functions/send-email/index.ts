@@ -96,23 +96,30 @@ const getEmailContent = (type: string, data: Record<string, unknown>, config: St
   switch (type) {
     case "welcome":
       return {
-        subject: `Your Ajanta Photography Client Access`,
+        subject: `Your Ajanta Photography Client Login Details`,
+        text: `Hello ${data.name},\n\nYour private client account has been created with Ajanta Photography.\n\nLogin details:\nEmail: ${data.email}\nPassword: ${data.password}\n\nLogin here:\n${data.loginUrl}\n\nPlease log in and change your password after first login.\n\n– Ajanta Photography`,
         html: `
           <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; background: #1a1814; color: #f5f0e8; padding: 40px;">
             <div style="text-align: center; margin-bottom: 30px;">
               <h1 style="font-size: 32px; font-weight: 300; color: #d4a853; margin: 0;">Ajanta</h1>
               <p style="font-size: 10px; letter-spacing: 4px; color: #d4a853; margin: 5px 0;">PHOTOGRAPHY</p>
             </div>
+
             <h2 style="color: #f5f0e8; font-weight: 300;">Hello ${data.name},</h2>
-            <p style="line-height: 1.8; color: #a09080;">Your private gallery has been created with Ajanta Photography.</p>
+            <p style="line-height: 1.8; color: #a09080;">Your private client account has been created with Ajanta Photography.</p>
+
             <div style="background: #252118; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 3px solid #d4a853;">
-              <p style="margin: 5px 0; color: #a09080;"><strong style="color: #f5f0e8;">Login details:</strong></p>
+              <p style="margin: 0 0 10px 0; color: #f5f0e8; font-weight: 500;">Login details:</p>
               <p style="margin: 5px 0; color: #a09080;"><strong style="color: #f5f0e8;">Email:</strong> ${data.email}</p>
               <p style="margin: 5px 0; color: #a09080;"><strong style="color: #f5f0e8;">Password:</strong> <code style="background: #1a1814; padding: 4px 8px; border-radius: 4px; color: #d4a853;">${data.password}</code></p>
             </div>
-            <p style="color: #a09080; margin-bottom: 20px;">You can view, download, and share your photos and videos once they are ready.</p>
-            <a href="${data.loginUrl}" style="display: inline-block; background: linear-gradient(135deg, #d4a853, #b8923d); color: #1a1814; padding: 15px 30px; text-decoration: none; border-radius: 4px; font-weight: 500; margin-top: 10px;">Login here</a>
+
+            <p style="line-height: 1.8; color: #a09080; margin: 0 0 16px 0;">Login here:</p>
+            <a href="${data.loginUrl}" style="display: inline-block; background: linear-gradient(135deg, #d4a853, #b8923d); color: #1a1814; padding: 14px 26px; text-decoration: none; border-radius: 4px; font-weight: 600;">${data.loginUrl}</a>
+
+            <p style="line-height: 1.8; color: #a09080; margin-top: 20px;">Please log in and change your password after first login.</p>
             <p style="color: #666; font-size: 12px; margin-top: 30px;">– Ajanta Photography</p>
+
             ${emailFooter}
           </div>
         `,
@@ -346,16 +353,23 @@ const handler = async (req: Request): Promise<Response> => {
       to: [recipient],
       subject: emailContent.subject,
       html: emailContent.html,
+      text: (emailContent as any).text,
     });
 
-    // Log the email
+    // Log the email (NEVER store passwords in logs)
+    const safeData = (() => {
+      const copy: Record<string, unknown> = { ...(data as Record<string, unknown>) };
+      if ("password" in copy) delete (copy as any).password;
+      return copy;
+    })();
+
     await supabase.from("email_logs").insert({
       to_email: recipient,
       subject: emailContent.subject,
       template_type: type,
       status: error ? "failed" : "sent",
       error_message: error?.message,
-      metadata: { data, resend_id: emailResult?.id },
+      metadata: { data: safeData, resend_id: emailResult?.id },
     });
 
     if (error) {

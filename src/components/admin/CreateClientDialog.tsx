@@ -76,8 +76,6 @@ export const CreateClientDialog = ({ onSuccess }: CreateClientDialogProps) => {
   const onSubmit = async (data: CreateClientFormData) => {
     setIsLoading(true);
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      
       const response = await supabase.functions.invoke('create-client', {
         body: {
           name: data.name,
@@ -105,7 +103,7 @@ export const CreateClientDialog = ({ onSuccess }: CreateClientDialogProps) => {
 
       toast({
         title: 'Client created successfully',
-        description: `A welcome email has been sent to ${data.email}`,
+        description: `Welcome email sent to ${data.email}`,
       });
 
       form.reset();
