@@ -14,7 +14,7 @@ export const AboutPreview = () => {
   const imageOpacity = useTransform(scrollYProgress, [0, 0.2], [0.8, 1]);
 
   return (
-    <section ref={sectionRef} className="py-24 md:py-32 bg-background overflow-hidden">
+    <section ref={sectionRef} className="py-16 md:py-20 bg-background overflow-hidden">
       <div className="container mx-auto px-6">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-20 items-center">
           {/* Image */}
