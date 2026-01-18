@@ -23,9 +23,23 @@ const Contact = () => {
     subject: '',
     message: '',
   });
+  // Honeypot field - bots will fill this, humans won't see it
+  const [honeypot, setHoneypot] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Honeypot check - if filled, it's a bot
+    if (honeypot) {
+      // Silently "succeed" to not alert the bot
+      toast({
+        title: 'Message Sent!',
+        description: 'We will get back to you soon.',
+      });
+      setFormData({ name: '', email: '', subject: '', message: '' });
+      return;
+    }
+    
     setIsSubmitting(true);
     
     try {
@@ -236,6 +250,19 @@ const Contact = () => {
                 Send a Message
               </h3>
               <form onSubmit={handleSubmit} className="space-y-6">
+                {/* Honeypot field - hidden from users, bots will fill it */}
+                <div className="absolute -left-[9999px] opacity-0 h-0 overflow-hidden" aria-hidden="true">
+                  <label htmlFor="company">Company</label>
+                  <input
+                    type="text"
+                    id="company"
+                    name="company"
+                    tabIndex={-1}
+                    autoComplete="off"
+                    value={honeypot}
+                    onChange={(e) => setHoneypot(e.target.value)}
+                  />
+                </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="name" className="text-foreground font-sans">
