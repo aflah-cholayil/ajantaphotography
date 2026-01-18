@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { format } from 'date-fns';
-import { Search, MoreVertical, Mail, Eye, RefreshCw } from 'lucide-react';
+import { Search, MoreVertical, Mail, Eye, RefreshCw, History } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { AdminLayout } from '@/components/admin/AdminLayout';
 import { CreateClientDialog } from '@/components/admin/CreateClientDialog';
 import { EmailStatusBadge, type EmailStatus } from '@/components/admin/EmailStatusBadge';
+import { EmailHistoryDialog } from '@/components/admin/EmailHistoryDialog';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import {
@@ -213,6 +214,16 @@ const AdminClients = () => {
                         <Eye size={16} className="mr-2" />
                         View Albums
                       </DropdownMenuItem>
+                      <EmailHistoryDialog
+                        clientEmail={client.profiles?.email || ''}
+                        clientName={client.profiles?.name || 'Client'}
+                        trigger={
+                          <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
+                            <History size={16} className="mr-2" />
+                            Email History
+                          </DropdownMenuItem>
+                        }
+                      />
                       <DropdownMenuItem>
                         <Mail size={16} className="mr-2" />
                         Send Email
@@ -317,6 +328,16 @@ const AdminClients = () => {
                             <Eye size={16} className="mr-2" />
                             View Albums
                           </DropdownMenuItem>
+                          <EmailHistoryDialog
+                            clientEmail={client.profiles?.email || ''}
+                            clientName={client.profiles?.name || 'Client'}
+                            trigger={
+                              <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
+                                <History size={16} className="mr-2" />
+                                Email History
+                              </DropdownMenuItem>
+                            }
+                          />
                           <DropdownMenuItem>
                             <Mail size={16} className="mr-2" />
                             Send Email
