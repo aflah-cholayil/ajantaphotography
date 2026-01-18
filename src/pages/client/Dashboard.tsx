@@ -140,34 +140,35 @@ const ClientDashboard = () => {
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="border-b border-border bg-card">
-        <div className="container mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
-            <Link to="/" className="block">
-              <span className="font-serif text-2xl font-light tracking-wider text-foreground">
+      <header className="border-b border-border bg-card sticky top-0 z-40">
+        <div className="container mx-auto px-4 sm:px-6 py-3 sm:py-4">
+          <div className="flex items-center justify-between gap-3">
+            <Link to="/" className="block flex-shrink-0">
+              <span className="font-serif text-xl sm:text-2xl font-light tracking-wider text-foreground">
                 Ajanta
               </span>
-              <span className="block text-[9px] uppercase tracking-[0.3em] text-primary font-sans font-medium">
+              <span className="block text-[8px] sm:text-[9px] uppercase tracking-[0.2em] sm:tracking-[0.3em] text-primary font-sans font-medium">
                 Client Portal
               </span>
             </Link>
             
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <div className="flex items-center gap-2 sm:gap-4">
+              <div className="hidden sm:flex items-center gap-2 text-sm text-muted-foreground">
                 <User size={16} />
-                <span>{profileName || user.email}</span>
+                <span className="max-w-[150px] truncate">{profileName || user.email}</span>
               </div>
               <Button 
                 variant="ghost" 
                 size="sm" 
                 onClick={() => navigate('/client/settings')}
+                className="px-2 sm:px-3"
               >
-                <Settings size={16} className="mr-2" />
-                Settings
+                <Settings size={16} className="sm:mr-2" />
+                <span className="hidden sm:inline">Settings</span>
               </Button>
-              <Button variant="ghost" size="sm" onClick={handleSignOut}>
-                <LogOut size={16} className="mr-2" />
-                Sign Out
+              <Button variant="ghost" size="sm" onClick={handleSignOut} className="px-2 sm:px-3">
+                <LogOut size={16} className="sm:mr-2" />
+                <span className="hidden sm:inline">Sign Out</span>
               </Button>
             </div>
           </div>
@@ -175,49 +176,49 @@ const ClientDashboard = () => {
       </header>
 
       {/* Main Content */}
-      <main className="container mx-auto px-6 py-8">
+      <main className="container mx-auto px-4 sm:px-6 py-6 sm:py-8">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
         >
           {/* Welcome Section */}
-          <div className="mb-8">
-            <h1 className="font-serif text-3xl font-light text-foreground mb-2">
+          <div className="mb-6 sm:mb-8">
+            <h1 className="font-serif text-2xl sm:text-3xl font-light text-foreground mb-1 sm:mb-2">
               Welcome, {profileName || 'Client'}!
             </h1>
-            <p className="text-muted-foreground">
+            <p className="text-muted-foreground text-sm sm:text-base">
               View and access your photo galleries below.
             </p>
           </div>
 
           {/* Event Info Card */}
           {clientData && (
-            <Card className="mb-8 bg-card border-border">
-              <CardHeader>
-                <CardTitle className="font-serif text-xl font-light flex items-center gap-2">
-                  <Calendar className="text-primary" size={20} />
+            <Card className="mb-6 sm:mb-8 bg-card border-border">
+              <CardHeader className="p-4 sm:p-6">
+                <CardTitle className="font-serif text-lg sm:text-xl font-light flex items-center gap-2">
+                  <Calendar className="text-primary" size={18} />
                   Your Event
                 </CardTitle>
               </CardHeader>
-              <CardContent>
-                <div className="grid gap-4 md:grid-cols-2">
+              <CardContent className="px-4 pb-4 sm:px-6 sm:pb-6">
+                <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2">
                   <div>
-                    <p className="text-sm text-muted-foreground uppercase tracking-wider mb-1">Event Name</p>
-                    <p className="text-foreground font-medium">{clientData.event_name}</p>
+                    <p className="text-xs sm:text-sm text-muted-foreground uppercase tracking-wider mb-1">Event Name</p>
+                    <p className="text-foreground font-medium text-sm sm:text-base">{clientData.event_name}</p>
                   </div>
                   {clientData.event_date && (
                     <div>
-                      <p className="text-sm text-muted-foreground uppercase tracking-wider mb-1">Event Date</p>
-                      <p className="text-foreground font-medium">
+                      <p className="text-xs sm:text-sm text-muted-foreground uppercase tracking-wider mb-1">Event Date</p>
+                      <p className="text-foreground font-medium text-sm sm:text-base">
                         {format(new Date(clientData.event_date), 'MMMM d, yyyy')}
                       </p>
                     </div>
                   )}
                 </div>
                 {clientData.notes && (
-                  <div className="mt-4 pt-4 border-t border-border">
-                    <p className="text-sm text-muted-foreground">{clientData.notes}</p>
+                  <div className="mt-3 sm:mt-4 pt-3 sm:pt-4 border-t border-border">
+                    <p className="text-xs sm:text-sm text-muted-foreground">{clientData.notes}</p>
                   </div>
                 )}
               </CardContent>
@@ -226,22 +227,22 @@ const ClientDashboard = () => {
 
           {/* Albums Section */}
           <div>
-            <h2 className="font-serif text-2xl font-light text-foreground mb-4 flex items-center gap-2">
-              <FolderOpen className="text-primary" size={24} />
+            <h2 className="font-serif text-xl sm:text-2xl font-light text-foreground mb-3 sm:mb-4 flex items-center gap-2">
+              <FolderOpen className="text-primary" size={20} />
               Your Albums
             </h2>
 
             {albums.length === 0 ? (
               <Card className="bg-card border-border">
-                <CardContent className="py-12 text-center">
-                  <Image size={48} className="mx-auto mb-4 text-muted-foreground/50" />
-                  <p className="text-muted-foreground">
+                <CardContent className="py-10 sm:py-12 text-center px-4">
+                  <Image size={40} className="mx-auto mb-4 text-muted-foreground/50" />
+                  <p className="text-muted-foreground text-sm sm:text-base">
                     No albums available yet. Your photos will appear here once they're ready.
                   </p>
                 </CardContent>
               </Card>
             ) : (
-              <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+              <div className="grid gap-4 sm:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
                 {albums.map((album) => (
                   <motion.div
                     key={album.id}
@@ -260,23 +261,23 @@ const ClientDashboard = () => {
                           />
                         ) : (
                           <div className="w-full h-full flex items-center justify-center">
-                            <Image size={48} className="text-muted-foreground/30" />
+                            <Image size={40} className="text-muted-foreground/30" />
                           </div>
                         )}
-                        <div className="absolute top-3 right-3">
+                        <div className="absolute top-2 right-2 sm:top-3 sm:right-3">
                           <AlbumStatusBadge status={album.status} />
                         </div>
                       </div>
                       
-                      <CardHeader className="pb-2">
-                        <CardTitle className="font-serif text-lg font-light">{album.title}</CardTitle>
+                      <CardHeader className="pb-2 p-3 sm:p-4">
+                        <CardTitle className="font-serif text-base sm:text-lg font-light">{album.title}</CardTitle>
                         {album.description && (
-                          <CardDescription className="line-clamp-2">{album.description}</CardDescription>
+                          <CardDescription className="line-clamp-2 text-xs sm:text-sm">{album.description}</CardDescription>
                         )}
                       </CardHeader>
                       
-                      <CardContent>
-                        <div className="flex items-center justify-between text-sm">
+                      <CardContent className="px-3 pb-3 sm:px-4 sm:pb-4">
+                        <div className="flex items-center justify-between text-xs sm:text-sm">
                           <span className="text-muted-foreground">
                             {album.media_count} photo{album.media_count !== 1 ? 's' : ''}
                           </span>
@@ -289,7 +290,7 @@ const ClientDashboard = () => {
                         
                         {album.status === 'ready' && album.media_count > 0 && (
                           <Button 
-                            className="w-full mt-4 btn-gold" 
+                            className="w-full mt-3 sm:mt-4 btn-gold text-xs sm:text-sm py-2 sm:py-4" 
                             onClick={() => navigate(`/client/album/${album.id}`)}
                           >
                             View Gallery
@@ -297,7 +298,7 @@ const ClientDashboard = () => {
                         )}
                         
                         {album.status === 'pending' && (
-                          <p className="text-sm text-muted-foreground mt-4 text-center">
+                          <p className="text-xs sm:text-sm text-muted-foreground mt-3 sm:mt-4 text-center">
                             Your photos are being prepared...
                           </p>
                         )}
@@ -312,8 +313,8 @@ const ClientDashboard = () => {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-border bg-card mt-12">
-        <div className="container mx-auto px-6 py-6 text-center text-sm text-muted-foreground">
+      <footer className="border-t border-border bg-card mt-8 sm:mt-12">
+        <div className="container mx-auto px-4 sm:px-6 py-4 sm:py-6 text-center text-xs sm:text-sm text-muted-foreground">
           <p>© {new Date().getFullYear()} Ajanta Photography. All rights reserved.</p>
         </div>
       </footer>

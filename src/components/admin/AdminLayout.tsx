@@ -1,6 +1,6 @@
-import { ReactNode } from 'react';
+import { ReactNode, useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Users, 
   Image, 
@@ -9,7 +9,9 @@ import {
   LogOut,
   Settings,
   UserCog,
-  MessageSquare
+  MessageSquare,
+  Menu,
+  X
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
@@ -32,17 +34,158 @@ const navItems = [
 export const AdminLayout = ({ children }: AdminLayoutProps) => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, signOut, isOwner, role } = useAuth();
+  const { user, signOut, isOwner } = useAuth();
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  // Close mobile menu on route change
+  useEffect(() => {
+    setIsMobileMenuOpen(false);
+  }, [location]);
+
+  // Prevent body scroll when mobile menu is open
+  useEffect(() => {
+    if (isMobileMenuOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [isMobileMenuOpen]);
 
   const handleSignOut = async () => {
     await signOut();
     navigate('/login');
   };
 
+  const filteredNavItems = navItems.filter(item => !item.ownerOnly || isOwner);
+
   return (
-    <div className="min-h-screen bg-background flex">
-      {/* Sidebar */}
-      <aside className="w-64 bg-card border-r border-border flex flex-col">
+    <div className="min-h-screen bg-background flex flex-col lg:flex-row">
+      {/* Mobile Header */}
+      <header className="lg:hidden fixed top-0 left-0 right-0 z-50 bg-card border-b border-border">
+        <div className="flex items-center justify-between px-4 py-3">
+          <Link to="/" className="block">
+            <span className="font-serif text-xl font-light tracking-wider text-foreground">
+              Ajanta
+            </span>
+            <span className="block text-[8px] uppercase tracking-[0.2em] text-primary font-sans font-medium">
+              Admin Panel
+            </span>
+          </Link>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+            aria-label="Toggle menu"
+          >
+            {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+          </Button>
+        </div>
+      </header>
+
+      {/* Mobile Drawer Menu */}
+      <AnimatePresence>
+        {isMobileMenuOpen && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="fixed inset-0 z-40 bg-background/80 backdrop-blur-sm lg:hidden"
+              onClick={() => setIsMobileMenuOpen(false)}
+            />
+            {/* Drawer */}
+            <motion.aside
+              initial={{ x: '-100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '-100%' }}
+              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+              className="fixed top-0 left-0 bottom-0 z-50 w-72 max-w-[85vw] bg-card border-r border-border flex flex-col lg:hidden"
+            >
+              {/* Drawer Header */}
+              <div className="p-4 border-b border-border flex items-center justify-between">
+                <Link to="/" className="block">
+                  <span className="font-serif text-xl font-light tracking-wider text-foreground">
+                    Ajanta
+                  </span>
+                  <span className="block text-[8px] uppercase tracking-[0.2em] text-primary font-sans font-medium">
+                    Admin Panel
+                  </span>
+                </Link>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setIsMobileMenuOpen(false)}
+                >
+                  <X size={20} />
+                </Button>
+              </div>
+
+              {/* Navigation */}
+              <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+                {filteredNavItems.map((item, index) => {
+                  const isActive = location.pathname === item.path || 
+                    (item.path !== '/admin' && location.pathname.startsWith(item.path));
+                  
+                  return (
+                    <motion.div
+                      key={item.path}
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: index * 0.05 }}
+                    >
+                      <Link
+                        to={item.path}
+                        className={`flex items-center gap-3 px-4 py-3 rounded-lg font-sans text-sm transition-all duration-200 ${
+                          isActive
+                            ? 'bg-primary/10 text-primary border border-primary/20'
+                            : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+                        }`}
+                      >
+                        <item.icon size={18} />
+                        {item.label}
+                      </Link>
+                    </motion.div>
+                  );
+                })}
+              </nav>
+
+              {/* User section */}
+              <div className="p-3 border-t border-border">
+                <div className="flex items-center gap-3 px-4 py-2 mb-2">
+                  <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+                    <span className="text-primary text-sm font-medium">
+                      {user?.email?.[0].toUpperCase()}
+                    </span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">
+                      {user?.email}
+                    </p>
+                    <p className="text-xs text-muted-foreground">Administrator</p>
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleSignOut}
+                  className="w-full justify-start text-muted-foreground hover:text-foreground"
+                >
+                  <LogOut size={16} className="mr-2" />
+                  Sign Out
+                </Button>
+              </div>
+            </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Desktop Sidebar */}
+      <aside className="hidden lg:flex w-64 bg-card border-r border-border flex-col fixed top-0 left-0 bottom-0 z-40">
         {/* Logo */}
         <div className="p-6 border-b border-border">
           <Link to="/" className="block">
@@ -56,34 +199,32 @@ export const AdminLayout = ({ children }: AdminLayoutProps) => {
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 p-4 space-y-1">
-          {navItems
-            .filter(item => !item.ownerOnly || isOwner)
-            .map((item) => {
-              const isActive = location.pathname === item.path || 
-                (item.path !== '/admin' && location.pathname.startsWith(item.path));
-              
-              return (
-                <Link
-                  key={item.path}
-                  to={item.path}
-                  className={`flex items-center gap-3 px-4 py-3 rounded-lg font-sans text-sm transition-all duration-200 ${
-                    isActive
-                      ? 'bg-primary/10 text-primary border border-primary/20'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
-                  }`}
-                >
-                  <item.icon size={18} />
-                  {item.label}
-                </Link>
-              );
-            })}
+        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+          {filteredNavItems.map((item) => {
+            const isActive = location.pathname === item.path || 
+              (item.path !== '/admin' && location.pathname.startsWith(item.path));
+            
+            return (
+              <Link
+                key={item.path}
+                to={item.path}
+                className={`flex items-center gap-3 px-4 py-3 rounded-lg font-sans text-sm transition-all duration-200 ${
+                  isActive
+                    ? 'bg-primary/10 text-primary border border-primary/20'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
+                }`}
+              >
+                <item.icon size={18} />
+                {item.label}
+              </Link>
+            );
+          })}
         </nav>
 
         {/* User section */}
         <div className="p-4 border-t border-border">
           <div className="flex items-center gap-3 px-4 py-2 mb-2">
-            <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
               <span className="text-primary text-sm font-medium">
                 {user?.email?.[0].toUpperCase()}
               </span>
@@ -108,12 +249,12 @@ export const AdminLayout = ({ children }: AdminLayoutProps) => {
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 overflow-auto">
+      <main className="flex-1 lg:ml-64 pt-14 lg:pt-0 min-h-screen overflow-x-hidden">
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3 }}
-          className="p-8"
+          className="p-4 sm:p-6 lg:p-8"
         >
           {children}
         </motion.div>

@@ -130,12 +130,12 @@ const AdminClients = () => {
 
   return (
     <AdminLayout>
-      <div className="space-y-6">
+      <div className="space-y-4 sm:space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
           <div>
-            <h1 className="font-serif text-3xl font-light text-foreground">Clients</h1>
-            <p className="text-muted-foreground mt-1">Manage your photography clients</p>
+            <h1 className="font-serif text-2xl sm:text-3xl font-light text-foreground">Clients</h1>
+            <p className="text-muted-foreground mt-1 text-sm sm:text-base">Manage your photography clients</p>
           </div>
           <div className="flex gap-2">
             <Button variant="outline" size="icon" onClick={fetchClients} disabled={isLoading}>
@@ -146,7 +146,7 @@ const AdminClients = () => {
         </div>
 
         {/* Search */}
-        <div className="relative max-w-md">
+        <div className="relative w-full sm:max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
             placeholder="Search clients..."
@@ -156,16 +156,73 @@ const AdminClients = () => {
           />
         </div>
 
-        {/* Table */}
-        <div className="border border-border rounded-lg overflow-hidden">
+        {/* Mobile Card View */}
+        <div className="block sm:hidden space-y-3">
+          {isLoading ? (
+            <div className="text-center py-8 text-muted-foreground">Loading clients...</div>
+          ) : filteredClients.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              {searchQuery ? 'No clients found matching your search' : 'No clients yet'}
+            </div>
+          ) : (
+            filteredClients.map((client) => (
+              <div key={client.id} className="bg-card border border-border rounded-lg p-4 space-y-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium truncate">{client.profiles?.name || 'Unknown'}</p>
+                    <p className="text-sm text-muted-foreground truncate">{client.profiles?.email || 'N/A'}</p>
+                  </div>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="icon" className="flex-shrink-0">
+                        <MoreVertical size={16} />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => navigate(`/admin/albums?client=${client.id}`)}>
+                        <Eye size={16} className="mr-2" />
+                        View Albums
+                      </DropdownMenuItem>
+                      <DropdownMenuItem>
+                        <Mail size={16} className="mr-2" />
+                        Send Email
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div>
+                    <p className="text-muted-foreground text-xs">Event</p>
+                    <p className="truncate">{client.event_name}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground text-xs">Date</p>
+                    <p>{client.event_date ? format(new Date(client.event_date), 'MMM d, yyyy') : '-'}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground text-xs">Albums</p>
+                    <p>{client.albums.length} album{client.albums.length !== 1 ? 's' : ''}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground text-xs">Created</p>
+                    <p>{format(new Date(client.created_at), 'MMM d, yyyy')}</p>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Desktop Table */}
+        <div className="hidden sm:block border border-border rounded-lg overflow-hidden">
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/30">
                 <TableHead>Client</TableHead>
                 <TableHead>Event</TableHead>
-                <TableHead>Event Date</TableHead>
-                <TableHead>Albums</TableHead>
-                <TableHead>Created</TableHead>
+                <TableHead className="hidden md:table-cell">Event Date</TableHead>
+                <TableHead className="hidden lg:table-cell">Albums</TableHead>
+                <TableHead className="hidden lg:table-cell">Created</TableHead>
                 <TableHead className="w-12"></TableHead>
               </TableRow>
             </TableHeader>
@@ -192,18 +249,18 @@ const AdminClients = () => {
                       </div>
                     </TableCell>
                     <TableCell>{client.event_name}</TableCell>
-                    <TableCell>
+                    <TableCell className="hidden md:table-cell">
                       {client.event_date 
                         ? format(new Date(client.event_date), 'MMM d, yyyy')
                         : '-'
                       }
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="hidden lg:table-cell">
                       <span className="text-sm">
                         {client.albums.length} album{client.albums.length !== 1 ? 's' : ''}
                       </span>
                     </TableCell>
-                    <TableCell className="text-muted-foreground">
+                    <TableCell className="hidden lg:table-cell text-muted-foreground">
                       {format(new Date(client.created_at), 'MMM d, yyyy')}
                     </TableCell>
                     <TableCell>

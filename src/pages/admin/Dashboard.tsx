@@ -142,27 +142,27 @@ const AdminDashboard = () => {
 
   return (
     <AdminLayout>
-      <div className="space-y-8">
+      <div className="space-y-6 sm:space-y-8">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <h1 className="font-serif text-3xl font-light text-foreground">Dashboard</h1>
-            <p className="text-muted-foreground mt-1">Welcome back to Ajanta Photography</p>
+            <h1 className="font-serif text-2xl sm:text-3xl font-light text-foreground">Dashboard</h1>
+            <p className="text-muted-foreground mt-1 text-sm sm:text-base">Welcome back to Ajanta Photography</p>
           </div>
           <CreateClientDialog onSuccess={fetchDashboardData} />
         </div>
 
-        {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+        {/* Stats Grid - Mobile: 2 columns, larger: responsive */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
           {statCards.map((stat) => (
             <Card key={stat.label} className="bg-card border-border">
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-muted-foreground">{stat.label}</p>
-                    <p className="text-3xl font-light mt-1">{stat.value}</p>
+              <CardContent className="p-3 sm:p-4 lg:p-6">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs sm:text-sm text-muted-foreground truncate">{stat.label}</p>
+                    <p className="text-xl sm:text-2xl lg:text-3xl font-light mt-0.5 sm:mt-1">{stat.value}</p>
                   </div>
-                  <stat.icon className={`h-8 w-8 ${stat.color} opacity-80`} />
+                  <stat.icon className={`h-6 w-6 sm:h-8 sm:w-8 ${stat.color} opacity-80 hidden sm:block`} />
                 </div>
               </CardContent>
             </Card>
@@ -170,31 +170,31 @@ const AdminDashboard = () => {
         </div>
 
         {/* Recent Activity */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
           {/* Recent Clients */}
           <Card className="bg-card border-border">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="font-serif text-xl font-light">Recent Clients</CardTitle>
+            <CardHeader className="flex flex-row items-center justify-between p-4 sm:p-6">
+              <CardTitle className="font-serif text-lg sm:text-xl font-light">Recent Clients</CardTitle>
               <button
                 onClick={() => navigate('/admin/clients')}
-                className="text-sm text-primary hover:underline"
+                className="text-xs sm:text-sm text-primary hover:underline"
               >
                 View all
               </button>
             </CardHeader>
-            <CardContent>
+            <CardContent className="px-4 pb-4 sm:px-6 sm:pb-6">
               {recentClients.length === 0 ? (
                 <p className="text-muted-foreground text-sm">No clients yet</p>
               ) : (
-                <div className="space-y-4">
+                <div className="space-y-3 sm:space-y-4">
                   {recentClients.map((client) => (
-                    <div key={client.id} className="flex items-center justify-between">
-                      <div>
-                        <p className="font-medium">{client.profiles?.name || 'Unknown'}</p>
-                        <p className="text-sm text-muted-foreground">{client.event_name}</p>
+                    <div key={client.id} className="flex items-center justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium text-sm sm:text-base truncate">{client.profiles?.name || 'Unknown'}</p>
+                        <p className="text-xs sm:text-sm text-muted-foreground truncate">{client.event_name}</p>
                       </div>
-                      <div className="text-right">
-                        <p className="text-sm text-muted-foreground">
+                      <div className="text-right flex-shrink-0">
+                        <p className="text-xs sm:text-sm text-muted-foreground">
                           {client.event_date 
                             ? format(new Date(client.event_date), 'MMM d, yyyy')
                             : 'No date'
@@ -210,27 +210,27 @@ const AdminDashboard = () => {
 
           {/* Recent Bookings */}
           <Card className="bg-card border-border">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="font-serif text-xl font-light">Recent Bookings</CardTitle>
+            <CardHeader className="flex flex-row items-center justify-between p-4 sm:p-6">
+              <CardTitle className="font-serif text-lg sm:text-xl font-light">Recent Bookings</CardTitle>
               <button
                 onClick={() => navigate('/admin/bookings')}
-                className="text-sm text-primary hover:underline"
+                className="text-xs sm:text-sm text-primary hover:underline"
               >
                 View all
               </button>
             </CardHeader>
-            <CardContent>
+            <CardContent className="px-4 pb-4 sm:px-6 sm:pb-6">
               {recentBookings.length === 0 ? (
                 <p className="text-muted-foreground text-sm">No bookings yet</p>
               ) : (
-                <div className="space-y-4">
+                <div className="space-y-3 sm:space-y-4">
                   {recentBookings.map((booking) => (
-                    <div key={booking.id} className="flex items-center justify-between">
-                      <div>
-                        <p className="font-medium">{booking.client_name}</p>
-                        <p className="text-sm text-muted-foreground">{booking.event_type}</p>
+                    <div key={booking.id} className="flex items-center justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium text-sm sm:text-base truncate">{booking.client_name}</p>
+                        <p className="text-xs sm:text-sm text-muted-foreground truncate">{booking.event_type}</p>
                       </div>
-                      <div className="text-right">
+                      <div className="text-right flex-shrink-0">
                         <span className={`inline-block px-2 py-1 text-xs rounded ${
                           booking.status === 'new' 
                             ? 'bg-yellow-500/20 text-yellow-500' 
