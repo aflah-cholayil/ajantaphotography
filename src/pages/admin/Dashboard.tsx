@@ -7,6 +7,7 @@ import { AdminLayout } from '@/components/admin/AdminLayout';
 import { CreateClientDialog } from '@/components/admin/CreateClientDialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { PullToRefresh } from '@/components/ui/PullToRefresh';
 
 interface DashboardStats {
   totalClients: number;
@@ -140,9 +141,14 @@ const AdminDashboard = () => {
     { label: 'Downloads', value: stats.totalDownloads, icon: Download, color: 'text-primary' },
   ];
 
+  const handleRefresh = useCallback(async () => {
+    await fetchDashboardData();
+  }, [fetchDashboardData]);
+
   return (
     <AdminLayout>
-      <div className="space-y-6 sm:space-y-8">
+      <PullToRefresh onRefresh={handleRefresh}>
+        <div className="space-y-6 sm:space-y-8">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
@@ -249,6 +255,7 @@ const AdminDashboard = () => {
           </Card>
         </div>
       </div>
+      </PullToRefresh>
     </AdminLayout>
   );
 };
