@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Instagram, Facebook, Mail, Phone, MapPin, MessageCircle } from 'lucide-react';
 import { useStudioSettings } from '@/hooks/useStudioSettings';
+import { Logo } from '@/components/shared/Logo';
 
 const quickLinks = [
   { name: 'About Us', path: '/about' },
@@ -25,14 +26,9 @@ export const Footer = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-12">
           {/* Brand */}
           <div className="lg:col-span-1">
-            <Link to="/" className="inline-block mb-6">
-              <span className="font-serif text-3xl font-light tracking-wider text-foreground">
-                Ajanta
-              </span>
-              <span className="block text-[10px] uppercase tracking-[0.3em] text-primary font-sans font-medium">
-                Photography
-              </span>
-            </Link>
+            <div className="mb-6">
+              <Logo variant="large" linkTo="/" />
+            </div>
             <p className="text-muted-foreground font-sans text-sm leading-relaxed mb-6">
               {identity.tagline}. {identity.description}.
             </p>
