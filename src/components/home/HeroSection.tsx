@@ -1,8 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useRef } from 'react';
 import { motion, useScroll, useTransform } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import { ChevronDown, Play } from 'lucide-react';
-import heroImage from '@/assets/hero-wedding.jpg';
 
 export const HeroSection = () => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -17,16 +16,22 @@ export const HeroSection = () => {
 
   return (
     <section ref={containerRef} className="relative h-screen overflow-hidden">
-      {/* Parallax Background */}
+      {/* Elegant Gradient Background */}
       <motion.div 
         className="absolute inset-0 -z-10"
         style={{ y, scale }}
       >
-        <img
-          src={heroImage}
-          alt="Wedding couple at sunset"
-          className="w-full h-full object-cover"
-        />
+        {/* Rich dark gradient background */}
+        <div className="w-full h-full bg-gradient-to-br from-background via-card to-background" />
+        
+        {/* Decorative elements */}
+        <div className="absolute inset-0">
+          {/* Subtle radial glow */}
+          <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[800px] h-[800px] rounded-full bg-primary/5 blur-3xl" />
+          <div className="absolute bottom-0 left-0 w-full h-1/2 bg-gradient-to-t from-background to-transparent" />
+        </div>
+        
+        {/* Overlay gradient */}
         <div className="absolute inset-0 bg-gradient-to-b from-background/30 via-background/50 to-background" />
       </motion.div>
 

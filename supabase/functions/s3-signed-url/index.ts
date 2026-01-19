@@ -57,13 +57,28 @@ const handler = async (req: Request): Promise<Response> => {
       // Check if this is a works asset - verify it's an active work in the database
       if (s3Key.startsWith("works/") || s3Key.startsWith("works/previews/")) {
         // Check if this work exists and is active (publicly viewable)
-        const { data: work } = await supabase
-          .from("works")
-          .select("id, status, show_on_gallery")
-          .or(`s3_key.eq.${s3Key},s3_preview_key.eq.${s3Key}`)
-          .single();
+        // Try matching by s3_key first, then by s3_preview_key
+        let work = null;
         
-        if (work && work.status === "active" && work.show_on_gallery) {
+        const { data: workByKey } = await supabase
+          .from("works")
+          .select("id, status, show_on_gallery, show_on_home")
+          .eq("s3_key", s3Key)
+          .maybeSingle();
+        
+        if (workByKey) {
+          work = workByKey;
+        } else {
+          const { data: workByPreview } = await supabase
+            .from("works")
+            .select("id, status, show_on_gallery, show_on_home")
+            .eq("s3_preview_key", s3Key)
+            .maybeSingle();
+          work = workByPreview;
+        }
+        
+        // Allow access if work is active AND (shown on gallery OR shown on home)
+        if (work && work.status === "active" && (work.show_on_gallery || work.show_on_home)) {
           console.log("Public access granted for active work:", s3Key);
           isPublicAsset = true;
         }
