@@ -1,23 +1,21 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { S3Client, DeleteObjectCommand } from "https://esm.sh/@aws-sdk/client-s3@3.670.0";
-import { getSignedUrl } from "https://esm.sh/@aws-sdk/s3-request-presigner@3.670.0";
-import { PutObjectCommand } from "https://esm.sh/@aws-sdk/client-s3@3.670.0";
+import { AwsClient } from "https://esm.sh/aws4fetch@1.0.20?target=deno";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, action',
 };
 
-const s3Client = new S3Client({
-  region: Deno.env.get('AWS_REGION') || 'ap-south-1',
-  credentials: {
-    accessKeyId: Deno.env.get('AWS_ACCESS_KEY_ID') || '',
-    secretAccessKey: Deno.env.get('AWS_SECRET_ACCESS_KEY') || '',
-  },
-});
+const awsRegion = Deno.env.get('AWS_REGION') || 'ap-south-1';
+const bucketName = Deno.env.get('AWS_BUCKET_NAME') || '';
 
-const BUCKET_NAME = Deno.env.get('AWS_BUCKET_NAME') || '';
+const aws = new AwsClient({
+  accessKeyId: Deno.env.get('AWS_ACCESS_KEY_ID')!,
+  secretAccessKey: Deno.env.get('AWS_SECRET_ACCESS_KEY')!,
+  region: awsRegion,
+  service: 's3',
+});
 
 interface UploadRequest {
   fileName: string;
@@ -53,6 +51,7 @@ async function handler(req: Request): Promise<Response> {
     // Verify auth
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
+      console.error('No authorization header');
       return new Response(JSON.stringify({ error: 'No authorization header' }), {
         status: 401,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -70,6 +69,7 @@ async function handler(req: Request): Promise<Response> {
 
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
+      console.error('User auth error:', userError);
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
         status: 401,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -81,6 +81,7 @@ async function handler(req: Request): Promise<Response> {
     const { data: isAdmin } = await serviceClient.rpc('is_admin_user', { _user_id: user.id });
 
     if (!isAdmin) {
+      console.error('User is not admin:', user.id);
       return new Response(JSON.stringify({ error: 'Forbidden - admin access required' }), {
         status: 403,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -88,33 +89,46 @@ async function handler(req: Request): Promise<Response> {
     }
 
     const url = new URL(req.url);
-    const action = url.searchParams.get('action');
+    // Get action from query param or header
+    const action = url.searchParams.get('action') || req.headers.get('action');
+    console.log('Action:', action);
 
     // Handle different actions
     if (action === 'upload-url') {
-      // Generate presigned URL for upload
+      // Generate presigned URL for upload using aws4fetch
       const { fileName, contentType, fileSize } = await req.json() as UploadRequest;
+      console.log('Upload request:', { fileName, contentType, fileSize });
       
       const timestamp = Date.now();
       const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
       const s3Key = `works/${timestamp}_${sanitizedFileName}`;
       const previewKey = `works/previews/${timestamp}_${sanitizedFileName}`;
 
-      const command = new PutObjectCommand({
-        Bucket: BUCKET_NAME,
-        Key: s3Key,
-        ContentType: contentType,
+      // Generate presigned PUT URL for main file
+      const objectUrl = `https://${bucketName}.s3.${awsRegion}.amazonaws.com/${s3Key}`;
+      const signedReq = await aws.sign(objectUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': contentType,
+        },
+        aws: {
+          signQuery: true,
+        },
       });
+      const uploadUrl = signedReq.url;
 
-      const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
-
-      // Also generate preview upload URL
-      const previewCommand = new PutObjectCommand({
-        Bucket: BUCKET_NAME,
-        Key: previewKey,
-        ContentType: contentType,
+      // Generate presigned PUT URL for preview
+      const previewObjectUrl = `https://${bucketName}.s3.${awsRegion}.amazonaws.com/${previewKey}`;
+      const previewSignedReq = await aws.sign(previewObjectUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': contentType,
+        },
+        aws: {
+          signQuery: true,
+        },
       });
-      const previewUploadUrl = await getSignedUrl(s3Client, previewCommand, { expiresIn: 3600 });
+      const previewUploadUrl = previewSignedReq.url;
 
       console.log('Generated upload URLs for work:', s3Key);
 
@@ -123,8 +137,8 @@ async function handler(req: Request): Promise<Response> {
         previewUploadUrl,
         s3Key,
         previewKey,
-        bucket: BUCKET_NAME,
-        region: Deno.env.get('AWS_REGION') || 'ap-south-1',
+        bucket: bucketName,
+        region: awsRegion,
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -133,6 +147,7 @@ async function handler(req: Request): Promise<Response> {
     if (action === 'create') {
       // Create work record
       const workData = await req.json() as WorkData;
+      console.log('Creating work:', workData.title);
       
       const { data, error } = await serviceClient
         .from('works')
@@ -178,6 +193,7 @@ async function handler(req: Request): Promise<Response> {
       }
 
       const updates = await req.json();
+      console.log('Updating work:', workId, updates);
       
       const { data, error } = await serviceClient
         .from('works')
@@ -217,25 +233,24 @@ async function handler(req: Request): Promise<Response> {
         .single();
 
       if (fetchError || !work) {
+        console.error('Work not found:', workId);
         return new Response(JSON.stringify({ error: 'Work not found' }), {
           status: 404,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
 
-      // Delete from S3
+      // Delete from S3 using aws4fetch
       try {
-        await s3Client.send(new DeleteObjectCommand({
-          Bucket: BUCKET_NAME,
-          Key: work.s3_key,
-        }));
+        const deleteUrl = `https://${bucketName}.s3.${awsRegion}.amazonaws.com/${work.s3_key}`;
+        const deleteReq = await aws.sign(deleteUrl, { method: 'DELETE' });
+        await fetch(deleteReq.url, { method: 'DELETE', headers: deleteReq.headers });
         console.log('Deleted S3 object:', work.s3_key);
 
         if (work.s3_preview_key) {
-          await s3Client.send(new DeleteObjectCommand({
-            Bucket: BUCKET_NAME,
-            Key: work.s3_preview_key,
-          }));
+          const previewDeleteUrl = `https://${bucketName}.s3.${awsRegion}.amazonaws.com/${work.s3_preview_key}`;
+          const previewDeleteReq = await aws.sign(previewDeleteUrl, { method: 'DELETE' });
+          await fetch(previewDeleteReq.url, { method: 'DELETE', headers: previewDeleteReq.headers });
           console.log('Deleted S3 preview:', work.s3_preview_key);
         }
       } catch (s3Error) {
@@ -273,19 +288,21 @@ async function handler(req: Request): Promise<Response> {
         });
       }
 
-      const { GetObjectCommand } = await import("https://esm.sh/@aws-sdk/client-s3@3.670.0");
-      const command = new GetObjectCommand({
-        Bucket: BUCKET_NAME,
-        Key: s3Key,
+      const objectUrl = `https://${bucketName}.s3.${awsRegion}.amazonaws.com/${s3Key}`;
+      const signedReq = await aws.sign(objectUrl, {
+        method: 'GET',
+        aws: {
+          signQuery: true,
+        },
       });
 
-      const signedUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
-
-      return new Response(JSON.stringify({ url: signedUrl }), {
+      console.log('Generated signed URL for:', s3Key);
+      return new Response(JSON.stringify({ url: signedReq.url }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
+    console.error('Invalid action:', action);
     return new Response(JSON.stringify({ error: 'Invalid action' }), {
       status: 400,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
