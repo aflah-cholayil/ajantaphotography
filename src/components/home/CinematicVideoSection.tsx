@@ -75,15 +75,17 @@ export const CinematicVideoSection = () => {
   }, [isLoading, showcaseVideoKey, isVideoVisible, shouldRenderSection, signedVideoUrl]);
   
   // Handle video playback based on viewport using IntersectionObserver
+  // Don't wait for isVideoLoaded - start playing as soon as we have the URL
   useEffect(() => {
     const video = videoRef.current;
     const section = sectionRef.current;
-    if (!video || !section || !isVideoLoaded || hasError) return;
+    if (!video || !section || !signedVideoUrl || hasError) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
           if (entry.isIntersecting) {
+            // Try to play when visible
             video.play().catch((err) => {
               console.warn('Video autoplay prevented:', err);
             });
@@ -92,12 +94,22 @@ export const CinematicVideoSection = () => {
           }
         });
       },
-      { threshold: 0.3 }
+      { threshold: 0.2 } // Lower threshold for mobile
     );
 
     observer.observe(section);
     return () => observer.disconnect();
-  }, [isVideoLoaded, hasError]);
+  }, [signedVideoUrl, hasError]);
+
+  // Tap to play fallback for mobile devices where autoplay is blocked
+  const handleVideoTap = useCallback(() => {
+    const video = videoRef.current;
+    if (video && video.paused) {
+      video.play().catch((err) => {
+        console.warn('Video play on tap prevented:', err);
+      });
+    }
+  }, []);
 
   const handleVideoLoad = useCallback(() => {
     console.log('[CinematicVideoSection] Video loaded successfully');
@@ -172,14 +184,18 @@ export const CinematicVideoSection = () => {
                 <video
                   ref={videoRef}
                   key={signedVideoUrl}
-                  className="absolute inset-0 w-full h-full object-cover"
+                  className="absolute inset-0 w-full h-full object-cover cursor-pointer"
                   src={signedVideoUrl}
                   muted
                   loop
                   playsInline
-                  preload="metadata"
+                  autoPlay
+                  preload="auto"
                   onLoadedData={handleVideoLoad}
                   onError={handleVideoError}
+                  onClick={handleVideoTap}
+                  // @ts-ignore - webkit attribute for iOS
+                  webkit-playsinline="true"
                 />
               )}
 
