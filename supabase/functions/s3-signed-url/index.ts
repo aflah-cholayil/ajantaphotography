@@ -53,6 +53,21 @@ const handler = async (req: Request): Promise<Response> => {
       if (s3Key.startsWith("assets/showcase_video/") || s3Key.startsWith("assets/public/")) {
         isPublicAsset = true;
       }
+      
+      // Check if this is a works asset - verify it's an active work in the database
+      if (s3Key.startsWith("works/") || s3Key.startsWith("works/previews/")) {
+        // Check if this work exists and is active (publicly viewable)
+        const { data: work } = await supabase
+          .from("works")
+          .select("id, status, show_on_gallery")
+          .or(`s3_key.eq.${s3Key},s3_preview_key.eq.${s3Key}`)
+          .single();
+        
+        if (work && work.status === "active" && work.show_on_gallery) {
+          console.log("Public access granted for active work:", s3Key);
+          isPublicAsset = true;
+        }
+      }
     } else {
       const body = await req.json();
       s3Key = body.s3Key;
