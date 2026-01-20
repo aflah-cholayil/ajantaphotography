@@ -2,10 +2,11 @@ import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Users, ChevronLeft, X, Download, ZoomIn, ZoomOut, ChevronRight,
-  Loader2, RefreshCw, User
+  Loader2, RefreshCw, User, AlertCircle
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
@@ -62,9 +63,12 @@ async function getSignedUrl(s3Key: string, albumId: string): Promise<string | nu
   return null;
 }
 
+type ProcessingStatus = 'pending' | 'processing' | 'completed' | 'failed';
+
 export function PeopleTab({ albumId, onDownload }: PeopleTabProps) {
   const [people, setPeople] = useState<Person[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [processingStatus, setProcessingStatus] = useState<ProcessingStatus>('pending');
   const [selectedPerson, setSelectedPerson] = useState<Person | null>(null);
   const [personPhotos, setPersonPhotos] = useState<Media[]>([]);
   const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
@@ -87,6 +91,7 @@ export function PeopleTab({ albumId, onDownload }: PeopleTabProps) {
       }
 
       setPeople(data?.people || []);
+      setProcessingStatus(data?.processingStatus || 'pending');
     } catch (err) {
       console.error('Error:', err);
     } finally {
@@ -97,6 +102,14 @@ export function PeopleTab({ albumId, onDownload }: PeopleTabProps) {
   useEffect(() => {
     fetchPeople();
   }, [fetchPeople]);
+
+  // Poll for processing status while processing
+  useEffect(() => {
+    if (processingStatus === 'processing') {
+      const interval = setInterval(fetchPeople, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [processingStatus, fetchPeople]);
 
   // Fetch photos for a selected person
   const handlePersonClick = useCallback(async (person: Person) => {
@@ -156,22 +169,34 @@ export function PeopleTab({ albumId, onDownload }: PeopleTabProps) {
     setZoomLevel(1);
   };
 
-  // Empty state - no people detected yet
-  if (!isLoading && people.length === 0) {
-    return (
-      <div className="text-center py-12 sm:py-16">
-        <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-muted flex items-center justify-center">
-          <Users size={40} className="text-muted-foreground" />
-        </div>
-        <h3 className="font-serif text-xl font-light text-foreground mb-2">
-          No People Detected Yet
-        </h3>
-        <p className="text-muted-foreground text-sm max-w-md mx-auto">
-          Face recognition is being processed. Check back soon to see people grouped by their photos.
-        </p>
-      </div>
-    );
-  }
+  // Processing status display
+  const getStatusMessage = () => {
+    switch (processingStatus) {
+      case 'processing':
+        return (
+          <div className="flex items-center gap-2 text-primary">
+            <Loader2 size={16} className="animate-spin" />
+            <span>Scanning photos for faces...</span>
+          </div>
+        );
+      case 'failed':
+        return (
+          <div className="flex items-center gap-2 text-destructive">
+            <AlertCircle size={16} />
+            <span>Face detection failed. Please try again.</span>
+          </div>
+        );
+      case 'completed':
+        return null;
+      default:
+        return (
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Users size={16} />
+            <span>Face detection not yet started.</span>
+          </div>
+        );
+    }
+  };
 
   // Loading state
   if (isLoading) {
@@ -183,6 +208,41 @@ export function PeopleTab({ albumId, onDownload }: PeopleTabProps) {
             <Skeleton className="h-3 w-12" />
           </div>
         ))}
+      </div>
+    );
+  }
+
+  // Empty state - with status message
+  if (people.length === 0) {
+    return (
+      <div className="text-center py-12 sm:py-16">
+        <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-muted flex items-center justify-center">
+          {processingStatus === 'processing' ? (
+            <Loader2 size={40} className="text-primary animate-spin" />
+          ) : (
+            <Users size={40} className="text-muted-foreground" />
+          )}
+        </div>
+        <h3 className="font-serif text-xl font-light text-foreground mb-2">
+          {processingStatus === 'processing' 
+            ? 'Scanning Photos...' 
+            : processingStatus === 'completed'
+              ? 'No Faces Detected'
+              : 'No People Detected Yet'}
+        </h3>
+        <p className="text-muted-foreground text-sm max-w-md mx-auto mb-4">
+          {processingStatus === 'processing'
+            ? 'We\'re analyzing your photos to find and group people. This may take a few minutes.'
+            : processingStatus === 'completed'
+              ? 'No faces were found in the photos. This can happen with landscape or object photos.'
+              : 'Face recognition will run automatically when photos are uploaded. Check back soon to see people grouped by their photos.'}
+        </p>
+        {processingStatus === 'processing' && (
+          <Badge variant="secondary" className="gap-2">
+            <Loader2 size={12} className="animate-spin" />
+            Processing in background...
+          </Badge>
+        )}
       </div>
     );
   }
@@ -399,6 +459,13 @@ export function PeopleTab({ albumId, onDownload }: PeopleTabProps) {
   // People grid (main view)
   return (
     <div>
+      {/* Status message if processing */}
+      {getStatusMessage() && (
+        <div className="mb-4 p-3 rounded-lg bg-muted/50 border border-border">
+          {getStatusMessage()}
+        </div>
+      )}
+      
       <p className="text-sm text-muted-foreground mb-4">
         Tap a person to see all photos featuring them.
       </p>

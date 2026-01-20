@@ -19,6 +19,7 @@ interface UploadingFile {
 interface MediaUploaderProps {
   albumId: string;
   onUploadComplete?: () => void;
+  onTriggerFaceDetection?: () => void;
 }
 
 const ACCEPTED_TYPES = {
@@ -33,7 +34,7 @@ const ACCEPTED_TYPES = {
 
 const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB
 
-export const MediaUploader = ({ albumId, onUploadComplete }: MediaUploaderProps) => {
+export const MediaUploader = ({ albumId, onUploadComplete, onTriggerFaceDetection }: MediaUploaderProps) => {
   const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const { toast } = useToast();
@@ -175,20 +176,27 @@ export const MediaUploader = ({ albumId, onUploadComplete }: MediaUploaderProps)
 
     setIsUploading(false);
     
-    // Check if all succeeded
-    const allSucceeded = newFiles.every(f => 
-      uploadingFiles.find(uf => uf.id === f.id)?.status === 'success'
-    );
-
-    if (allSucceeded) {
-      toast({
-        title: 'Upload complete',
-        description: `${newFiles.length} file(s) uploaded successfully`,
-      });
-    }
+    // Count successful uploads
+    setUploadingFiles(prev => {
+      const successCount = prev.filter(f => f.status === 'success').length;
+      
+      if (successCount > 0) {
+        toast({
+          title: 'Upload complete',
+          description: `${successCount} file(s) uploaded successfully`,
+        });
+        
+        // Trigger face detection for new photos
+        if (onTriggerFaceDetection) {
+          onTriggerFaceDetection();
+        }
+      }
+      
+      return prev;
+    });
 
     onUploadComplete?.();
-  }, [albumId, onUploadComplete, toast]);
+  }, [albumId, onUploadComplete, onTriggerFaceDetection, toast]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,

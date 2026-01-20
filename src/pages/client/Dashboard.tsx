@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { AlbumStatusBadge } from '@/components/admin/AlbumStatusBadge';
 import { PullToRefresh } from '@/components/ui/PullToRefresh';
 import { Logo } from '@/components/shared/Logo';
+import { MinimalFooter } from '@/components/shared/MinimalFooter';
 import { ChangePasswordDialog } from '@/components/client/ChangePasswordDialog';
 
 interface ClientData {
@@ -349,11 +350,7 @@ const ClientDashboard = () => {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-border bg-card mt-8 sm:mt-12">
-        <div className="container mx-auto px-4 sm:px-6 py-4 sm:py-6 text-center text-xs sm:text-sm text-muted-foreground">
-          <p>© {new Date().getFullYear()} All rights reserved.</p>
-        </div>
-      </footer>
+      <MinimalFooter className="mt-8 sm:mt-12" />
     </PullToRefresh>
     </>
   );

@@ -541,7 +541,24 @@ const AdminAlbumDetail = () => {
             <CardTitle className="font-serif text-xl font-light">Upload Media</CardTitle>
           </CardHeader>
           <CardContent>
-            {id && <MediaUploader albumId={id} onUploadComplete={fetchMedia} />}
+            {id && (
+              <MediaUploader 
+                albumId={id} 
+                onUploadComplete={fetchMedia}
+                onTriggerFaceDetection={() => {
+                  // Auto-trigger face detection after uploads
+                  if (album?.status === 'ready') {
+                    supabase.functions.invoke('face-detection', {
+                      body: { action: 'process_album', albumId: id },
+                    }).then(() => {
+                      setFaceProcessingStatus('processing');
+                    }).catch((err) => {
+                      console.error('Error starting face detection:', err);
+                    });
+                  }
+                }}
+              />
+            )}
           </CardContent>
         </Card>
 
