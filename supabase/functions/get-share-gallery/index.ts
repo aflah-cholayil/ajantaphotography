@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import * as bcrypt from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
+import bcrypt from "https://esm.sh/bcryptjs@2.4.3";
 import { AwsClient } from "https://esm.sh/aws4fetch@1.0.20?target=deno";
 
 const corsHeaders = {
@@ -109,7 +109,7 @@ const handler = async (req: Request): Promise<Response> => {
         );
       }
 
-      const isValidPassword = await bcrypt.compare(password, shareLink.password_hash);
+      const isValidPassword = bcrypt.compareSync(password, shareLink.password_hash);
       if (!isValidPassword) {
         return new Response(
           JSON.stringify({ error: "Incorrect password" }),
