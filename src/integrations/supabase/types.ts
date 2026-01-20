@@ -410,6 +410,30 @@ export type Database = {
         }
         Relationships: []
       }
+      rate_limits: {
+        Row: {
+          action_type: string
+          created_at: string
+          expires_at: string
+          id: string
+          ip_address: string
+        }
+        Insert: {
+          action_type: string
+          created_at?: string
+          expires_at?: string
+          id?: string
+          ip_address: string
+        }
+        Update: {
+          action_type?: string
+          created_at?: string
+          expires_at?: string
+          id?: string
+          ip_address?: string
+        }
+        Relationships: []
+      }
       share_links: {
         Row: {
           album_id: string
@@ -575,6 +599,8 @@ export type Database = {
       }
     }
     Functions: {
+      can_view_admin_data: { Args: { _user_id: string }; Returns: boolean }
+      cleanup_expired_rate_limits: { Args: never; Returns: undefined }
       get_user_role: {
         Args: { _user_id: string }
         Returns: Database["public"]["Enums"]["app_role"]
@@ -588,6 +614,7 @@ export type Database = {
       }
       is_admin_user: { Args: { _user_id: string }; Returns: boolean }
       is_owner: { Args: { _user_id: string }; Returns: boolean }
+      is_staff: { Args: { _user_id: string }; Returns: boolean }
     }
     Enums: {
       album_status: "pending" | "ready"
