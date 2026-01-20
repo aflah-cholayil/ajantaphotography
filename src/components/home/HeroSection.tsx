@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { motion, useScroll, useTransform } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import { ChevronDown, Play } from 'lucide-react';
@@ -17,19 +17,17 @@ export const HeroSection = () => {
 
   return (
     <section ref={containerRef} className="relative h-screen overflow-hidden">
-      {/* Hero Background Image */}
+      {/* Parallax Background */}
       <motion.div 
         className="absolute inset-0 -z-10"
         style={{ y, scale }}
       >
-        <img 
-          src={heroImage} 
-          alt="Wedding photography" 
+        <img
+          src={heroImage}
+          alt="Wedding couple at sunset"
           className="w-full h-full object-cover"
         />
-        
-        {/* Overlay gradient for text readability */}
-        <div className="absolute inset-0 bg-gradient-to-b from-background/60 via-background/40 to-background" />
+        <div className="absolute inset-0 bg-gradient-to-b from-background/30 via-background/50 to-background" />
       </motion.div>
 
       {/* Content */}

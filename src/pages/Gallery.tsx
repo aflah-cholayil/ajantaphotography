@@ -4,9 +4,21 @@ import { Layout } from '@/components/layout/Layout';
 import { SectionHeading } from '@/components/ui/SectionHeading';
 import { X, Loader2, Image, Video } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import gallery1 from '@/assets/gallery-1.jpg';
+import gallery2 from '@/assets/gallery-2.jpg';
+import gallery3 from '@/assets/gallery-3.jpg';
+import heroImage from '@/assets/hero-wedding.jpg';
 
 const categories = ['All', 'Wedding', 'Pre-Wedding', 'Event', 'Candid', 'Other'];
 const types = ['All', 'Photo', 'Video'];
+
+// Fallback images
+const fallbackImages = [
+  { id: 'f1', src: gallery1, alt: 'Romantic wedding portrait', category: 'wedding', type: 'photo' },
+  { id: 'f2', src: gallery2, alt: 'Wedding venue ceremony', category: 'wedding', type: 'photo' },
+  { id: 'f3', src: gallery3, alt: 'Bridal details', category: 'wedding', type: 'photo' },
+  { id: 'f4', src: heroImage, alt: 'Sunset wedding moment', category: 'wedding', type: 'photo' },
+];
 
 interface Work {
   id: string;
@@ -66,18 +78,20 @@ const Gallery = () => {
     fetchWorks();
   }, []);
 
-  const displayImages = works.map((work) => ({
-    id: work.id,
-    src: imageUrls[work.id] || '',
-    alt: work.title,
-    category: work.category,
-    type: work.type,
-  })).filter(img => img.src); // Only show images that have loaded URLs
+  const displayImages = works.length > 0
+    ? works.map((work) => ({
+        id: work.id,
+        src: imageUrls[work.id] || '',
+        alt: work.title,
+        category: work.category,
+        type: work.type,
+      }))
+    : fallbackImages;
 
   const filteredImages = displayImages.filter((img) => {
     const categoryMatch = activeCategory === 'All' || img.category.toLowerCase() === activeCategory.toLowerCase().replace('-', '');
     const typeMatch = activeType === 'All' || img.type.toLowerCase() === activeType.toLowerCase();
-    return categoryMatch && typeMatch;
+    return categoryMatch && typeMatch && img.src;
   });
 
   return (

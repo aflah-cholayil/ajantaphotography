@@ -3,7 +3,17 @@ import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import { SectionHeading } from '@/components/ui/SectionHeading';
 import { supabase } from '@/integrations/supabase/client';
-import { Loader2, Image } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
+import gallery1 from '@/assets/gallery-1.jpg';
+import gallery2 from '@/assets/gallery-2.jpg';
+import gallery3 from '@/assets/gallery-3.jpg';
+
+// Fallback images for when no works are uploaded
+const fallbackImages = [
+  { src: gallery1, alt: 'Wedding couple portrait' },
+  { src: gallery2, alt: 'Wedding venue decor' },
+  { src: gallery3, alt: 'Wedding details' },
+];
 
 interface Work {
   id: string;
@@ -59,13 +69,13 @@ export const GalleryPreview = () => {
     fetchWorks();
   }, []);
 
-  const displayImages = works
-    .filter(work => imageUrls[work.id]) // Only include works with loaded URLs
-    .map((work) => ({
-      id: work.id,
-      src: imageUrls[work.id],
-      alt: work.title,
-    }));
+  const displayImages = works.length > 0
+    ? works.map((work, index) => ({
+        id: work.id,
+        src: imageUrls[work.id] || fallbackImages[index % fallbackImages.length]?.src,
+        alt: work.title,
+      }))
+    : fallbackImages.map((img, index) => ({ id: `fallback-${index}`, ...img }));
 
   return (
     <section className="py-24 md:py-32 bg-card">
@@ -79,13 +89,6 @@ export const GalleryPreview = () => {
         {loading ? (
           <div className="flex justify-center py-16">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          </div>
-        ) : displayImages.length === 0 ? (
-          <div className="mt-16 text-center py-16">
-            <Image className="mx-auto h-16 w-16 text-muted-foreground/30 mb-4" />
-            <p className="text-muted-foreground">
-              Portfolio coming soon. Check back for our latest work.
-            </p>
           </div>
         ) : (
           <div className="mt-16 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

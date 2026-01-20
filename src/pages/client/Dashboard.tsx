@@ -30,73 +30,6 @@ interface Album {
   media_count: number;
 }
 
-// Album cover component that properly fetches signed URLs
-const AlbumCover = ({ coverImageKey, title }: { coverImageKey: string | null; title: string }) => {
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  
-  useEffect(() => {
-    if (!coverImageKey) {
-      setLoading(false);
-      return;
-    }
-    
-    const fetchUrl = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) return;
-        
-        const response = await fetch(
-          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/s3-signed-url`,
-          {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${session.access_token}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ s3Key: coverImageKey }),
-          }
-        );
-        
-        if (response.ok) {
-          const data = await response.json();
-          setImageUrl(data.url);
-        }
-      } catch (error) {
-        console.error('Failed to load album cover');
-      } finally {
-        setLoading(false);
-      }
-    };
-    
-    fetchUrl();
-  }, [coverImageKey]);
-  
-  if (loading) {
-    return (
-      <div className="w-full h-full flex items-center justify-center bg-muted">
-        <div className="animate-pulse w-full h-full bg-muted-foreground/10" />
-      </div>
-    );
-  }
-  
-  if (imageUrl) {
-    return (
-      <img
-        src={imageUrl}
-        alt={title}
-        className="w-full h-full object-cover"
-      />
-    );
-  }
-  
-  return (
-    <div className="w-full h-full flex items-center justify-center">
-      <Image size={40} className="text-muted-foreground/30" />
-    </div>
-  );
-};
-
 const ClientDashboard = () => {
   const navigate = useNavigate();
   const { user, session, isLoading: authLoading, signOut, role } = useAuth();
@@ -356,7 +289,17 @@ const ClientDashboard = () => {
                     <Card className="bg-card border-border hover:border-primary/50 transition-colors overflow-hidden">
                       {/* Album Cover */}
                       <div className="aspect-video bg-muted relative">
-                        <AlbumCover coverImageKey={album.cover_image_key} title={album.title} />
+                        {album.cover_image_key ? (
+                          <img
+                            src={`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/s3-signed-url?key=${album.cover_image_key}`}
+                            alt={album.title}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center">
+                            <Image size={40} className="text-muted-foreground/30" />
+                          </div>
+                        )}
                         <div className="absolute top-2 right-2 sm:top-3 sm:right-3">
                           <AlbumStatusBadge status={album.status} />
                         </div>
