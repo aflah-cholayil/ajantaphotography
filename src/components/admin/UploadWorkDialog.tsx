@@ -161,9 +161,9 @@ export const UploadWorkDialog = ({ open, onOpenChange, onSuccess }: UploadWorkDi
         throw new Error(error.error || 'Failed to get upload URL');
       }
 
-      const { uploadUrl, s3Key, previewKey } = await response.json();
+      const { uploadUrl, previewUploadUrl, s3Key, previewKey } = await response.json();
 
-      // Upload to S3
+      // Upload main file to S3
       setUploadProgress(40);
       const uploadResponse = await fetch(uploadUrl, {
         method: 'PUT',
@@ -175,6 +175,20 @@ export const UploadWorkDialog = ({ open, onOpenChange, onSuccess }: UploadWorkDi
 
       if (!uploadResponse.ok) {
         throw new Error('Failed to upload file to S3');
+      }
+
+      // Also upload to preview location (same file for now - could be resized in future)
+      setUploadProgress(55);
+      const previewUploadResponse = await fetch(previewUploadUrl, {
+        method: 'PUT',
+        body: file,
+        headers: {
+          'Content-Type': file.type,
+        },
+      });
+
+      if (!previewUploadResponse.ok) {
+        console.warn('Failed to upload preview, using main file');
       }
 
       // Get dimensions
