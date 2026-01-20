@@ -20,6 +20,9 @@ export type Database = {
           cover_image_key: string | null
           created_at: string
           description: string | null
+          face_processing_completed_at: string | null
+          face_processing_started_at: string | null
+          face_processing_status: string | null
           id: string
           ready_at: string | null
           status: Database["public"]["Enums"]["album_status"]
@@ -31,6 +34,9 @@ export type Database = {
           cover_image_key?: string | null
           created_at?: string
           description?: string | null
+          face_processing_completed_at?: string | null
+          face_processing_started_at?: string | null
+          face_processing_status?: string | null
           id?: string
           ready_at?: string | null
           status?: Database["public"]["Enums"]["album_status"]
@@ -42,6 +48,9 @@ export type Database = {
           cover_image_key?: string | null
           created_at?: string
           description?: string | null
+          face_processing_completed_at?: string | null
+          face_processing_started_at?: string | null
+          face_processing_status?: string | null
           id?: string
           ready_at?: string | null
           status?: Database["public"]["Enums"]["album_status"]
@@ -163,6 +172,64 @@ export type Database = {
         }
         Relationships: []
       }
+      detected_faces: {
+        Row: {
+          album_id: string
+          bounding_box: Json | null
+          confidence: number | null
+          created_at: string
+          external_image_id: string | null
+          face_id: string | null
+          id: string
+          media_id: string
+          person_id: string | null
+        }
+        Insert: {
+          album_id: string
+          bounding_box?: Json | null
+          confidence?: number | null
+          created_at?: string
+          external_image_id?: string | null
+          face_id?: string | null
+          id?: string
+          media_id: string
+          person_id?: string | null
+        }
+        Update: {
+          album_id?: string
+          bounding_box?: Json | null
+          confidence?: number | null
+          created_at?: string
+          external_image_id?: string | null
+          face_id?: string | null
+          id?: string
+          media_id?: string
+          person_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "detected_faces_album_id_fkey"
+            columns: ["album_id"]
+            isOneToOne: false
+            referencedRelation: "albums"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "detected_faces_media_id_fkey"
+            columns: ["media_id"]
+            isOneToOne: false
+            referencedRelation: "media"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "detected_faces_person_id_fkey"
+            columns: ["person_id"]
+            isOneToOne: false
+            referencedRelation: "people"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       email_logs: {
         Row: {
           client_id: string | null
@@ -256,6 +323,47 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "media_album_id_fkey"
+            columns: ["album_id"]
+            isOneToOne: false
+            referencedRelation: "albums"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      people: {
+        Row: {
+          album_id: string
+          created_at: string
+          face_thumbnail_key: string | null
+          id: string
+          is_hidden: boolean | null
+          name: string | null
+          photo_count: number | null
+          updated_at: string
+        }
+        Insert: {
+          album_id: string
+          created_at?: string
+          face_thumbnail_key?: string | null
+          id?: string
+          is_hidden?: boolean | null
+          name?: string | null
+          photo_count?: number | null
+          updated_at?: string
+        }
+        Update: {
+          album_id?: string
+          created_at?: string
+          face_thumbnail_key?: string | null
+          id?: string
+          is_hidden?: boolean | null
+          name?: string | null
+          photo_count?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "people_album_id_fkey"
             columns: ["album_id"]
             isOneToOne: false
             referencedRelation: "albums"

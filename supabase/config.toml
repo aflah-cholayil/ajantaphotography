@@ -23,3 +23,12 @@ verify_jwt = false
 
 [functions.manage-work]
 verify_jwt = false
+
+[functions.upload-asset]
+verify_jwt = false
+
+[functions.verify-share-password]
+verify_jwt = false
+
+[functions.face-detection]
+verify_jwt = false

@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   ArrowLeft, Image, Video, Download, X, ChevronLeft, ChevronRight, 
-  FolderDown, Loader2, Check, ZoomIn, ZoomOut, Share2, Play, Pause
+  FolderDown, Loader2, Check, ZoomIn, ZoomOut, Share2, Play, Pause, Users
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { supabase } from '@/integrations/supabase/client';
@@ -11,9 +11,10 @@ import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'sonner';
 import { ShareGalleryTab } from '@/components/client/ShareGalleryTab';
+import { OptimizedMediaGrid } from '@/components/client/OptimizedMediaGrid';
+import { PeopleTab } from '@/components/client/PeopleTab';
 
 interface Media {
   id: string;
@@ -32,6 +33,36 @@ interface Album {
   status: 'pending' | 'ready';
 }
 
+// URL cache with expiry
+const urlCache = new Map<string, { url: string; expiresAt: number }>();
+const URL_CACHE_DURATION = 50 * 60 * 1000;
+
+async function getSignedUrl(s3Key: string, albumId: string): Promise<string | null> {
+  const cacheKey = `${albumId}:${s3Key}`;
+  const cached = urlCache.get(cacheKey);
+  
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.url;
+  }
+
+  try {
+    const response = await supabase.functions.invoke('s3-signed-url', {
+      body: { s3Key, albumId },
+    });
+
+    if (response.data?.url) {
+      urlCache.set(cacheKey, {
+        url: response.data.url,
+        expiresAt: Date.now() + URL_CACHE_DURATION,
+      });
+      return response.data.url;
+    }
+  } catch (err) {
+    console.error('Error getting signed URL:', err);
+  }
+  return null;
+}
+
 const ClientAlbumView = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -40,7 +71,7 @@ const ClientAlbumView = () => {
   const [media, setMedia] = useState<Media[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedMedia, setSelectedMedia] = useState<Media | null>(null);
-  const [mediaUrls, setMediaUrls] = useState<Record<string, string>>({});
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [isDownloadingAll, setIsDownloadingAll] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
@@ -88,23 +119,6 @@ const ClientAlbumView = () => {
         console.error('Error fetching media:', mediaError);
       } else if (mediaData) {
         setMedia(mediaData);
-        
-        // Generate signed URLs for all media
-        const urls: Record<string, string> = {};
-        for (const item of mediaData) {
-          const key = item.s3_preview_key || item.s3_key;
-          try {
-            const response = await supabase.functions.invoke('s3-signed-url', {
-              body: { s3Key: key, albumId: id },
-            });
-            if (response.data?.url) {
-              urls[item.id] = response.data.url;
-            }
-          } catch (err) {
-            console.error('Error getting signed URL:', err);
-          }
-        }
-        setMediaUrls(urls);
       }
     } catch (error) {
       console.error('Error in fetchAlbumData:', error);
@@ -132,22 +146,37 @@ const ClientAlbumView = () => {
     }
   }, [user, role, fetchAlbumData]);
 
+  // Load lightbox URL when media is selected
+  useEffect(() => {
+    if (selectedMedia && id) {
+      const fetchLightboxUrl = async () => {
+        const url = await getSignedUrl(selectedMedia.s3_key, id);
+        setLightboxUrl(url);
+      };
+      fetchLightboxUrl();
+    } else {
+      setLightboxUrl(null);
+    }
+  }, [selectedMedia, id]);
+
   const handleDownload = async (item: Media) => {
+    if (!id) return;
+    
     try {
       toast.info('Preparing download...');
-      const response = await supabase.functions.invoke('s3-signed-url', {
-        body: { s3Key: item.s3_key, albumId: id },
-      });
+      const url = await getSignedUrl(item.s3_key, id);
       
-      if (response.data?.url) {
+      if (url) {
         const link = document.createElement('a');
-        link.href = response.data.url;
+        link.href = url;
         link.download = item.file_name;
         link.target = '_blank';
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
         toast.success(`Downloading ${item.file_name}`);
+      } else {
+        toast.error('Failed to get download URL');
       }
     } catch (err) {
       console.error('Error downloading:', err);
@@ -173,7 +202,7 @@ const ClientAlbumView = () => {
   };
 
   const downloadMultiple = async (items: Media[]) => {
-    if (!album) return;
+    if (!album || !id) return;
 
     setIsDownloadingAll(true);
     setDownloadProgress(0);
@@ -191,12 +220,10 @@ const ClientAlbumView = () => {
 
       for (const item of items) {
         try {
-          const urlResponse = await supabase.functions.invoke('s3-signed-url', {
-            body: { s3Key: item.s3_key, albumId: id },
-          });
+          const url = await getSignedUrl(item.s3_key, id);
 
-          if (urlResponse.data?.url) {
-            const fileResponse = await fetch(urlResponse.data.url);
+          if (url) {
+            const fileResponse = await fetch(url);
             if (fileResponse.ok) {
               const blob = await fileResponse.blob();
               folder.file(item.file_name, blob);
@@ -411,6 +438,10 @@ const ClientAlbumView = () => {
               <Video size={14} className="sm:w-4 sm:h-4" />
               <span className="hidden xs:inline">Videos</span> ({videos.length})
             </TabsTrigger>
+            <TabsTrigger value="people" className="gap-1 sm:gap-2 text-xs sm:text-sm flex-1 sm:flex-none data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+              <Users size={14} className="sm:w-4 sm:h-4" />
+              <span className="hidden xs:inline">People</span>
+            </TabsTrigger>
             <TabsTrigger value="share" className="gap-1 sm:gap-2 text-xs sm:text-sm flex-1 sm:flex-none data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <Share2 size={14} className="sm:w-4 sm:h-4" />
               <span className="hidden xs:inline">Share</span>
@@ -426,81 +457,16 @@ const ClientAlbumView = () => {
                 </Button>
               </div>
             )}
-            {photos.length === 0 ? (
-              <div className="text-center py-12 sm:py-16">
-                <Image size={48} className="mx-auto mb-4 text-muted-foreground/30" />
-                <p className="text-muted-foreground text-sm sm:text-base">No photos in this album yet.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-4">
-                {photos.map((item, index) => (
-                  <motion.div
-                    key={item.id}
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    transition={{ duration: 0.3, delay: index * 0.03 }}
-                    className="aspect-square relative group cursor-pointer overflow-hidden rounded-lg bg-muted"
-                    onClick={() => !isSelectionMode && setSelectedMedia(item)}
-                  >
-                    {mediaUrls[item.id] ? (
-                      <img
-                        src={mediaUrls[item.id]}
-                        alt={item.file_name}
-                        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <div className="animate-pulse w-full h-full bg-muted-foreground/10" />
-                      </div>
-                    )}
-                    
-                    {/* Selection checkbox */}
-                    {isSelectionMode && (
-                      <div 
-                        className="absolute top-3 left-3 z-10"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleSelection(item.id);
-                        }}
-                      >
-                        <Checkbox 
-                          checked={selectedItems.has(item.id)}
-                          className="h-6 w-6 border-2 border-white bg-black/50 data-[state=checked]:bg-primary data-[state=checked]:border-primary"
-                        />
-                      </div>
-                    )}
-
-                    {/* Hover overlay */}
-                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all duration-300 flex items-center justify-center opacity-0 group-hover:opacity-100">
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="text-white hover:bg-white/20 backdrop-blur-sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedMedia(item);
-                          }}
-                        >
-                          <ZoomIn size={20} />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="text-white hover:bg-white/20 backdrop-blur-sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDownload(item);
-                          }}
-                        >
-                          <Download size={20} />
-                        </Button>
-                      </div>
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
-            )}
+            <OptimizedMediaGrid
+              media={media}
+              albumId={album.id}
+              isSelectionMode={isSelectionMode}
+              selectedItems={selectedItems}
+              onToggleSelection={toggleSelection}
+              onMediaClick={setSelectedMedia}
+              onDownload={handleDownload}
+              type="photo"
+            />
           </TabsContent>
 
           {/* Videos Tab */}
@@ -512,78 +478,21 @@ const ClientAlbumView = () => {
                 </Button>
               </div>
             )}
-            {videos.length === 0 ? (
-              <div className="text-center py-16">
-                <Video size={64} className="mx-auto mb-4 text-muted-foreground/30" />
-                <p className="text-muted-foreground">No videos in this album yet.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                {videos.map((item, index) => (
-                  <motion.div
-                    key={item.id}
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    transition={{ duration: 0.3, delay: index * 0.03 }}
-                    className="aspect-video relative group cursor-pointer overflow-hidden rounded-lg bg-muted"
-                    onClick={() => !isSelectionMode && setSelectedMedia(item)}
-                  >
-                    {mediaUrls[item.id] ? (
-                      <video
-                        src={mediaUrls[item.id]}
-                        className="w-full h-full object-cover"
-                        muted
-                        preload="metadata"
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <Video size={32} className="text-muted-foreground" />
-                      </div>
-                    )}
-                    
-                    {/* Play icon overlay */}
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div className="w-14 h-14 rounded-full bg-black/60 flex items-center justify-center group-hover:bg-primary transition-colors">
-                        <Play size={24} className="text-white ml-1" />
-                      </div>
-                    </div>
+            <OptimizedMediaGrid
+              media={media}
+              albumId={album.id}
+              isSelectionMode={isSelectionMode}
+              selectedItems={selectedItems}
+              onToggleSelection={toggleSelection}
+              onMediaClick={setSelectedMedia}
+              onDownload={handleDownload}
+              type="video"
+            />
+          </TabsContent>
 
-                    {/* Selection checkbox */}
-                    {isSelectionMode && (
-                      <div 
-                        className="absolute top-3 left-3 z-10"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleSelection(item.id);
-                        }}
-                      >
-                        <Checkbox 
-                          checked={selectedItems.has(item.id)}
-                          className="h-6 w-6 border-2 border-white bg-black/50 data-[state=checked]:bg-primary data-[state=checked]:border-primary"
-                        />
-                      </div>
-                    )}
-
-                    {/* Hover overlay */}
-                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-all duration-300">
-                      <div className="absolute bottom-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="text-white hover:bg-white/20 backdrop-blur-sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDownload(item);
-                          }}
-                        >
-                          <Download size={20} />
-                        </Button>
-                      </div>
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
-            )}
+          {/* People Tab */}
+          <TabsContent value="people">
+            <PeopleTab albumId={album.id} onDownload={handleDownload} />
           </TabsContent>
 
           {/* Share Gallery Tab */}
@@ -682,22 +591,22 @@ const ClientAlbumView = () => {
               onClick={(e) => e.stopPropagation()}
             >
               {selectedMedia.type === 'photo' ? (
-                mediaUrls[selectedMedia.id] ? (
+                lightboxUrl ? (
                   <img
-                    src={mediaUrls[selectedMedia.id]}
+                    src={lightboxUrl}
                     alt={selectedMedia.file_name}
                     className="max-w-full max-h-[90vh] object-contain transition-transform duration-300"
                     style={{ transform: `scale(${zoomLevel})` }}
                   />
                 ) : (
-                  <div className="w-96 h-96 bg-muted flex items-center justify-center">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                  <div className="w-96 h-96 bg-muted flex items-center justify-center rounded-lg">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
                   </div>
                 )
               ) : (
-                mediaUrls[selectedMedia.id] ? (
+                lightboxUrl ? (
                   <video
-                    src={mediaUrls[selectedMedia.id]}
+                    src={lightboxUrl}
                     className="max-w-full max-h-[90vh]"
                     controls
                     autoPlay
@@ -705,8 +614,8 @@ const ClientAlbumView = () => {
                     onPause={() => setIsVideoPlaying(false)}
                   />
                 ) : (
-                  <div className="w-96 h-96 bg-muted flex items-center justify-center">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                  <div className="w-96 h-96 bg-muted flex items-center justify-center rounded-lg">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
                   </div>
                 )
               )}
