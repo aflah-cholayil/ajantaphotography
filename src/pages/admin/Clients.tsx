@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { format } from 'date-fns';
-import { Search, MoreVertical, Mail, Eye, RefreshCw, History, X, Filter } from 'lucide-react';
+import { Search, MoreVertical, Mail, Eye, RefreshCw, History, X, Filter, AlertTriangle } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { AdminLayout } from '@/components/admin/AdminLayout';
 import { CreateClientDialog } from '@/components/admin/CreateClientDialog';
@@ -233,6 +233,29 @@ const AdminClients = () => {
               <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
             </Button>
             <CreateClientDialog onSuccess={fetchClients} />
+          </div>
+        </div>
+
+        {/* Email Deliverability Warning */}
+        <div className="flex items-start gap-3 p-4 rounded-lg bg-amber-500/10 border border-amber-500/30 text-sm">
+          <AlertTriangle className="h-5 w-5 text-amber-500 flex-shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <p className="font-medium text-amber-600 dark:text-amber-400">
+              Emails may go to spam folders
+            </p>
+            <p className="text-muted-foreground">
+              Welcome emails are sent from a test domain (<code className="bg-muted px-1 rounded text-xs">onboarding@resend.dev</code>). 
+              Ask clients to check their <strong>spam/junk folder</strong>. 
+              To fix this permanently, verify your domain at{' '}
+              <a 
+                href="https://resend.com/domains" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="text-primary hover:underline"
+              >
+                resend.com/domains
+              </a>.
+            </p>
           </div>
         </div>
 
