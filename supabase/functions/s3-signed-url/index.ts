@@ -91,16 +91,14 @@ const handler = async (req: Request): Promise<Response> => {
       const authHeader = req.headers.get("Authorization");
       
       if (authHeader?.startsWith("Bearer ")) {
-        const userSupabase = createClient(
-          Deno.env.get("SUPABASE_URL")!,
-          Deno.env.get("SUPABASE_ANON_KEY")!,
-          { global: { headers: { Authorization: authHeader } } }
-        );
-
-        const { data: { user } } = await userSupabase.auth.getUser();
+        const token = authHeader.replace("Bearer ", "");
+        
+        // Use service role client to verify the token
+        const { data: { user }, error: userError } = await supabase.auth.getUser(token);
         
         if (user) {
           const userId = user.id;
+          console.log("Authenticated user:", userId);
 
           // Check if admin
           const { data: roleData } = await supabase
@@ -111,19 +109,25 @@ const handler = async (req: Request): Promise<Response> => {
 
           const adminRoles = ["admin", "owner", "editor"];
           if (roleData?.role && adminRoles.includes(roleData.role)) {
+            console.log("Access granted: admin role");
             hasAccess = true;
           } else if (albumId) {
             // Check if client owns this album
-            const { data: album } = await supabase
+            const { data: album, error: albumError } = await supabase
               .from("albums")
-              .select("client_id, clients!inner(user_id)")
+              .select("id, client_id, clients(user_id)")
               .eq("id", albumId)
               .single();
 
             if (album && (album as any).clients?.user_id === userId) {
+              console.log("Access granted: client owns album");
               hasAccess = true;
+            } else {
+              console.log("Client album check failed:", (album as any)?.clients?.user_id, "vs", userId);
             }
           }
+        } else {
+          console.log("Token verification failed:", userError?.message);
         }
       }
 
