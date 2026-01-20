@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, memo } from 'react';
 import { motion } from 'framer-motion';
-import { Image, Video, Download, ZoomIn, Play, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
+import { Image, Video, Download, ZoomIn, Play, Loader2, AlertCircle, RefreshCw, Heart } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -25,6 +25,8 @@ interface OptimizedMediaGridProps {
   onMediaClick: (item: Media) => void;
   onDownload: (item: Media) => void;
   type: 'photo' | 'video';
+  favorites?: Set<string>;
+  onToggleFavorite?: (id: string) => void;
 }
 
 interface MediaItemProps {
@@ -36,6 +38,8 @@ interface MediaItemProps {
   onToggleSelection: (id: string) => void;
   onMediaClick: (item: Media) => void;
   onDownload: (item: Media) => void;
+  isFavorited?: boolean;
+  onToggleFavorite?: (id: string) => void;
 }
 
 // Cache for signed URLs with expiry tracking
@@ -83,7 +87,9 @@ const MediaItem = memo(({
   isSelected,
   onToggleSelection, 
   onMediaClick, 
-  onDownload 
+  onDownload,
+  isFavorited,
+  onToggleFavorite
 }: MediaItemProps) => {
   const [url, setUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -262,6 +268,27 @@ const MediaItem = memo(({
         </div>
       )}
 
+      {/* Favorite heart button - for photos only */}
+      {isPhoto && onToggleFavorite && !isSelectionMode && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleFavorite(item.id);
+          }}
+          className={`absolute top-2 right-2 sm:top-3 sm:right-3 z-10 w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center transition-all duration-200 ${
+            isFavorited 
+              ? 'bg-primary text-primary-foreground shadow-lg scale-100' 
+              : 'bg-black/50 text-white opacity-0 group-hover:opacity-100 hover:bg-primary hover:text-primary-foreground'
+          }`}
+          aria-label={isFavorited ? 'Remove from selections' : 'Add to selections'}
+        >
+          <Heart 
+            size={16} 
+            className={`transition-transform ${isFavorited ? 'fill-current scale-110' : ''}`} 
+          />
+        </button>
+      )}
+
       {/* Hover overlay */}
       {url && !hasError && !isSelectionMode && (
         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all duration-300 flex items-center justify-center opacity-0 group-hover:opacity-100">
@@ -306,6 +333,8 @@ export function OptimizedMediaGrid({
   onMediaClick,
   onDownload,
   type,
+  favorites,
+  onToggleFavorite,
 }: OptimizedMediaGridProps) {
   const filteredMedia = media.filter(m => m.type === type);
   const isPhoto = type === 'photo';
@@ -342,6 +371,8 @@ export function OptimizedMediaGrid({
           onToggleSelection={onToggleSelection}
           onMediaClick={onMediaClick}
           onDownload={onDownload}
+          isFavorited={favorites?.has(item.id)}
+          onToggleFavorite={onToggleFavorite}
         />
       ))}
     </div>

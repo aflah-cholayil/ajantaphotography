@@ -3,11 +3,12 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   ArrowLeft, Image, Video, Download, X, ChevronLeft, ChevronRight, 
-  FolderDown, Loader2, Check, ZoomIn, ZoomOut, Share2, Play, Pause, Users
+  FolderDown, Loader2, Check, ZoomIn, ZoomOut, Share2, Play, Pause, Users, Heart
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { useMediaFavorites } from '@/hooks/useMediaFavorites';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -15,6 +16,7 @@ import { toast } from 'sonner';
 import { ShareGalleryTab } from '@/components/client/ShareGalleryTab';
 import { OptimizedMediaGrid } from '@/components/client/OptimizedMediaGrid';
 import { PeopleTab } from '@/components/client/PeopleTab';
+import { FavoritesTab } from '@/components/client/FavoritesTab';
 import { MinimalFooter } from '@/components/shared/MinimalFooter';
 
 interface Media {
@@ -80,6 +82,9 @@ const ClientAlbumView = () => {
   const [zoomLevel, setZoomLevel] = useState(1);
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
   const [activeTab, setActiveTab] = useState('photos');
+
+  // Favorites hook
+  const { favorites, toggleFavorite, favoritesCount } = useMediaFavorites(id || '');
 
   const photos = media.filter(m => m.type === 'photo');
   const videos = media.filter(m => m.type === 'video');
@@ -435,6 +440,15 @@ const ClientAlbumView = () => {
               <Image size={14} className="sm:w-4 sm:h-4" />
               <span className="hidden xs:inline">Photos</span> ({photos.length})
             </TabsTrigger>
+            <TabsTrigger value="favorites" className="gap-1 sm:gap-2 text-xs sm:text-sm flex-1 sm:flex-none data-[state=active]:bg-primary data-[state=active]:text-primary-foreground relative">
+              <Heart size={14} className={`sm:w-4 sm:h-4 ${favoritesCount > 0 ? 'fill-current' : ''}`} />
+              <span className="hidden xs:inline">Selections</span>
+              {favoritesCount > 0 && (
+                <span className="ml-1 bg-primary/20 text-primary px-1.5 py-0.5 rounded-full text-[10px] font-medium">
+                  {favoritesCount}
+                </span>
+              )}
+            </TabsTrigger>
             <TabsTrigger value="videos" className="gap-1 sm:gap-2 text-xs sm:text-sm flex-1 sm:flex-none data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <Video size={14} className="sm:w-4 sm:h-4" />
               <span className="hidden xs:inline">Videos</span> ({videos.length})
@@ -467,6 +481,18 @@ const ClientAlbumView = () => {
               onMediaClick={setSelectedMedia}
               onDownload={handleDownload}
               type="photo"
+              favorites={favorites}
+              onToggleFavorite={toggleFavorite}
+            />
+          </TabsContent>
+
+          {/* Favorites/Selections Tab */}
+          <TabsContent value="favorites">
+            <FavoritesTab
+              albumId={album.id}
+              media={media}
+              onMediaClick={setSelectedMedia}
+              onDownload={handleDownload}
             />
           </TabsContent>
 
