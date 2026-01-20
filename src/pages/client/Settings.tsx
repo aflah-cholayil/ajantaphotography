@@ -13,6 +13,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Separator } from '@/components/ui/separator';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Logo } from '@/components/shared/Logo';
+import { MinimalFooter } from '@/components/shared/MinimalFooter';
 
 const ClientSettings = () => {
   const navigate = useNavigate();
@@ -543,11 +544,7 @@ const ClientSettings = () => {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-border bg-card mt-12">
-        <div className="container mx-auto px-6 py-6 text-center text-sm text-muted-foreground">
-          <p>© {new Date().getFullYear()} All rights reserved.</p>
-        </div>
-      </footer>
+      <MinimalFooter className="mt-12" />
     </div>
   );
 };

@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 import { ShareGalleryTab } from '@/components/client/ShareGalleryTab';
 import { OptimizedMediaGrid } from '@/components/client/OptimizedMediaGrid';
 import { PeopleTab } from '@/components/client/PeopleTab';
+import { MinimalFooter } from '@/components/shared/MinimalFooter';
 
 interface Media {
   id: string;
@@ -644,11 +645,7 @@ const ClientAlbumView = () => {
       </AnimatePresence>
 
       {/* Footer */}
-      <footer className="border-t border-border bg-card mt-12">
-        <div className="container mx-auto px-6 py-6 text-center text-sm text-muted-foreground">
-          <p>© {new Date().getFullYear()} All rights reserved.</p>
-        </div>
-      </footer>
+      <MinimalFooter className="mt-12" />
     </div>
   );
 };

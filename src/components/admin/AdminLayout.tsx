@@ -289,15 +289,21 @@ export const AdminLayout = ({ children }: AdminLayoutProps) => {
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 lg:ml-64 pt-14 lg:pt-0 min-h-screen overflow-x-hidden">
+      <main className="flex-1 lg:ml-64 pt-14 lg:pt-0 min-h-screen overflow-x-hidden flex flex-col">
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3 }}
-          className="p-4 sm:p-6 lg:p-8"
+          className="p-4 sm:p-6 lg:p-8 flex-1"
         >
           {children}
         </motion.div>
+        {/* Admin Footer */}
+        <footer className="border-t border-border bg-card mt-auto">
+          <div className="px-4 sm:px-6 lg:px-8 py-4 text-center text-xs text-muted-foreground">
+            <p>© {new Date().getFullYear()} Ajanta Photography. All rights reserved.</p>
+          </div>
+        </footer>
       </main>
     </div>
   );
