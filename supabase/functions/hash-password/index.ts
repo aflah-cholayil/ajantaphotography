@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
-import * as bcrypt from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
+import bcrypt from "https://esm.sh/bcryptjs@2.4.3";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -43,7 +43,8 @@ const handler = async (req: Request): Promise<Response> => {
       }
 
       // Generate bcrypt hash with cost factor of 10
-      const hash = await bcrypt.hash(password);
+      const salt = bcrypt.genSaltSync(10);
+      const hash = bcrypt.hashSync(password, salt);
       
       console.log("Password hashed successfully");
 
@@ -62,7 +63,7 @@ const handler = async (req: Request): Promise<Response> => {
       }
 
       // Verify password against hash
-      const isValid = await bcrypt.compare(password, hash);
+      const isValid = bcrypt.compareSync(password, hash);
       
       console.log("Password verification:", isValid ? "valid" : "invalid");
 
