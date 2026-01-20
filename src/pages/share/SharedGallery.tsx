@@ -13,6 +13,7 @@ import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 
 interface Media {
@@ -23,6 +24,7 @@ interface Media {
   type: 'photo' | 'video';
   width: number | null;
   height: number | null;
+  signedUrl?: string | null;
 }
 
 interface Album {
@@ -31,174 +33,163 @@ interface Album {
   description: string | null;
 }
 
-interface ShareLink {
+interface ShareLinkInfo {
   id: string;
-  album_id: string;
-  allow_download: boolean;
-  expires_at: string | null;
-  password_hash: string | null;
-  view_count: number;
-  download_count: number;
+  allowDownload: boolean;
+  viewCount: number;
+  downloadCount: number;
 }
 
 const SharedGallery = () => {
   const { token } = useParams<{ token: string }>();
-  const [shareLink, setShareLink] = useState<ShareLink | null>(null);
   const [album, setAlbum] = useState<Album | null>(null);
   const [media, setMedia] = useState<Media[]>([]);
+  const [shareLink, setShareLink] = useState<ShareLinkInfo | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isVerifying, setIsVerifying] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [requiresPassword, setRequiresPassword] = useState(false);
   const [password, setPassword] = useState('');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState<Media | null>(null);
-  const [mediaUrls, setMediaUrls] = useState<Record<string, string>>({});
   const [isDownloadingAll, setIsDownloadingAll] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [zoomLevel, setZoomLevel] = useState(1);
   const [activeTab, setActiveTab] = useState('photos');
+  const [retryCount, setRetryCount] = useState(0);
 
   const photos = media.filter(m => m.type === 'photo');
   const videos = media.filter(m => m.type === 'video');
 
+  // Verify share link exists and check password requirement
   const verifyShareLink = useCallback(async () => {
     if (!token) {
       setError('Invalid share link');
       setIsLoading(false);
+      setIsVerifying(false);
       return;
     }
 
-    try {
-      // Fetch share link details
-      const { data: shareLinkData, error: shareLinkError } = await supabase
-        .from('share_links')
-        .select('*')
-        .eq('token', token)
-        .maybeSingle();
+    const normalizedToken = token.trim();
+    console.log('Verifying share link:', normalizedToken.substring(0, 8) + '...');
 
-      if (shareLinkError || !shareLinkData) {
+    try {
+      const { data, error: funcError } = await supabase.functions.invoke('get-share-gallery', {
+        body: { 
+          token: normalizedToken, 
+          action: 'verify' 
+        },
+      });
+
+      if (funcError) {
+        console.error('Function error:', funcError);
+        if (retryCount < 2) {
+          setRetryCount(prev => prev + 1);
+          setTimeout(verifyShareLink, 1000);
+          return;
+        }
+        setError('Unable to load gallery. Please try again.');
+        setIsLoading(false);
+        setIsVerifying(false);
+        return;
+      }
+
+      if (data?.error) {
+        console.log('Share link verification failed:', data.error);
+        setError(data.error);
+        setIsLoading(false);
+        setIsVerifying(false);
+        return;
+      }
+
+      if (data?.valid) {
+        console.log('Share link valid, password required:', data.requiresPassword);
+        if (data.requiresPassword) {
+          setRequiresPassword(true);
+          setIsLoading(false);
+          setIsVerifying(false);
+        } else {
+          // No password required, load gallery directly
+          await loadGallery();
+        }
+      } else {
         setError('This share link is invalid or has been removed');
         setIsLoading(false);
-        return;
+        setIsVerifying(false);
       }
-
-      // Check expiry
-      if (shareLinkData.expires_at && new Date(shareLinkData.expires_at) < new Date()) {
-        setError('This share link has expired');
-        setIsLoading(false);
-        return;
-      }
-
-      setShareLink(shareLinkData);
-
-      // Check if password is required
-      if (shareLinkData.password_hash) {
-        setRequiresPassword(true);
-        setIsLoading(false);
-        return;
-      }
-
-      // No password required, load the gallery
-      await loadGallery(shareLinkData);
     } catch (err) {
       console.error('Error verifying share link:', err);
-      setError('An error occurred while loading the gallery');
+      if (retryCount < 2) {
+        setRetryCount(prev => prev + 1);
+        setTimeout(verifyShareLink, 1000);
+        return;
+      }
+      setError('Unable to load gallery. Please try again.');
       setIsLoading(false);
+      setIsVerifying(false);
     }
-  }, [token]);
+  }, [token, retryCount]);
 
-  const loadGallery = async (link: ShareLink, providedPassword?: string) => {
+  // Load gallery data
+  const loadGallery = async (providedPassword?: string) => {
+    if (!token) return;
+
     setIsLoading(true);
-    try {
-      // Fetch album
-      const { data: albumData, error: albumError } = await supabase
-        .from('albums')
-        .select('id, title, description')
-        .eq('id', link.album_id)
-        .maybeSingle();
+    const normalizedToken = token.trim();
 
-      if (albumError || !albumData) {
-        setError('Gallery not found');
+    try {
+      const { data, error: funcError } = await supabase.functions.invoke('get-share-gallery', {
+        body: { 
+          token: normalizedToken, 
+          password: providedPassword || password,
+          action: 'load' 
+        },
+      });
+
+      if (funcError) {
+        console.error('Load gallery error:', funcError);
+        setError('An error occurred while loading the gallery');
         setIsLoading(false);
         return;
       }
 
-      setAlbum(albumData);
-
-      // Fetch media
-      const { data: mediaData, error: mediaError } = await supabase
-        .from('media')
-        .select('id, file_name, s3_key, s3_preview_key, type, width, height')
-        .eq('album_id', link.album_id)
-        .order('sort_order', { ascending: true });
-
-      if (mediaError) {
-        console.error('Error fetching media:', mediaError);
-      } else if (mediaData) {
-        setMedia(mediaData);
-
-        // Generate signed URLs for all media
-        const urls: Record<string, string> = {};
-        for (const item of mediaData) {
-          const key = item.s3_preview_key || item.s3_key;
-          try {
-            const response = await supabase.functions.invoke('s3-signed-url', {
-              body: { 
-                s3Key: key, 
-                albumId: link.album_id,
-                shareToken: token,
-                sharePassword: providedPassword,
-              },
-            });
-            if (response.data?.url) {
-              urls[item.id] = response.data.url;
-            }
-          } catch (err) {
-            console.error('Error getting signed URL:', err);
-          }
+      if (data?.error) {
+        if (data.requiresPassword) {
+          setRequiresPassword(true);
+          setIsLoading(false);
+          return;
         }
-        setMediaUrls(urls);
+        console.log('Load gallery failed:', data.error);
+        setError(data.error);
+        setIsLoading(false);
+        return;
       }
 
-      // Increment view count
-      await supabase
-        .from('share_links')
-        .update({ view_count: link.view_count + 1 })
-        .eq('id', link.id);
-
-      setIsAuthenticated(true);
+      if (data?.album) {
+        setAlbum(data.album);
+        setMedia(data.media || []);
+        setShareLink(data.shareLink);
+        setIsAuthenticated(true);
+        setIsVerifying(false);
+        console.log('Gallery loaded successfully:', data.album.title);
+      } else {
+        setError('This gallery does not exist');
+      }
     } catch (err) {
       console.error('Error loading gallery:', err);
       setError('An error occurred while loading the gallery');
     } finally {
       setIsLoading(false);
+      setIsVerifying(false);
     }
   };
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!shareLink || !password) return;
+    if (!password) return;
 
     setIsLoading(true);
-    try {
-      // Verify password via edge function
-      const { data, error } = await supabase.functions.invoke('verify-share-password', {
-        body: { token, password },
-      });
-
-      if (error || !data?.valid) {
-        toast.error('Incorrect password');
-        setIsLoading(false);
-        return;
-      }
-
-      // Password verified, load gallery
-      await loadGallery(shareLink, password);
-    } catch (err) {
-      console.error('Error verifying password:', err);
-      toast.error('Failed to verify password');
-      setIsLoading(false);
-    }
+    await loadGallery(password);
   };
 
   useEffect(() => {
@@ -206,37 +197,35 @@ const SharedGallery = () => {
   }, [verifyShareLink]);
 
   const handleDownload = async (item: Media) => {
-    if (!shareLink?.allow_download) {
+    if (!shareLink?.allowDownload) {
       toast.error('Downloads are disabled for this gallery');
       return;
     }
 
+    if (!token) return;
+
     try {
       toast.info('Preparing download...');
-      const response = await supabase.functions.invoke('s3-signed-url', {
+      const { data, error } = await supabase.functions.invoke('get-share-gallery', {
         body: { 
-          s3Key: item.s3_key, 
-          albumId: shareLink.album_id,
-          shareToken: token,
-          sharePassword: password,
+          token: token.trim(), 
+          password,
+          action: 'get-signed-url',
+          s3Key: item.s3_key,
         },
       });
       
-      if (response.data?.url) {
+      if (data?.url) {
         const link = document.createElement('a');
-        link.href = response.data.url;
+        link.href = data.url;
         link.download = item.file_name;
         link.target = '_blank';
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
         toast.success(`Downloading ${item.file_name}`);
-
-        // Increment download count
-        await supabase
-          .from('share_links')
-          .update({ download_count: (shareLink.download_count || 0) + 1 })
-          .eq('id', shareLink.id);
+      } else {
+        toast.error('Failed to generate download link');
       }
     } catch (err) {
       console.error('Error downloading:', err);
@@ -245,7 +234,7 @@ const SharedGallery = () => {
   };
 
   const handleDownloadAll = async () => {
-    if (!shareLink?.allow_download || !album) {
+    if (!shareLink?.allowDownload || !album || !token) {
       toast.error('Downloads are disabled for this gallery');
       return;
     }
@@ -264,17 +253,17 @@ const SharedGallery = () => {
 
       for (const item of media) {
         try {
-          const urlResponse = await supabase.functions.invoke('s3-signed-url', {
+          const { data } = await supabase.functions.invoke('get-share-gallery', {
             body: { 
-              s3Key: item.s3_key, 
-              albumId: shareLink.album_id,
-              shareToken: token,
-              sharePassword: password,
+              token: token.trim(), 
+              password,
+              action: 'get-signed-url',
+              s3Key: item.s3_key,
             },
           });
 
-          if (urlResponse.data?.url) {
-            const fileResponse = await fetch(urlResponse.data.url);
+          if (data?.url) {
+            const fileResponse = await fetch(data.url);
             if (fileResponse.ok) {
               const blob = await fileResponse.blob();
               folder.file(item.file_name, blob);
@@ -327,6 +316,15 @@ const SharedGallery = () => {
   const handleZoom = (delta: number) => {
     setZoomLevel(prev => Math.max(0.5, Math.min(3, prev + delta)));
   };
+
+  // Loading skeleton for gallery
+  const GallerySkeleton = () => (
+    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+      {Array.from({ length: 8 }).map((_, i) => (
+        <Skeleton key={i} className="aspect-square rounded-lg" />
+      ))}
+    </div>
+  );
 
   // Error state
   if (error) {
@@ -393,14 +391,23 @@ const SharedGallery = () => {
     );
   }
 
-  // Loading state
-  if (isLoading) {
+  // Initial loading state with skeleton
+  if (isVerifying || (isLoading && !album)) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-muted-foreground">Loading gallery...</p>
-        </div>
+      <div className="min-h-screen bg-background">
+        <header className="border-b border-border bg-card">
+          <div className="container mx-auto px-6 py-4">
+            <Skeleton className="h-6 w-32 mb-2" />
+            <Skeleton className="h-8 w-48" />
+          </div>
+        </header>
+        <main className="container mx-auto px-6 py-8">
+          <div className="flex gap-4 mb-6">
+            <Skeleton className="h-10 w-32" />
+            <Skeleton className="h-10 w-32" />
+          </div>
+          <GallerySkeleton />
+        </main>
       </div>
     );
   }
@@ -428,7 +435,7 @@ const SharedGallery = () => {
               )}
             </div>
             <div className="flex items-center gap-2">
-              {shareLink?.allow_download && media.length > 0 && (
+              {shareLink?.allowDownload && media.length > 0 && (
                 <Button
                   variant="outline"
                   size="sm"
@@ -499,46 +506,28 @@ const SharedGallery = () => {
                     className="aspect-square relative group cursor-pointer overflow-hidden rounded-lg bg-muted"
                     onClick={() => setSelectedMedia(item)}
                   >
-                    {mediaUrls[item.id] ? (
+                    {item.signedUrl ? (
                       <img
-                        src={mediaUrls[item.id]}
+                        src={item.signedUrl}
                         alt={item.file_name}
-                        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                        className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                        loading="lazy"
                       />
                     ) : (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <div className="animate-pulse w-full h-full bg-muted-foreground/10" />
-                      </div>
+                      <Skeleton className="w-full h-full" />
                     )}
-                    
-                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all duration-300 flex items-center justify-center opacity-0 group-hover:opacity-100">
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="text-white hover:bg-white/20 backdrop-blur-sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedMedia(item);
-                          }}
-                        >
-                          <ZoomIn size={20} />
-                        </Button>
-                        {shareLink?.allow_download && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="text-white hover:bg-white/20 backdrop-blur-sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDownload(item);
-                            }}
-                          >
-                            <Download size={20} />
-                          </Button>
-                        )}
-                      </div>
-                    </div>
+                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors" />
+                    {shareLink?.allowDownload && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDownload(item);
+                        }}
+                        className="absolute top-2 right-2 p-2 rounded-full bg-black/50 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/70"
+                      >
+                        <Download size={16} />
+                      </button>
+                    )}
                   </motion.div>
                 ))}
               </div>
@@ -553,50 +542,45 @@ const SharedGallery = () => {
                 <p className="text-muted-foreground">No videos in this gallery.</p>
               </div>
             ) : (
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {videos.map((item, index) => (
                   <motion.div
                     key={item.id}
                     initial={{ opacity: 0, scale: 0.9 }}
                     animate={{ opacity: 1, scale: 1 }}
-                    transition={{ duration: 0.3, delay: index * 0.03 }}
+                    transition={{ duration: 0.3, delay: index * 0.05 }}
                     className="aspect-video relative group cursor-pointer overflow-hidden rounded-lg bg-muted"
                     onClick={() => setSelectedMedia(item)}
                   >
-                    {mediaUrls[item.id] ? (
+                    {item.signedUrl ? (
                       <video
-                        src={mediaUrls[item.id]}
+                        src={item.signedUrl}
                         className="w-full h-full object-cover"
                         muted
-                        preload="metadata"
+                        playsInline
                       />
                     ) : (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <Video size={32} className="text-muted-foreground" />
-                      </div>
+                      <Skeleton className="w-full h-full" />
                     )}
-                    
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div className="w-14 h-14 rounded-full bg-black/60 flex items-center justify-center group-hover:bg-primary transition-colors">
-                        <Play size={24} className="text-white ml-1" />
+                    <div className="absolute inset-0 bg-black/30 group-hover:bg-black/40 transition-colors flex items-center justify-center">
+                      <div className="w-16 h-16 rounded-full bg-white/90 flex items-center justify-center group-hover:scale-110 transition-transform">
+                        <Play size={24} className="text-black ml-1" />
                       </div>
                     </div>
-
-                    {shareLink?.allow_download && (
-                      <div className="absolute bottom-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="text-white hover:bg-white/20 backdrop-blur-sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDownload(item);
-                          }}
-                        >
-                          <Download size={20} />
-                        </Button>
-                      </div>
+                    {shareLink?.allowDownload && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDownload(item);
+                        }}
+                        className="absolute top-2 right-2 p-2 rounded-full bg-black/50 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/70"
+                      >
+                        <Download size={16} />
+                      </button>
                     )}
+                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4">
+                      <p className="text-white text-sm truncate">{item.file_name}</p>
+                    </div>
                   </motion.div>
                 ))}
               </div>
@@ -605,10 +589,19 @@ const SharedGallery = () => {
         </Tabs>
       </main>
 
+      {/* Footer */}
+      <footer className="border-t border-border bg-card py-6 mt-8">
+        <div className="container mx-auto px-6 text-center">
+          <p className="text-sm text-muted-foreground">
+            © {new Date().getFullYear()} Ajanta Photography. All rights reserved.
+          </p>
+        </div>
+      </footer>
+
       {/* Lightbox */}
       <AnimatePresence>
         {selectedMedia && (
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -618,134 +611,123 @@ const SharedGallery = () => {
               setZoomLevel(1);
             }}
           >
-            <Button
-              variant="ghost"
-              size="icon"
-              className="absolute top-4 right-4 text-white hover:bg-white/10 z-10"
+            {/* Close button */}
+            <button
               onClick={() => {
                 setSelectedMedia(null);
                 setZoomLevel(1);
               }}
+              className="absolute top-4 right-4 p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors z-10"
             >
               <X size={24} />
-            </Button>
+            </button>
 
-            {selectedMedia.type === 'photo' && (
-              <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 z-10">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="text-white hover:bg-white/10"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleZoom(-0.5);
-                  }}
-                >
-                  <ZoomOut size={20} />
-                </Button>
-                <span className="text-white text-sm min-w-[60px] text-center">
-                  {Math.round(zoomLevel * 100)}%
-                </span>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="text-white hover:bg-white/10"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleZoom(0.5);
-                  }}
-                >
-                  <ZoomIn size={20} />
-                </Button>
-              </div>
-            )}
-            
-            <Button
-              variant="ghost"
-              size="icon"
-              className="absolute left-4 top-1/2 -translate-y-1/2 text-white hover:bg-white/10 z-10"
+            {/* Navigation */}
+            <button
               onClick={(e) => {
                 e.stopPropagation();
                 navigateMedia('prev');
               }}
+              className="absolute left-4 p-3 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors z-10"
             >
               <ChevronLeft size={32} />
-            </Button>
-            
-            <Button
-              variant="ghost"
-              size="icon"
-              className="absolute right-4 top-1/2 -translate-y-1/2 text-white hover:bg-white/10 z-10"
+            </button>
+            <button
               onClick={(e) => {
                 e.stopPropagation();
                 navigateMedia('next');
               }}
+              className="absolute right-4 p-3 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors z-10"
             >
               <ChevronRight size={32} />
-            </Button>
+            </button>
 
-            <div 
-              className="max-w-[90vw] max-h-[90vh] overflow-auto" 
-              onClick={(e) => e.stopPropagation()}
-            >
-              {selectedMedia.type === 'photo' ? (
-                mediaUrls[selectedMedia.id] ? (
-                  <img
-                    src={mediaUrls[selectedMedia.id]}
-                    alt={selectedMedia.file_name}
-                    className="max-w-full max-h-[90vh] object-contain transition-transform duration-300"
-                    style={{ transform: `scale(${zoomLevel})` }}
-                  />
-                ) : (
-                  <div className="w-96 h-96 bg-muted flex items-center justify-center">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-                  </div>
-                )
-              ) : (
-                mediaUrls[selectedMedia.id] ? (
-                  <video
-                    src={mediaUrls[selectedMedia.id]}
-                    className="max-w-full max-h-[90vh]"
-                    controls
-                    autoPlay
-                  />
-                ) : (
-                  <div className="w-96 h-96 bg-muted flex items-center justify-center">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-                  </div>
-                )
-              )}
-            </div>
+            {/* Zoom controls for photos */}
+            {selectedMedia.type === 'photo' && (
+              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-white/10 rounded-full px-4 py-2 z-10">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleZoom(-0.25);
+                  }}
+                  className="p-1 text-white hover:bg-white/20 rounded"
+                >
+                  <ZoomOut size={20} />
+                </button>
+                <span className="text-white text-sm w-16 text-center">
+                  {Math.round(zoomLevel * 100)}%
+                </span>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleZoom(0.25);
+                  }}
+                  className="p-1 text-white hover:bg-white/20 rounded"
+                >
+                  <ZoomIn size={20} />
+                </button>
+                {shareLink?.allowDownload && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDownload(selectedMedia);
+                    }}
+                    className="p-1 text-white hover:bg-white/20 rounded ml-2"
+                  >
+                    <Download size={20} />
+                  </button>
+                )}
+              </div>
+            )}
 
-            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-4 z-10">
-              <span className="text-white text-sm">
-                {(selectedMedia.type === 'photo' ? photos : videos).findIndex(m => m.id === selectedMedia.id) + 1} / {selectedMedia.type === 'photo' ? photos.length : videos.length}
-              </span>
-              {shareLink?.allow_download && (
+            {/* Download button for videos */}
+            {selectedMedia.type === 'video' && shareLink?.allowDownload && (
+              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10">
                 <Button
                   variant="outline"
                   size="sm"
-                  className="text-white border-white/30 hover:bg-white/10 bg-black/50"
                   onClick={(e) => {
                     e.stopPropagation();
                     handleDownload(selectedMedia);
                   }}
+                  className="gap-2 bg-white/10 border-white/20 text-white hover:bg-white/20"
                 >
-                  <Download size={16} className="mr-2" />
+                  <Download size={16} />
                   Download
                 </Button>
+              </div>
+            )}
+
+            {/* Media display */}
+            <div
+              className="max-w-[90vw] max-h-[85vh] overflow-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {selectedMedia.type === 'photo' ? (
+                <motion.img
+                  key={selectedMedia.id}
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  src={selectedMedia.signedUrl || ''}
+                  alt={selectedMedia.file_name}
+                  className="max-w-full max-h-[85vh] object-contain transition-transform duration-200"
+                  style={{ transform: `scale(${zoomLevel})` }}
+                />
+              ) : (
+                <motion.video
+                  key={selectedMedia.id}
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  src={selectedMedia.signedUrl || ''}
+                  controls
+                  autoPlay
+                  className="max-w-full max-h-[85vh]"
+                />
               )}
             </div>
           </motion.div>
         )}
       </AnimatePresence>
-
-      {/* Footer */}
-      <footer className="border-t border-border bg-card mt-12">
-        <div className="container mx-auto px-6 py-6 text-center text-sm text-muted-foreground">
-          <p>© {new Date().getFullYear()} All rights reserved.</p>
-        </div>
-      </footer>
     </div>
   );
 };
