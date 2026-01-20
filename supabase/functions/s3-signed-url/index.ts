@@ -120,8 +120,36 @@ const handler = async (req: Request): Promise<Response> => {
               .single();
 
             if (album && (album as any).clients?.user_id === userId) {
-              console.log("Access granted: client owns album");
-              hasAccess = true;
+              // SECURITY: Validate that the s3Key actually belongs to this album
+              const { data: mediaItem } = await supabase
+                .from("media")
+                .select("id")
+                .eq("album_id", albumId)
+                .or(`s3_key.eq.${s3Key},s3_preview_key.eq.${s3Key}`)
+                .single();
+              
+              // Also check for face thumbnails (people table)
+              const { data: personItem } = await supabase
+                .from("people")
+                .select("id")
+                .eq("album_id", albumId)
+                .eq("face_thumbnail_key", s3Key)
+                .single();
+              
+              // Also check album cover
+              const { data: coverCheck } = await supabase
+                .from("albums")
+                .select("id")
+                .eq("id", albumId)
+                .eq("cover_image_key", s3Key)
+                .single();
+
+              if (mediaItem || personItem || coverCheck) {
+                console.log("Access granted: client owns album and s3Key belongs to album");
+                hasAccess = true;
+              } else {
+                console.log("SECURITY: s3Key does not belong to album", albumId, s3Key);
+              }
             } else {
               console.log("Client album check failed:", (album as any)?.clients?.user_id, "vs", userId);
             }
@@ -167,13 +195,42 @@ const handler = async (req: Request): Promise<Response> => {
             }
           }
 
-          hasAccess = true;
+          // SECURITY: Validate that the s3Key belongs to this album
+          const { data: mediaItem } = await supabase
+            .from("media")
+            .select("id")
+            .eq("album_id", albumId)
+            .or(`s3_key.eq.${s3Key},s3_preview_key.eq.${s3Key}`)
+            .single();
+          
+          // Also check for face thumbnails (people table)
+          const { data: personItem } = await supabase
+            .from("people")
+            .select("id")
+            .eq("album_id", albumId)
+            .eq("face_thumbnail_key", s3Key)
+            .single();
+          
+          // Also check album cover
+          const { data: coverCheck } = await supabase
+            .from("albums")
+            .select("id")
+            .eq("id", albumId)
+            .eq("cover_image_key", s3Key)
+            .single();
 
-          // Increment view count
-          await supabase
-            .from("share_links")
-            .update({ view_count: shareLink.view_count + 1 })
-            .eq("id", shareLink.id);
+          if (mediaItem || personItem || coverCheck) {
+            hasAccess = true;
+            console.log("Share token access granted with s3Key validation");
+
+            // Increment view count
+            await supabase
+              .from("share_links")
+              .update({ view_count: shareLink.view_count + 1 })
+              .eq("id", shareLink.id);
+          } else {
+            console.log("SECURITY: Share token valid but s3Key does not belong to album", albumId, s3Key);
+          }
         }
       }
     }
