@@ -75,47 +75,152 @@ async function detectFacesInImage(s3Key: string): Promise<RekognitionFace[]> {
   return data.FaceDetails || [];
 }
 
-async function compareFaces(sourceS3Key: string, targetS3Key: string, similarityThreshold = 80): Promise<boolean> {
-  const endpoint = `https://rekognition.${awsRegion}.amazonaws.com`;
+// Background task for processing album faces
+async function processAlbumFaces(albumId: string) {
+  console.log(`[Background] Starting face detection for album: ${albumId}`);
   
-  const body = JSON.stringify({
-    SourceImage: {
-      S3Object: {
-        Bucket: bucketName,
-        Name: sourceS3Key,
-      },
-    },
-    TargetImage: {
-      S3Object: {
-        Bucket: bucketName,
-        Name: targetS3Key,
-      },
-    },
-    SimilarityThreshold: similarityThreshold,
-  });
+  const supabase = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+  );
 
-  const request = new Request(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-amz-json-1.1",
-      "X-Amz-Target": "RekognitionService.CompareFaces",
-    },
-    body,
-  });
+  try {
+    // Update processing status
+    await supabase
+      .from("albums")
+      .update({ 
+        face_processing_status: "processing",
+        face_processing_started_at: new Date().toISOString()
+      })
+      .eq("id", albumId);
 
-  const signedRequest = await aws.sign(request, {
-    aws: { service: "rekognition" },
-  });
+    // Get all photos in the album
+    const { data: mediaItems, error: mediaError } = await supabase
+      .from("media")
+      .select("id, s3_key, s3_preview_key")
+      .eq("album_id", albumId)
+      .eq("type", "photo");
 
-  const response = await fetch(signedRequest);
-  
-  if (!response.ok) {
-    console.error("CompareFaces error:", await response.text());
-    return false;
+    if (mediaError) {
+      console.error("[Background] Error fetching media:", mediaError);
+      throw new Error(mediaError.message);
+    }
+
+    console.log(`[Background] Found ${mediaItems?.length || 0} photos to process`);
+
+    const facesDetected: any[] = [];
+    let personCounter = 1;
+    const createdPeople: { id: string; referenceFace: any }[] = [];
+
+    // Process each photo
+    for (const item of mediaItems || []) {
+      try {
+        const s3Key = item.s3_preview_key || item.s3_key;
+        console.log(`[Background] Processing image: ${s3Key}`);
+
+        const faces = await detectFacesInImage(s3Key);
+        console.log(`[Background] Detected ${faces.length} faces in ${item.id}`);
+
+        for (const face of faces) {
+          if (face.Confidence < 90) continue; // Skip low confidence faces
+
+          const faceData = {
+            media_id: item.id,
+            album_id: albumId,
+            bounding_box: face.BoundingBox,
+            confidence: face.Confidence,
+            person_id: null as string | null,
+          };
+
+          // Try to match with existing people based on face size (simplified clustering)
+          let matchedPersonId: string | null = null;
+
+          for (const existingPerson of createdPeople) {
+            const refFace = existingPerson.referenceFace;
+            const sizeDiff = Math.abs(refFace.bounding_box.Width - face.BoundingBox.Width);
+            const heightDiff = Math.abs(refFace.bounding_box.Height - face.BoundingBox.Height);
+            
+            // Simple heuristic - faces of similar size might be the same person
+            if (sizeDiff < 0.08 && heightDiff < 0.08) {
+              matchedPersonId = existingPerson.id;
+              break;
+            }
+          }
+
+          if (!matchedPersonId) {
+            // Create new person
+            const { data: newPerson, error: personError } = await supabase
+              .from("people")
+              .insert({
+                album_id: albumId,
+                name: `Person ${personCounter}`,
+                face_thumbnail_key: null,
+                photo_count: 1,
+              })
+              .select()
+              .single();
+
+            if (personError) {
+              console.error("[Background] Error creating person:", personError);
+              continue;
+            }
+
+            matchedPersonId = newPerson.id;
+            createdPeople.push({ id: newPerson.id, referenceFace: { bounding_box: face.BoundingBox } });
+            personCounter++;
+          }
+
+          faceData.person_id = matchedPersonId;
+          facesDetected.push(faceData);
+        }
+      } catch (err) {
+        console.error(`[Background] Error processing ${item.id}:`, err);
+      }
+    }
+
+    // Insert all detected faces
+    if (facesDetected.length > 0) {
+      const { error: insertError } = await supabase
+        .from("detected_faces")
+        .insert(facesDetected);
+      
+      if (insertError) {
+        console.error("[Background] Error inserting faces:", insertError);
+      }
+    }
+
+    // Update photo counts for all people
+    for (const person of createdPeople) {
+      const { count } = await supabase
+        .from("detected_faces")
+        .select("*", { count: "exact", head: true })
+        .eq("person_id", person.id);
+
+      await supabase
+        .from("people")
+        .update({ photo_count: count || 0 })
+        .eq("id", person.id);
+    }
+
+    // Mark processing complete
+    await supabase
+      .from("albums")
+      .update({ 
+        face_processing_status: "completed",
+        face_processing_completed_at: new Date().toISOString()
+      })
+      .eq("id", albumId);
+
+    console.log(`[Background] Face detection complete. Created ${createdPeople.length} people from ${facesDetected.length} faces.`);
+  } catch (error) {
+    console.error("[Background] Error in processAlbumFaces:", error);
+    
+    // Mark as failed
+    await supabase
+      .from("albums")
+      .update({ face_processing_status: "failed" })
+      .eq("id", albumId);
   }
-
-  const data = await response.json();
-  return data.FaceMatches && data.FaceMatches.length > 0;
 }
 
 const handler = async (req: Request): Promise<Response> => {
@@ -129,7 +234,29 @@ const handler = async (req: Request): Promise<Response> => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // Verify auth
+    const body: FaceDetectionRequest = await req.json();
+    const { action, albumId, personId, targetPersonId, name, isHidden } = body;
+
+    // Special case: auto-trigger from album status change (no auth needed for internal call)
+    if (action === "process_album" && albumId && req.headers.get("x-internal-trigger") === "album-ready") {
+      console.log("Auto-triggered face processing for album:", albumId);
+      
+      // Use EdgeRuntime.waitUntil for background processing
+      const globalThis_ = globalThis as any;
+      if (typeof globalThis_.EdgeRuntime !== "undefined" && globalThis_.EdgeRuntime.waitUntil) {
+        globalThis_.EdgeRuntime.waitUntil(processAlbumFaces(albumId));
+      } else {
+        // Fallback: process synchronously
+        await processAlbumFaces(albumId);
+      }
+      
+      return new Response(JSON.stringify({ success: true, message: "Face processing started in background" }), {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Verify auth for all other requests
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
@@ -151,9 +278,6 @@ const handler = async (req: Request): Promise<Response> => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-
-    const body: FaceDetectionRequest = await req.json();
-    const { action, albumId, personId, targetPersonId, name, isHidden, mediaId } = body;
 
     // Check user role
     const { data: roleData } = await supabase
@@ -190,6 +314,13 @@ const handler = async (req: Request): Promise<Response> => {
         });
       }
 
+      // Also get album processing status
+      const { data: albumData } = await supabase
+        .from("albums")
+        .select("face_processing_status")
+        .eq("id", albumId)
+        .single();
+
       const query = supabase
         .from("people")
         .select("*")
@@ -211,7 +342,10 @@ const handler = async (req: Request): Promise<Response> => {
         });
       }
 
-      return new Response(JSON.stringify({ people }), {
+      return new Response(JSON.stringify({ 
+        people, 
+        processingStatus: albumData?.face_processing_status || "pending" 
+      }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -261,7 +395,7 @@ const handler = async (req: Request): Promise<Response> => {
       });
     }
 
-    // Action: Process entire album for faces
+    // Action: Process entire album for faces (admin triggered)
     if (action === "process_album") {
       if (!albumId) {
         return new Response(JSON.stringify({ error: "albumId required" }), {
@@ -270,153 +404,36 @@ const handler = async (req: Request): Promise<Response> => {
         });
       }
 
-      console.log(`Starting face detection for album: ${albumId}`);
-
-      // Update processing status
-      await supabase
-        .from("albums")
-        .update({ 
-          face_processing_status: "processing",
-          face_processing_started_at: new Date().toISOString()
-        })
-        .eq("id", albumId);
-
-      // Get all photos in the album
-      const { data: mediaItems, error: mediaError } = await supabase
-        .from("media")
-        .select("id, s3_key, s3_preview_key")
-        .eq("album_id", albumId)
-        .eq("type", "photo");
-
-      if (mediaError) {
-        console.error("Error fetching media:", mediaError);
-        throw new Error(mediaError.message);
-      }
-
-      console.log(`Found ${mediaItems?.length || 0} photos to process`);
-
-      const peopleMap = new Map<string, string>(); // Maps face signature to person_id
-      const facesDetected: any[] = [];
-      let personCounter = 1;
-
-      // Process each photo
-      for (const item of mediaItems || []) {
-        try {
-          const s3Key = item.s3_preview_key || item.s3_key;
-          console.log(`Processing image: ${s3Key}`);
-
-          const faces = await detectFacesInImage(s3Key);
-          console.log(`Detected ${faces.length} faces in ${item.id}`);
-
-          for (const face of faces) {
-            if (face.Confidence < 90) continue; // Skip low confidence faces
-
-            // For each face, we need to find or create a person
-            // Since we don't have face indexing, we'll create a new person for each unique face cluster
-            // In a production system, you'd use AWS Rekognition Collections for face matching
-
-            // Create a simple signature based on bounding box for grouping
-            // This is a simplified approach - real implementation would use face embeddings
-            const faceData = {
-              media_id: item.id,
-              album_id: albumId,
-              bounding_box: face.BoundingBox,
-              confidence: face.Confidence,
-            };
-
-            facesDetected.push(faceData);
-          }
-        } catch (err) {
-          console.error(`Error processing ${item.id}:`, err);
-        }
-      }
-
-      // Group faces into people using a simple clustering approach
-      // In production, use AWS Rekognition SearchFaces with a collection
-      const people: any[] = [];
+      console.log("Admin triggered face processing for album:", albumId);
       
-      // Create one person per unique face detected (simplified)
-      // Group faces that appear in similar positions (rough clustering)
-      for (const face of facesDetected) {
-        // Check if this face matches an existing person by comparing to reference faces
-        let matchedPersonId: string | null = null;
-
-        for (const existingPerson of people) {
-          // Simple heuristic: if bounding boxes are similar size, might be same person
-          // This is a placeholder - real implementation would use face embeddings
-          const refFace = existingPerson.referenceFace;
-          const sizeDiff = Math.abs(refFace.bounding_box.Width - face.bounding_box.Width);
-          if (sizeDiff < 0.1) {
-            // This is a very rough heuristic - just for demo
-            // Real implementation should use CompareFaces API
-            matchedPersonId = existingPerson.id;
-            break;
-          }
-        }
-
-        if (!matchedPersonId) {
-          // Create new person
-          const { data: newPerson, error: personError } = await supabase
-            .from("people")
-            .insert({
-              album_id: albumId,
-              name: `Person ${personCounter}`,
-              face_thumbnail_key: null, // Would be a cropped face image in production
-              photo_count: 1,
-            })
-            .select()
-            .single();
-
-          if (personError) {
-            console.error("Error creating person:", personError);
-            continue;
-          }
-
-          matchedPersonId = newPerson.id;
-          people.push({ id: newPerson.id, referenceFace: face });
-          personCounter++;
-        } else {
-          // Update photo count for existing person
-          await supabase.rpc("increment_photo_count", { person_id_param: matchedPersonId });
-        }
-
-        // Insert detected face
-        face.person_id = matchedPersonId;
-        await supabase.from("detected_faces").insert(face);
+      // Clear existing faces and people for re-processing
+      await supabase.from("detected_faces").delete().eq("album_id", albumId);
+      await supabase.from("people").delete().eq("album_id", albumId);
+      
+      // Use EdgeRuntime.waitUntil for background processing
+      const globalThis_ = globalThis as any;
+      if (typeof globalThis_.EdgeRuntime !== "undefined" && globalThis_.EdgeRuntime.waitUntil) {
+        globalThis_.EdgeRuntime.waitUntil(processAlbumFaces(albumId));
+        
+        return new Response(JSON.stringify({ 
+          success: true, 
+          message: "Face processing started in background" 
+        }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      } else {
+        // Fallback: process synchronously
+        await processAlbumFaces(albumId);
+        
+        return new Response(JSON.stringify({ 
+          success: true, 
+          message: "Face processing completed" 
+        }), {
+          status: 200,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       }
-
-      // Update photo counts for all people
-      for (const person of people) {
-        const { count } = await supabase
-          .from("detected_faces")
-          .select("*", { count: "exact", head: true })
-          .eq("person_id", person.id);
-
-        await supabase
-          .from("people")
-          .update({ photo_count: count || 0 })
-          .eq("id", person.id);
-      }
-
-      // Mark processing complete
-      await supabase
-        .from("albums")
-        .update({ 
-          face_processing_status: "completed",
-          face_processing_completed_at: new Date().toISOString()
-        })
-        .eq("id", albumId);
-
-      console.log(`Face detection complete. Created ${people.length} people from ${facesDetected.length} faces.`);
-
-      return new Response(JSON.stringify({ 
-        success: true, 
-        facesDetected: facesDetected.length,
-        peopleCreated: people.length 
-      }), {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
     }
 
     // Action: Update person (rename, hide)

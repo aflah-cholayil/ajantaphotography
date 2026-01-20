@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
-import { ArrowLeft, Image, Video, Trash2, Eye, Share2, CheckCircle, MoreVertical } from 'lucide-react';
+import { 
+  ArrowLeft, Image, Video, Trash2, Eye, Share2, CheckCircle, MoreVertical, 
+  Users, Loader2, ScanFace, RefreshCw 
+} from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { AdminLayout } from '@/components/admin/AdminLayout';
@@ -10,6 +13,7 @@ import { AlbumStatusBadge } from '@/components/admin/AlbumStatusBadge';
 import { ShareLinkDialog } from '@/components/admin/ShareLinkDialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -38,6 +42,7 @@ interface Album {
   created_at: string;
   ready_at: string | null;
   client_id: string;
+  face_processing_status?: string;
   clients: {
     id: string;
     event_name: string;
@@ -63,6 +68,13 @@ interface Media {
   created_at: string;
 }
 
+interface Person {
+  id: string;
+  name: string;
+  photo_count: number;
+  is_hidden: boolean;
+}
+
 const AdminAlbumDetail = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -70,15 +82,17 @@ const AdminAlbumDetail = () => {
 
   const [album, setAlbum] = useState<Album | null>(null);
   const [media, setMedia] = useState<Media[]>([]);
+  const [people, setPeople] = useState<Person[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [deleteMediaId, setDeleteMediaId] = useState<string | null>(null);
   const [mediaUrls, setMediaUrls] = useState<Record<string, string>>({});
+  const [isProcessingFaces, setIsProcessingFaces] = useState(false);
+  const [faceProcessingStatus, setFaceProcessingStatus] = useState<string>('pending');
 
   const fetchAlbum = async () => {
     if (!id) return;
 
     try {
-      // First fetch album with client info
       const { data: albumData, error: albumError } = await supabase
         .from('albums')
         .select(`
@@ -89,6 +103,7 @@ const AdminAlbumDetail = () => {
           created_at,
           ready_at,
           client_id,
+          face_processing_status,
           clients!inner(
             id,
             event_name,
@@ -101,7 +116,6 @@ const AdminAlbumDetail = () => {
 
       if (albumError) throw albumError;
 
-      // Then fetch the profile separately using the client's user_id
       let clientProfile = { name: 'Unknown', email: '' };
       if (albumData?.clients?.user_id) {
         const { data: profileData } = await supabase
@@ -119,6 +133,8 @@ const AdminAlbumDetail = () => {
         ...albumData,
         clientProfile,
       } as unknown as Album);
+      
+      setFaceProcessingStatus(albumData?.face_processing_status || 'pending');
     } catch (error) {
       console.error('Error fetching album:', error);
       toast({
@@ -143,7 +159,6 @@ const AdminAlbumDetail = () => {
       if (error) throw error;
       setMedia((data as Media[]) || []);
       
-      // Fetch signed URLs for media
       const urls: Record<string, string> = {};
       for (const item of data || []) {
         try {
@@ -165,10 +180,37 @@ const AdminAlbumDetail = () => {
     }
   };
 
+  const fetchPeople = async () => {
+    if (!id) return;
+
+    try {
+      const { data, error } = await supabase.functions.invoke('face-detection', {
+        body: { action: 'get_people', albumId: id },
+      });
+
+      if (error) throw error;
+      setPeople(data?.people || []);
+      setFaceProcessingStatus(data?.processingStatus || 'pending');
+    } catch (error) {
+      console.error('Error fetching people:', error);
+    }
+  };
+
   useEffect(() => {
     fetchAlbum();
     fetchMedia();
+    fetchPeople();
   }, [id]);
+
+  // Poll for processing status while processing
+  useEffect(() => {
+    if (faceProcessingStatus === 'processing') {
+      const interval = setInterval(() => {
+        fetchPeople();
+      }, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [faceProcessingStatus, id]);
 
   const handleUpdateStatus = async (newStatus: AlbumStatus) => {
     if (!id) return;
@@ -186,6 +228,23 @@ const AdminAlbumDetail = () => {
         description: `Album marked as ${newStatus}`,
       });
 
+      // Auto-trigger face detection when marked as ready
+      if (newStatus === 'ready') {
+        toast({
+          title: 'Starting face detection',
+          description: 'Analyzing photos for faces in the background...',
+        });
+        
+        // Trigger face detection in background
+        supabase.functions.invoke('face-detection', {
+          body: { action: 'process_album', albumId: id },
+        }).then(() => {
+          setFaceProcessingStatus('processing');
+        }).catch((err) => {
+          console.error('Error starting face detection:', err);
+        });
+      }
+
       fetchAlbum();
     } catch (error: unknown) {
       toast({
@@ -193,6 +252,34 @@ const AdminAlbumDetail = () => {
         description: error instanceof Error ? error.message : 'Failed to update status',
         variant: 'destructive',
       });
+    }
+  };
+
+  const handleScanFaces = async () => {
+    if (!id) return;
+
+    setIsProcessingFaces(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('face-detection', {
+        body: { action: 'process_album', albumId: id },
+      });
+
+      if (error) throw error;
+
+      toast({
+        title: 'Face detection started',
+        description: 'Analyzing photos for faces in the background...',
+      });
+      
+      setFaceProcessingStatus('processing');
+    } catch (error: unknown) {
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to start face detection',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsProcessingFaces(false);
     }
   };
 
@@ -229,6 +316,37 @@ const AdminAlbumDetail = () => {
     return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   };
 
+  const getFaceStatusBadge = () => {
+    switch (faceProcessingStatus) {
+      case 'processing':
+        return (
+          <Badge variant="secondary" className="gap-1">
+            <Loader2 size={12} className="animate-spin" />
+            Scanning Faces...
+          </Badge>
+        );
+      case 'completed':
+        return (
+          <Badge variant="default" className="gap-1 bg-green-600">
+            <Users size={12} />
+            {people.length} People Found
+          </Badge>
+        );
+      case 'failed':
+        return (
+          <Badge variant="destructive" className="gap-1">
+            Failed
+          </Badge>
+        );
+      default:
+        return (
+          <Badge variant="outline" className="gap-1">
+            Not Scanned
+          </Badge>
+        );
+    }
+  };
+
   if (!album && !isLoading) {
     return (
       <AdminLayout>
@@ -246,7 +364,7 @@ const AdminAlbumDetail = () => {
     <AdminLayout>
       <div className="space-y-6">
         {/* Header */}
-        <div className="flex items-start justify-between">
+        <div className="flex items-start justify-between flex-wrap gap-4">
           <div className="flex items-start gap-4">
             <Button 
               variant="ghost" 
@@ -256,11 +374,12 @@ const AdminAlbumDetail = () => {
               <ArrowLeft size={20} />
             </Button>
             <div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 flex-wrap">
                 <h1 className="font-serif text-3xl font-light text-foreground">
                   {album?.title || 'Loading...'}
                 </h1>
                 {album && <AlbumStatusBadge status={album.status} />}
+                {getFaceStatusBadge()}
               </div>
               {album && (
                 <div className="mt-2 space-y-1">
@@ -277,7 +396,23 @@ const AdminAlbumDetail = () => {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Face Scan Button */}
+            <Button
+              variant="outline"
+              onClick={handleScanFaces}
+              disabled={isProcessingFaces || faceProcessingStatus === 'processing'}
+            >
+              {isProcessingFaces || faceProcessingStatus === 'processing' ? (
+                <Loader2 size={16} className="mr-2 animate-spin" />
+              ) : faceProcessingStatus === 'completed' ? (
+                <RefreshCw size={16} className="mr-2" />
+              ) : (
+                <ScanFace size={16} className="mr-2" />
+              )}
+              {faceProcessingStatus === 'completed' ? 'Rescan Faces' : 'Scan for Faces'}
+            </Button>
+
             {album && (
               <ShareLinkDialog albumId={album.id} albumTitle={album.title} />
             )}
@@ -307,7 +442,7 @@ const AdminAlbumDetail = () => {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <Card className="bg-card border-border">
             <CardContent className="p-4">
               <div className="flex items-center gap-3">
@@ -337,6 +472,17 @@ const AdminAlbumDetail = () => {
           <Card className="bg-card border-border">
             <CardContent className="p-4">
               <div className="flex items-center gap-3">
+                <Users className="h-8 w-8 text-purple-500 opacity-80" />
+                <div>
+                  <p className="text-2xl font-light">{people.length}</p>
+                  <p className="text-sm text-muted-foreground">People</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="bg-card border-border">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
                 <Eye className="h-8 w-8 text-green-500 opacity-80" />
                 <div>
                   <p className="text-2xl font-light">0</p>
@@ -348,7 +494,7 @@ const AdminAlbumDetail = () => {
           <Card className="bg-card border-border">
             <CardContent className="p-4">
               <div className="flex items-center gap-3">
-                <Share2 className="h-8 w-8 text-purple-500 opacity-80" />
+                <Share2 className="h-8 w-8 text-orange-500 opacity-80" />
                 <div>
                   <p className="text-2xl font-light">0</p>
                   <p className="text-sm text-muted-foreground">Share Links</p>
@@ -357,6 +503,37 @@ const AdminAlbumDetail = () => {
             </CardContent>
           </Card>
         </div>
+
+        {/* People Section (if any detected) */}
+        {people.length > 0 && (
+          <Card className="bg-card border-border">
+            <CardHeader>
+              <CardTitle className="font-serif text-xl font-light flex items-center gap-2">
+                <Users size={20} />
+                Detected People ({people.length})
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-wrap gap-4">
+                {people.map((person) => (
+                  <div 
+                    key={person.id} 
+                    className="flex flex-col items-center gap-2 p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
+                  >
+                    <div className="w-14 h-14 rounded-full bg-gradient-to-br from-primary/20 to-primary/40 flex items-center justify-center">
+                      <Users size={24} className="text-primary" />
+                    </div>
+                    <span className="text-sm font-medium">{person.name}</span>
+                    <span className="text-xs text-muted-foreground">{person.photo_count} photos</span>
+                    {person.is_hidden && (
+                      <Badge variant="secondary" className="text-xs">Hidden</Badge>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Upload Section */}
         <Card className="bg-card border-border">
