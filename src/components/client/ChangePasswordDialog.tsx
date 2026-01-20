@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { Eye, EyeOff, Lock, AlertCircle } from 'lucide-react';
-import { z } from 'zod';
 import { supabase } from '@/integrations/supabase/client';
 import {
   Dialog,
@@ -14,19 +13,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { Logo } from '@/components/shared/Logo';
-
-const passwordSchema = z.object({
-  newPassword: z.string()
-    .min(8, 'Password must be at least 8 characters')
-    .max(72, 'Password must be less than 72 characters')
-    .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
-    .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
-    .regex(/[0-9]/, 'Password must contain at least one number'),
-  confirmPassword: z.string(),
-}).refine((data) => data.newPassword === data.confirmPassword, {
-  message: 'Passwords do not match',
-  path: ['confirmPassword'],
-});
+import { PasswordStrengthIndicator } from '@/components/ui/PasswordStrengthIndicator';
+import { strongPasswordSchema } from '@/lib/passwordValidation';
 
 interface ChangePasswordDialogProps {
   open: boolean;
@@ -47,8 +35,8 @@ export const ChangePasswordDialog = ({ open, userId, onPasswordChanged }: Change
     e.preventDefault();
     setErrors({});
 
-    // Validate
-    const result = passwordSchema.safeParse({ newPassword, confirmPassword });
+    // Validate using strong password schema
+    const result = strongPasswordSchema.safeParse({ newPassword, confirmPassword });
     if (!result.success) {
       const fieldErrors: { newPassword?: string; confirmPassword?: string } = {};
       result.error.errors.forEach((err) => {
@@ -182,6 +170,7 @@ export const ChangePasswordDialog = ({ open, userId, onPasswordChanged }: Change
                 {errors.newPassword}
               </p>
             )}
+            <PasswordStrengthIndicator password={newPassword} />
           </div>
 
           <div className="space-y-2">
@@ -214,16 +203,6 @@ export const ChangePasswordDialog = ({ open, userId, onPasswordChanged }: Change
                 {errors.confirmPassword}
               </p>
             )}
-          </div>
-
-          <div className="bg-muted/50 rounded-md p-3 text-xs text-muted-foreground space-y-1">
-            <p className="font-medium text-foreground">Password requirements:</p>
-            <ul className="list-disc list-inside space-y-0.5">
-              <li>At least 8 characters</li>
-              <li>One uppercase letter</li>
-              <li>One lowercase letter</li>
-              <li>One number</li>
-            </ul>
           </div>
 
           <Button

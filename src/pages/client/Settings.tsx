@@ -14,6 +14,8 @@ import { Separator } from '@/components/ui/separator';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Logo } from '@/components/shared/Logo';
 import { MinimalFooter } from '@/components/shared/MinimalFooter';
+import { PasswordStrengthIndicator } from '@/components/ui/PasswordStrengthIndicator';
+import { validatePassword } from '@/lib/passwordValidation';
 
 const ClientSettings = () => {
   const navigate = useNavigate();
@@ -236,10 +238,12 @@ const ClientSettings = () => {
       return;
     }
 
-    if (newPassword.length < 6) {
+    // Validate password strength
+    const validation = validatePassword(newPassword);
+    if (!validation.isValid) {
       toast({
-        title: 'Error',
-        description: 'New password must be at least 6 characters',
+        title: 'Weak Password',
+        description: validation.errors[0] || 'Please choose a stronger password.',
         variant: 'destructive',
       });
       return;
@@ -490,9 +494,7 @@ const ClientSettings = () => {
                         {showNewPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                       </Button>
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      Must be at least 6 characters
-                    </p>
+                    <PasswordStrengthIndicator password={newPassword} />
                   </div>
 
                   <div className="space-y-2">
