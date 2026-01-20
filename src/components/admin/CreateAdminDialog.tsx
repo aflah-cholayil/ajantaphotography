@@ -22,6 +22,8 @@ import {
 } from '@/components/ui/select';
 import { Loader2, UserPlus, Mail, Key, ShieldCheck, Edit3, Eye } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { PasswordStrengthIndicator } from '@/components/ui/PasswordStrengthIndicator';
+import { validatePassword } from '@/lib/passwordValidation';
 
 type AdminRole = 'admin' | 'editor' | 'viewer';
 
@@ -60,13 +62,16 @@ export const CreateAdminDialog = ({ open, onOpenChange, onSuccess }: CreateAdmin
       return;
     }
 
-    if (!formData.autoGeneratePassword && formData.password.length < 8) {
-      toast({
-        title: "Validation Error",
-        description: "Password must be at least 8 characters long.",
-        variant: "destructive",
-      });
-      return;
+    if (!formData.autoGeneratePassword) {
+      const validation = validatePassword(formData.password);
+      if (!validation.isValid) {
+        toast({
+          title: "Weak Password",
+          description: validation.errors[0] || "Please choose a stronger password.",
+          variant: "destructive",
+        });
+        return;
+      }
     }
 
     setIsLoading(true);
@@ -233,14 +238,14 @@ export const CreateAdminDialog = ({ open, onOpenChange, onSuccess }: CreateAdmin
                     <Input
                       id="password"
                       type="password"
-                      placeholder="Enter password (min 8 characters)"
+                      placeholder="Enter a strong password"
                       className="pl-10"
                       value={formData.password}
                       onChange={(e) => setFormData(prev => ({ ...prev, password: e.target.value }))}
                       disabled={isLoading}
-                      minLength={8}
                     />
                   </div>
+                  <PasswordStrengthIndicator password={formData.password} showRequirements={true} />
                 </motion.div>
               )}
             </AnimatePresence>
