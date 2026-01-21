@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { format } from 'date-fns';
+import { jsPDF } from 'jspdf';
 import { 
   FileText, Calendar, MapPin, Camera, Video, Plane, Users, Heart, 
   Album, Clock, Lock, Unlock, Send, Download, Loader2, ExternalLink,
@@ -157,67 +158,193 @@ export function QuestionnaireDialog({
   const handleDownloadPDF = () => {
     if (!questionnaire) return;
     
-    // Create printable content
-    const content = `
-EVENT QUESTIONNAIRE
-===================
-Client: ${clientName}
-Email: ${clientEmail}
-Submitted: ${questionnaire.submitted_at ? format(new Date(questionnaire.submitted_at), 'PPpp') : 'Not submitted'}
+    const pdf = new jsPDF();
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const margin = 20;
+    const contentWidth = pageWidth - margin * 2;
+    let y = 20;
 
-EVENT DETAILS
--------------
-Event Type: ${questionnaire.event_type || 'N/A'}
-Event Date: ${questionnaire.event_date ? format(new Date(questionnaire.event_date), 'PP') : 'N/A'}
-Venue: ${questionnaire.venue_name || 'N/A'}
-Location: ${questionnaire.venue_location || 'N/A'}
-Time: ${questionnaire.event_start_time || 'N/A'} - ${questionnaire.event_end_time || 'N/A'}
+    // Helper functions
+    const addTitle = (text: string) => {
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(22);
+      pdf.setTextColor(51, 51, 51);
+      pdf.text(text, pageWidth / 2, y, { align: 'center' });
+      y += 12;
+    };
 
-COVERAGE REQUIREMENTS
---------------------
-Photography: ${questionnaire.photography_required ? 'Yes' : 'No'}
-Videography: ${questionnaire.videography_required ? 'Yes' : 'No'}
-Drone Coverage: ${questionnaire.drone_coverage ? 'Yes' : 'No'}
-Number of Days: ${questionnaire.number_of_days}
+    const addSubtitle = (text: string) => {
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(11);
+      pdf.setTextColor(128, 128, 128);
+      pdf.text(text, pageWidth / 2, y, { align: 'center' });
+      y += 8;
+    };
 
-STYLE PREFERENCES
------------------
-Photography Style: ${questionnaire.photography_style?.join(', ') || 'N/A'}
-Reference Links: ${questionnaire.reference_links?.join('\n') || 'N/A'}
-Must-Capture Moments: ${questionnaire.must_capture_moments || 'N/A'}
+    const addSectionHeader = (text: string) => {
+      if (y > 250) {
+        pdf.addPage();
+        y = 20;
+      }
+      y += 6;
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(13);
+      pdf.setTextColor(180, 142, 90); // Gold accent
+      pdf.text(text.toUpperCase(), margin, y);
+      y += 2;
+      pdf.setDrawColor(180, 142, 90);
+      pdf.setLineWidth(0.5);
+      pdf.line(margin, y, margin + 50, y);
+      y += 8;
+    };
 
-PEOPLE INFORMATION
-------------------
-Primary Contacts: ${questionnaire.primary_contact_names || 'N/A'}
-Important Family Members: ${questionnaire.important_family_members || 'N/A'}
-VIP Focus List: ${questionnaire.vip_focus_list || 'N/A'}
+    const addField = (label: string, value: string | null | undefined) => {
+      if (!value) return;
+      if (y > 270) {
+        pdf.addPage();
+        y = 20;
+      }
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(10);
+      pdf.setTextColor(100, 100, 100);
+      pdf.text(label + ':', margin, y);
+      
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(10);
+      pdf.setTextColor(51, 51, 51);
+      
+      const splitText = pdf.splitTextToSize(value, contentWidth - 45);
+      pdf.text(splitText, margin + 45, y);
+      y += splitText.length * 5 + 3;
+    };
 
-DELIVERABLES
-------------
-Album Required: ${questionnaire.album_required ? 'Yes' : 'No'}
-Video Types: ${questionnaire.video_types?.join(', ') || 'N/A'}
-Expected Delivery: ${questionnaire.expected_delivery_timeline || 'N/A'}
+    const addMultilineField = (label: string, value: string | null | undefined) => {
+      if (!value) return;
+      if (y > 260) {
+        pdf.addPage();
+        y = 20;
+      }
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(10);
+      pdf.setTextColor(100, 100, 100);
+      pdf.text(label + ':', margin, y);
+      y += 6;
+      
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(10);
+      pdf.setTextColor(51, 51, 51);
+      
+      const splitText = pdf.splitTextToSize(value, contentWidth);
+      pdf.text(splitText, margin, y);
+      y += splitText.length * 5 + 4;
+    };
 
-SPECIAL INSTRUCTIONS
---------------------
-Venue Rules: ${questionnaire.venue_rules || 'N/A'}
-Cultural Notes: ${questionnaire.cultural_notes || 'N/A'}
-Additional Instructions: ${questionnaire.additional_instructions || 'N/A'}
-    `.trim();
+    const addBooleanField = (label: string, value: boolean) => {
+      if (y > 270) {
+        pdf.addPage();
+        y = 20;
+      }
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(10);
+      pdf.setTextColor(51, 51, 51);
+      const icon = value ? '✓' : '✗';
+      const color = value ? [34, 139, 34] : [169, 169, 169];
+      pdf.setTextColor(color[0], color[1], color[2]);
+      pdf.text(icon, margin, y);
+      pdf.setTextColor(51, 51, 51);
+      pdf.text(label, margin + 8, y);
+      y += 6;
+    };
 
-    const blob = new Blob([content], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `questionnaire-${clientName.replace(/\s+/g, '-').toLowerCase()}.txt`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    // Header
+    addTitle('Event Questionnaire');
+    addSubtitle('Ajanta Photography');
+    y += 4;
+    
+    // Client info box
+    pdf.setFillColor(250, 250, 250);
+    pdf.roundedRect(margin, y, contentWidth, 28, 3, 3, 'F');
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(11);
+    pdf.setTextColor(51, 51, 51);
+    pdf.text(clientName, margin + 6, y + 10);
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(9);
+    pdf.setTextColor(100, 100, 100);
+    pdf.text(clientEmail, margin + 6, y + 18);
+    pdf.text(
+      questionnaire.submitted_at 
+        ? `Submitted: ${format(new Date(questionnaire.submitted_at), 'PPpp')}`
+        : 'Not submitted',
+      margin + 6, 
+      y + 25
+    );
+    y += 36;
+
+    // Event Details
+    addSectionHeader('Event Details');
+    addField('Event Type', questionnaire.event_type);
+    addField('Event Date', questionnaire.event_date ? format(new Date(questionnaire.event_date), 'PPPP') : null);
+    addField('Venue', questionnaire.venue_name);
+    addField('Location', questionnaire.venue_location);
+    if (questionnaire.event_start_time && questionnaire.event_end_time) {
+      addField('Time', `${questionnaire.event_start_time} - ${questionnaire.event_end_time}`);
+    }
+
+    // Coverage Requirements
+    addSectionHeader('Coverage Requirements');
+    addBooleanField('Photography', questionnaire.photography_required);
+    addBooleanField('Videography', questionnaire.videography_required);
+    addBooleanField('Drone Coverage', questionnaire.drone_coverage);
+    addField('Number of Days', questionnaire.number_of_days?.toString());
+
+    // Style Preferences
+    addSectionHeader('Style Preferences');
+    addField('Photography Style', questionnaire.photography_style?.join(', '));
+    if (questionnaire.reference_links?.length) {
+      addMultilineField('Reference Links', questionnaire.reference_links.join('\n'));
+    }
+    addMultilineField('Must-Capture Moments', questionnaire.must_capture_moments);
+
+    // People Information
+    addSectionHeader('People Information');
+    addField('Primary Contacts', questionnaire.primary_contact_names);
+    addMultilineField('Important Family Members', questionnaire.important_family_members);
+    addMultilineField('VIP Focus List', questionnaire.vip_focus_list);
+
+    // Deliverables
+    addSectionHeader('Deliverables');
+    addBooleanField('Photo Album Required', questionnaire.album_required);
+    addField('Video Types', questionnaire.video_types?.join(', '));
+    addField('Expected Delivery', questionnaire.expected_delivery_timeline);
+
+    // Special Instructions
+    addSectionHeader('Special Instructions');
+    addMultilineField('Venue Rules', questionnaire.venue_rules);
+    addMultilineField('Cultural Notes', questionnaire.cultural_notes);
+    addMultilineField('Additional Instructions', questionnaire.additional_instructions);
+
+    // Footer
+    const pageCount = pdf.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      pdf.setPage(i);
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(8);
+      pdf.setTextColor(150, 150, 150);
+      pdf.text(
+        `Page ${i} of ${pageCount}`,
+        pageWidth / 2,
+        pdf.internal.pageSize.getHeight() - 10,
+        { align: 'center' }
+      );
+    }
+
+    // Save
+    pdf.save(`questionnaire-${clientName.replace(/\s+/g, '-').toLowerCase()}.pdf`);
 
     toast({
       title: 'Downloaded',
-      description: 'Questionnaire exported successfully',
+      description: 'Questionnaire exported as PDF',
     });
   };
 
