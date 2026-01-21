@@ -3,8 +3,9 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { 
   ArrowLeft, Image, Video, Trash2, Eye, Share2, CheckCircle, MoreVertical, 
-  Users, Loader2, ScanFace, RefreshCw, Heart 
+  Users, Loader2, ScanFace, RefreshCw, Heart, Download 
 } from 'lucide-react';
+import JSZip from 'jszip';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { useAdminFavorites } from '@/hooks/useAdminFavorites';
@@ -89,6 +90,7 @@ const AdminAlbumDetail = () => {
   const [mediaUrls, setMediaUrls] = useState<Record<string, string>>({});
   const [isProcessingFaces, setIsProcessingFaces] = useState(false);
   const [faceProcessingStatus, setFaceProcessingStatus] = useState<string>('pending');
+  const [isDownloadingSelections, setIsDownloadingSelections] = useState(false);
   
   // Admin favorites hook
   const { favorites, favoritesCount, isFavorited, favoritesByClient } = useAdminFavorites(id || '');
@@ -320,6 +322,72 @@ const AdminAlbumDetail = () => {
     return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   };
 
+  const handleDownloadSelections = async () => {
+    if (favorites.length === 0) return;
+
+    setIsDownloadingSelections(true);
+    
+    try {
+      const zip = new JSZip();
+      const uniqueMediaIds = [...new Set(favorites.map(f => f.media_id))];
+      
+      // Find media items for the favorited IDs
+      const selectedMedia = media.filter(m => uniqueMediaIds.includes(m.id));
+      
+      let downloadedCount = 0;
+      
+      for (const item of selectedMedia) {
+        try {
+          // Get signed URL for original file
+          const { data: urlData } = await supabase.functions.invoke('s3-signed-url', {
+            body: { s3Key: item.s3_key },
+          });
+          
+          if (urlData?.url) {
+            const response = await fetch(urlData.url);
+            const blob = await response.blob();
+            zip.file(item.file_name, blob);
+            downloadedCount++;
+          }
+        } catch (err) {
+          console.error(`Error downloading ${item.file_name}:`, err);
+        }
+      }
+      
+      if (downloadedCount > 0) {
+        const content = await zip.generateAsync({ type: 'blob' });
+        const url = URL.createObjectURL(content);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${album?.title || 'selections'}-client-picks.zip`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        toast({
+          title: 'Download complete',
+          description: `Downloaded ${downloadedCount} selected photos`,
+        });
+      } else {
+        toast({
+          title: 'No files downloaded',
+          description: 'Could not download any of the selected files',
+          variant: 'destructive',
+        });
+      }
+    } catch (error) {
+      console.error('Error creating ZIP:', error);
+      toast({
+        title: 'Download failed',
+        description: 'Failed to create ZIP file',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsDownloadingSelections(false);
+    }
+  };
+
   const getFaceStatusBadge = () => {
     switch (faceProcessingStatus) {
       case 'processing':
@@ -522,11 +590,23 @@ const AdminAlbumDetail = () => {
         {/* Client Selections Section */}
         {favoritesCount > 0 && (
           <Card className="bg-card border-border">
-            <CardHeader>
+            <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle className="font-serif text-xl font-light flex items-center gap-2">
                 <Heart size={20} className="text-rose-500" />
                 Client Selections ({favoritesCount} photos)
               </CardTitle>
+              <Button 
+                onClick={handleDownloadSelections} 
+                disabled={isDownloadingSelections}
+                className="gap-2"
+              >
+                {isDownloadingSelections ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <Download size={16} />
+                )}
+                Download All
+              </Button>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
