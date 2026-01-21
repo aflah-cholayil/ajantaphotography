@@ -3,10 +3,11 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { 
   ArrowLeft, Image, Video, Trash2, Eye, Share2, CheckCircle, MoreVertical, 
-  Users, Loader2, ScanFace, RefreshCw 
+  Users, Loader2, ScanFace, RefreshCw, Heart 
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { useAdminFavorites } from '@/hooks/useAdminFavorites';
 import { AdminLayout } from '@/components/admin/AdminLayout';
 import { MediaUploader } from '@/components/admin/MediaUploader';
 import { AlbumStatusBadge } from '@/components/admin/AlbumStatusBadge';
@@ -88,6 +89,9 @@ const AdminAlbumDetail = () => {
   const [mediaUrls, setMediaUrls] = useState<Record<string, string>>({});
   const [isProcessingFaces, setIsProcessingFaces] = useState(false);
   const [faceProcessingStatus, setFaceProcessingStatus] = useState<string>('pending');
+  
+  // Admin favorites hook
+  const { favorites, favoritesCount, isFavorited, favoritesByClient } = useAdminFavorites(id || '');
 
   const fetchAlbum = async () => {
     if (!id) return;
@@ -442,7 +446,7 @@ const AdminAlbumDetail = () => {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
           <Card className="bg-card border-border">
             <CardContent className="p-4">
               <div className="flex items-center gap-3">
@@ -494,6 +498,17 @@ const AdminAlbumDetail = () => {
           <Card className="bg-card border-border">
             <CardContent className="p-4">
               <div className="flex items-center gap-3">
+                <Heart className="h-8 w-8 text-rose-500 opacity-80" />
+                <div>
+                  <p className="text-2xl font-light">{favoritesCount}</p>
+                  <p className="text-sm text-muted-foreground">Selections</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="bg-card border-border">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
                 <Share2 className="h-8 w-8 text-orange-500 opacity-80" />
                 <div>
                   <p className="text-2xl font-light">0</p>
@@ -503,6 +518,66 @@ const AdminAlbumDetail = () => {
             </CardContent>
           </Card>
         </div>
+
+        {/* Client Selections Section */}
+        {favoritesCount > 0 && (
+          <Card className="bg-card border-border">
+            <CardHeader>
+              <CardTitle className="font-serif text-xl font-light flex items-center gap-2">
+                <Heart size={20} className="text-rose-500" />
+                Client Selections ({favoritesCount} photos)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {Object.entries(favoritesByClient).map(([userId, { profile, mediaIds }]) => (
+                  <div key={userId} className="p-4 rounded-lg bg-muted/50">
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
+                        <Users size={16} className="text-primary" />
+                      </div>
+                      <div>
+                        <p className="font-medium">{profile?.name || 'Unknown Client'}</p>
+                        <p className="text-xs text-muted-foreground">{profile?.email}</p>
+                      </div>
+                      <Badge variant="secondary" className="ml-auto">
+                        {mediaIds.length} selections
+                      </Badge>
+                    </div>
+                    <div className="grid grid-cols-6 md:grid-cols-10 gap-2">
+                      {mediaIds.slice(0, 10).map((mediaId) => (
+                        <div 
+                          key={mediaId} 
+                          className="aspect-square rounded-md overflow-hidden bg-muted relative"
+                        >
+                          {mediaUrls[mediaId] ? (
+                            <img 
+                              src={mediaUrls[mediaId]} 
+                              alt="Selected"
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center">
+                              <Image size={14} className="text-muted-foreground" />
+                            </div>
+                          )}
+                          <div className="absolute top-0.5 right-0.5">
+                            <Heart size={10} className="text-rose-500 fill-rose-500" />
+                          </div>
+                        </div>
+                      ))}
+                      {mediaIds.length > 10 && (
+                        <div className="aspect-square rounded-md bg-muted flex items-center justify-center">
+                          <span className="text-xs text-muted-foreground">+{mediaIds.length - 10}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* People Section (if any detected) */}
         {people.length > 0 && (
@@ -598,6 +673,15 @@ const AdminAlbumDetail = () => {
                     ) : (
                       <div className="w-full h-full flex items-center justify-center">
                         <Video size={24} className="text-muted-foreground" />
+                      </div>
+                    )}
+                    
+                    {/* Client Selection Indicator */}
+                    {isFavorited(item.id) && (
+                      <div className="absolute top-2 left-2 z-10">
+                        <div className="bg-rose-500 text-white p-1 rounded-full shadow-lg">
+                          <Heart size={12} className="fill-white" />
+                        </div>
                       </div>
                     )}
                     
