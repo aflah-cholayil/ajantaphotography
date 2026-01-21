@@ -9,7 +9,8 @@ const corsHeaders = {
 };
 
 interface SendQuestionnaireRequest {
-  booking_id: string;
+  booking_id?: string;
+  bookingId?: string;
   resend?: boolean;
 }
 
@@ -23,7 +24,10 @@ const handler = async (req: Request): Promise<Response> => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const { booking_id, resend: isResend } = await req.json() as SendQuestionnaireRequest;
+    const body = await req.json() as SendQuestionnaireRequest;
+    // Accept both camelCase and snake_case
+    const booking_id = body.booking_id || body.bookingId;
+    const isResend = body.resend;
 
     if (!booking_id) {
       throw new Error("booking_id is required");
