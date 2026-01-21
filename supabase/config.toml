@@ -35,3 +35,9 @@ verify_jwt = false
 
 [functions.get-share-gallery]
 verify_jwt = false
+
+[functions.send-questionnaire]
+verify_jwt = false
+
+[functions.questionnaire]
+verify_jwt = false

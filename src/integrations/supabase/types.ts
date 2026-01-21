@@ -274,6 +274,119 @@ export type Database = {
           },
         ]
       }
+      event_questionnaires: {
+        Row: {
+          additional_instructions: string | null
+          album_required: boolean | null
+          booking_id: string
+          confirmed: boolean | null
+          created_at: string
+          cultural_notes: string | null
+          drone_coverage: boolean | null
+          event_date: string | null
+          event_end_time: string | null
+          event_start_time: string | null
+          event_type: string | null
+          expected_delivery_timeline: string | null
+          id: string
+          important_family_members: string | null
+          is_editable: boolean
+          is_locked: boolean
+          must_capture_moments: string | null
+          number_of_days: number | null
+          photography_required: boolean | null
+          photography_style: string[] | null
+          primary_contact_names: string | null
+          reference_links: string[] | null
+          status: Database["public"]["Enums"]["questionnaire_status"]
+          submitted_at: string | null
+          token: string
+          updated_at: string
+          venue_location: string | null
+          venue_name: string | null
+          venue_rules: string | null
+          video_types: string[] | null
+          videography_required: boolean | null
+          vip_focus_list: string | null
+        }
+        Insert: {
+          additional_instructions?: string | null
+          album_required?: boolean | null
+          booking_id: string
+          confirmed?: boolean | null
+          created_at?: string
+          cultural_notes?: string | null
+          drone_coverage?: boolean | null
+          event_date?: string | null
+          event_end_time?: string | null
+          event_start_time?: string | null
+          event_type?: string | null
+          expected_delivery_timeline?: string | null
+          id?: string
+          important_family_members?: string | null
+          is_editable?: boolean
+          is_locked?: boolean
+          must_capture_moments?: string | null
+          number_of_days?: number | null
+          photography_required?: boolean | null
+          photography_style?: string[] | null
+          primary_contact_names?: string | null
+          reference_links?: string[] | null
+          status?: Database["public"]["Enums"]["questionnaire_status"]
+          submitted_at?: string | null
+          token?: string
+          updated_at?: string
+          venue_location?: string | null
+          venue_name?: string | null
+          venue_rules?: string | null
+          video_types?: string[] | null
+          videography_required?: boolean | null
+          vip_focus_list?: string | null
+        }
+        Update: {
+          additional_instructions?: string | null
+          album_required?: boolean | null
+          booking_id?: string
+          confirmed?: boolean | null
+          created_at?: string
+          cultural_notes?: string | null
+          drone_coverage?: boolean | null
+          event_date?: string | null
+          event_end_time?: string | null
+          event_start_time?: string | null
+          event_type?: string | null
+          expected_delivery_timeline?: string | null
+          id?: string
+          important_family_members?: string | null
+          is_editable?: boolean
+          is_locked?: boolean
+          must_capture_moments?: string | null
+          number_of_days?: number | null
+          photography_required?: boolean | null
+          photography_style?: string[] | null
+          primary_contact_names?: string | null
+          reference_links?: string[] | null
+          status?: Database["public"]["Enums"]["questionnaire_status"]
+          submitted_at?: string | null
+          token?: string
+          updated_at?: string
+          venue_location?: string | null
+          venue_name?: string | null
+          venue_rules?: string | null
+          video_types?: string[] | null
+          videography_required?: boolean | null
+          vip_focus_list?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "event_questionnaires_booking_id_fkey"
+            columns: ["booking_id"]
+            isOneToOne: false
+            referencedRelation: "bookings"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       media: {
         Row: {
           album_id: string
@@ -661,6 +774,7 @@ export type Database = {
       booking_status: "new" | "contacted" | "confirmed" | "cancelled"
       email_status: "sent" | "failed" | "pending"
       media_type: "photo" | "video"
+      questionnaire_status: "not_sent" | "sent" | "completed"
       work_category: "wedding" | "pre-wedding" | "event" | "candid" | "other"
       work_status: "active" | "hidden"
       work_type: "photo" | "video"
@@ -796,6 +910,7 @@ export const Constants = {
       booking_status: ["new", "contacted", "confirmed", "cancelled"],
       email_status: ["sent", "failed", "pending"],
       media_type: ["photo", "video"],
+      questionnaire_status: ["not_sent", "sent", "completed"],
       work_category: ["wedding", "pre-wedding", "event", "candid", "other"],
       work_status: ["active", "hidden"],
       work_type: ["photo", "video"],
