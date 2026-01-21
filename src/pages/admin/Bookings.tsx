@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { format } from 'date-fns';
-import { Search, MoreVertical, Mail, Check, X, Calendar } from 'lucide-react';
+import { Search, MoreVertical, Mail, Check, X, FileText, Send, Eye } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { AdminLayout } from '@/components/admin/AdminLayout';
@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
+import { QuestionnaireDialog } from '@/components/admin/QuestionnaireDialog';
 import {
   Table,
   TableBody,
@@ -39,6 +40,14 @@ import {
 } from '@/components/ui/select';
 
 type BookingStatus = 'new' | 'contacted' | 'confirmed' | 'cancelled';
+type QuestionnaireStatus = 'not_sent' | 'sent' | 'completed';
+
+interface Questionnaire {
+  id: string;
+  status: QuestionnaireStatus;
+  submitted_at: string | null;
+  is_locked: boolean;
+}
 
 interface Booking {
   id: string;
@@ -51,6 +60,7 @@ interface Booking {
   admin_notes: string | null;
   status: BookingStatus;
   created_at: string;
+  event_questionnaires?: Questionnaire[];
 }
 
 const statusConfig: Record<BookingStatus, { label: string; className: string }> = {
@@ -58,6 +68,12 @@ const statusConfig: Record<BookingStatus, { label: string; className: string }> 
   contacted: { label: 'Contacted', className: 'bg-blue-500/20 text-blue-500 border-blue-500/30' },
   confirmed: { label: 'Confirmed', className: 'bg-green-500/20 text-green-500 border-green-500/30' },
   cancelled: { label: 'Cancelled', className: 'bg-muted text-muted-foreground border-muted' },
+};
+
+const questionnaireStatusConfig: Record<QuestionnaireStatus, { label: string; className: string }> = {
+  not_sent: { label: 'Not Sent', className: 'bg-muted text-muted-foreground border-muted' },
+  sent: { label: 'Sent', className: 'bg-amber-500/20 text-amber-500 border-amber-500/30' },
+  completed: { label: 'Completed', className: 'bg-green-500/20 text-green-500 border-green-500/30' },
 };
 
 const AdminBookings = () => {
@@ -68,12 +84,22 @@ const AdminBookings = () => {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
   const [adminNotes, setAdminNotes] = useState('');
+  const [questionnaireBooking, setQuestionnaireBooking] = useState<Booking | null>(null);
+  const [sendingQuestionnaire, setSendingQuestionnaire] = useState<string | null>(null);
 
   const fetchBookings = async () => {
     try {
       const { data, error } = await supabase
         .from('bookings')
-        .select('*')
+        .select(`
+          *,
+          event_questionnaires (
+            id,
+            status,
+            submitted_at,
+            is_locked
+          )
+        `)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -94,6 +120,11 @@ const AdminBookings = () => {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'bookings' },
+        () => fetchBookings()
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'event_questionnaires' },
         () => fetchBookings()
       )
       .subscribe();
@@ -127,6 +158,32 @@ const AdminBookings = () => {
     }
   };
 
+  const handleSendQuestionnaire = async (booking: Booking) => {
+    setSendingQuestionnaire(booking.id);
+    try {
+      const { error } = await supabase.functions.invoke('send-questionnaire', {
+        body: { bookingId: booking.id }
+      });
+
+      if (error) throw error;
+
+      toast({
+        title: 'Questionnaire sent',
+        description: `Questionnaire email sent to ${booking.client_email}`,
+      });
+
+      fetchBookings();
+    } catch (error: unknown) {
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to send questionnaire',
+        variant: 'destructive',
+      });
+    } finally {
+      setSendingQuestionnaire(null);
+    }
+  };
+
   const handleSaveNotes = async () => {
     if (!selectedBooking) return;
 
@@ -157,6 +214,11 @@ const AdminBookings = () => {
   const openBookingDetails = (booking: Booking) => {
     setSelectedBooking(booking);
     setAdminNotes(booking.admin_notes || '');
+  };
+
+  const getQuestionnaireStatus = (booking: Booking): QuestionnaireStatus => {
+    const questionnaire = booking.event_questionnaires?.[0];
+    return questionnaire?.status || 'not_sent';
   };
 
   const filteredBookings = bookings.filter((booking) => {
@@ -213,6 +275,7 @@ const AdminBookings = () => {
                 <TableHead>Event</TableHead>
                 <TableHead>Event Date</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead>Questionnaire</TableHead>
                 <TableHead>Received</TableHead>
                 <TableHead className="w-12"></TableHead>
               </TableRow>
@@ -220,13 +283,13 @@ const AdminBookings = () => {
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                     Loading bookings...
                   </TableCell>
                 </TableRow>
               ) : filteredBookings.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                     {searchQuery || statusFilter !== 'all' 
                       ? 'No bookings found matching your criteria' 
                       : 'No bookings yet'
@@ -234,65 +297,99 @@ const AdminBookings = () => {
                   </TableCell>
                 </TableRow>
               ) : (
-                filteredBookings.map((booking) => (
-                  <TableRow 
-                    key={booking.id} 
-                    className="hover:bg-muted/20 cursor-pointer"
-                    onClick={() => openBookingDetails(booking)}
-                  >
-                    <TableCell>
-                      <div>
-                        <p className="font-medium">{booking.client_name}</p>
-                        <p className="text-sm text-muted-foreground">{booking.client_email}</p>
-                      </div>
-                    </TableCell>
-                    <TableCell>{booking.event_type}</TableCell>
-                    <TableCell>
-                      {booking.event_date 
-                        ? format(new Date(booking.event_date), 'MMM d, yyyy')
-                        : '-'
-                      }
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className={statusConfig[booking.status].className}>
-                        {statusConfig[booking.status].label}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {format(new Date(booking.created_at), 'MMM d, yyyy')}
-                    </TableCell>
-                    <TableCell onClick={(e) => e.stopPropagation()}>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon">
-                            <MoreVertical size={16} />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem 
-                            onClick={() => window.open(`mailto:${booking.client_email}`)}
-                          >
-                            <Mail size={16} className="mr-2" />
-                            Send Email
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem onClick={() => handleUpdateStatus(booking.id, 'contacted')}>
-                            <Mail size={16} className="mr-2" />
-                            Mark as Contacted
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleUpdateStatus(booking.id, 'confirmed')}>
-                            <Check size={16} className="mr-2" />
-                            Mark as Confirmed
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleUpdateStatus(booking.id, 'cancelled')}>
-                            <X size={16} className="mr-2" />
-                            Mark as Cancelled
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                ))
+                filteredBookings.map((booking) => {
+                  const qStatus = getQuestionnaireStatus(booking);
+                  return (
+                    <TableRow 
+                      key={booking.id} 
+                      className="hover:bg-muted/20 cursor-pointer"
+                      onClick={() => openBookingDetails(booking)}
+                    >
+                      <TableCell>
+                        <div>
+                          <p className="font-medium">{booking.client_name}</p>
+                          <p className="text-sm text-muted-foreground">{booking.client_email}</p>
+                        </div>
+                      </TableCell>
+                      <TableCell>{booking.event_type}</TableCell>
+                      <TableCell>
+                        {booking.event_date 
+                          ? format(new Date(booking.event_date), 'MMM d, yyyy')
+                          : '-'
+                        }
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className={statusConfig[booking.status].className}>
+                          {statusConfig[booking.status].label}
+                        </Badge>
+                      </TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className={questionnaireStatusConfig[qStatus].className}>
+                            {questionnaireStatusConfig[qStatus].label}
+                          </Badge>
+                          {qStatus === 'completed' && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2"
+                              onClick={() => setQuestionnaireBooking(booking)}
+                            >
+                              <Eye size={14} />
+                            </Button>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {format(new Date(booking.created_at), 'MMM d, yyyy')}
+                      </TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon">
+                              <MoreVertical size={16} />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem 
+                              onClick={() => window.open(`mailto:${booking.client_email}`)}
+                            >
+                              <Mail size={16} className="mr-2" />
+                              Send Email
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem 
+                              onClick={() => handleSendQuestionnaire(booking)}
+                              disabled={sendingQuestionnaire === booking.id}
+                            >
+                              <Send size={16} className="mr-2" />
+                              {qStatus === 'not_sent' ? 'Send Questionnaire' : 'Resend Questionnaire'}
+                            </DropdownMenuItem>
+                            {qStatus !== 'not_sent' && (
+                              <DropdownMenuItem onClick={() => setQuestionnaireBooking(booking)}>
+                                <FileText size={16} className="mr-2" />
+                                View Questionnaire
+                              </DropdownMenuItem>
+                            )}
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem onClick={() => handleUpdateStatus(booking.id, 'contacted')}>
+                              <Mail size={16} className="mr-2" />
+                              Mark as Contacted
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleUpdateStatus(booking.id, 'confirmed')}>
+                              <Check size={16} className="mr-2" />
+                              Mark as Confirmed
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => handleUpdateStatus(booking.id, 'cancelled')}>
+                              <X size={16} className="mr-2" />
+                              Mark as Cancelled
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
               )}
             </TableBody>
           </Table>
@@ -345,6 +442,43 @@ const AdminBookings = () => {
                 </div>
               </div>
 
+              {/* Questionnaire Section */}
+              <div className="border-t border-border pt-4">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider">Questionnaire</p>
+                  <Badge 
+                    variant="outline" 
+                    className={questionnaireStatusConfig[getQuestionnaireStatus(selectedBooking)].className}
+                  >
+                    {questionnaireStatusConfig[getQuestionnaireStatus(selectedBooking)].label}
+                  </Badge>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleSendQuestionnaire(selectedBooking)}
+                    disabled={sendingQuestionnaire === selectedBooking.id}
+                  >
+                    <Send size={14} className="mr-2" />
+                    {getQuestionnaireStatus(selectedBooking) === 'not_sent' ? 'Send' : 'Resend'}
+                  </Button>
+                  {getQuestionnaireStatus(selectedBooking) !== 'not_sent' && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setSelectedBooking(null);
+                        setQuestionnaireBooking(selectedBooking);
+                      }}
+                    >
+                      <Eye size={14} className="mr-2" />
+                      View Responses
+                    </Button>
+                  )}
+                </div>
+              </div>
+
               {selectedBooking.message && (
                 <div>
                   <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Message</p>
@@ -375,6 +509,17 @@ const AdminBookings = () => {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Questionnaire Dialog */}
+      {questionnaireBooking && (
+        <QuestionnaireDialog
+          bookingId={questionnaireBooking.id}
+          clientName={questionnaireBooking.client_name}
+          clientEmail={questionnaireBooking.client_email}
+          open={!!questionnaireBooking}
+          onOpenChange={(open) => !open && setQuestionnaireBooking(null)}
+        />
+      )}
     </AdminLayout>
   );
 };
