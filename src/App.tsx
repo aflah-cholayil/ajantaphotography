@@ -26,6 +26,7 @@ import ClientDashboard from "./pages/client/Dashboard";
 import ClientAlbumView from "./pages/client/AlbumView";
 import ClientSettings from "./pages/client/Settings";
 import SharedGallery from "./pages/share/SharedGallery";
+import Questionnaire from "./pages/Questionnaire";
 
 const queryClient = new QueryClient();
 
@@ -51,6 +52,8 @@ const App = () => (
           <Route path="/client/settings" element={<ClientSettings />} />
           {/* Share Routes */}
           <Route path="/share/:token" element={<SharedGallery />} />
+          {/* Questionnaire Route */}
+          <Route path="/questionnaire/:token" element={<Questionnaire />} />
           {/* Admin Routes */}
           <Route path="/admin" element={<AdminDashboard />} />
           <Route path="/admin/clients" element={<AdminClients />} />
