@@ -19,11 +19,15 @@ export type Database = {
           client_id: string
           cover_image_key: string | null
           created_at: string
+          deleted_at: string | null
           description: string | null
+          expires_at: string | null
+          expiry_notified: boolean | null
           face_processing_completed_at: string | null
           face_processing_started_at: string | null
           face_processing_status: string | null
           id: string
+          is_deleted: boolean | null
           ready_at: string | null
           status: Database["public"]["Enums"]["album_status"]
           title: string
@@ -33,11 +37,15 @@ export type Database = {
           client_id: string
           cover_image_key?: string | null
           created_at?: string
+          deleted_at?: string | null
           description?: string | null
+          expires_at?: string | null
+          expiry_notified?: boolean | null
           face_processing_completed_at?: string | null
           face_processing_started_at?: string | null
           face_processing_status?: string | null
           id?: string
+          is_deleted?: boolean | null
           ready_at?: string | null
           status?: Database["public"]["Enums"]["album_status"]
           title: string
@@ -47,11 +55,15 @@ export type Database = {
           client_id?: string
           cover_image_key?: string | null
           created_at?: string
+          deleted_at?: string | null
           description?: string | null
+          expires_at?: string | null
+          expiry_notified?: boolean | null
           face_processing_completed_at?: string | null
           face_processing_started_at?: string | null
           face_processing_status?: string | null
           id?: string
+          is_deleted?: boolean | null
           ready_at?: string | null
           status?: Database["public"]["Enums"]["album_status"]
           title?: string
@@ -112,27 +124,33 @@ export type Database = {
       clients: {
         Row: {
           created_at: string
+          deleted_at: string | null
           event_date: string | null
           event_name: string
           id: string
+          is_deleted: boolean | null
           notes: string | null
           updated_at: string
           user_id: string
         }
         Insert: {
           created_at?: string
+          deleted_at?: string | null
           event_date?: string | null
           event_name: string
           id?: string
+          is_deleted?: boolean | null
           notes?: string | null
           updated_at?: string
           user_id: string
         }
         Update: {
           created_at?: string
+          deleted_at?: string | null
           event_date?: string | null
           event_name?: string
           id?: string
+          is_deleted?: boolean | null
           notes?: string | null
           updated_at?: string
           user_id?: string
@@ -169,6 +187,51 @@ export type Database = {
           name?: string
           phone?: string | null
           subject?: string | null
+        }
+        Relationships: []
+      }
+      deletion_logs: {
+        Row: {
+          deleted_at: string
+          deleted_by: string
+          entity_id: string
+          entity_name: string | null
+          entity_type: string
+          files_count: number | null
+          id: string
+          metadata: Json | null
+          parent_entity_id: string | null
+          parent_entity_name: string | null
+          s3_keys_deleted: string[] | null
+          total_size_bytes: number | null
+        }
+        Insert: {
+          deleted_at?: string
+          deleted_by: string
+          entity_id: string
+          entity_name?: string | null
+          entity_type: string
+          files_count?: number | null
+          id?: string
+          metadata?: Json | null
+          parent_entity_id?: string | null
+          parent_entity_name?: string | null
+          s3_keys_deleted?: string[] | null
+          total_size_bytes?: number | null
+        }
+        Update: {
+          deleted_at?: string
+          deleted_by?: string
+          entity_id?: string
+          entity_name?: string | null
+          entity_type?: string
+          files_count?: number | null
+          id?: string
+          metadata?: Json | null
+          parent_entity_id?: string | null
+          parent_entity_name?: string | null
+          s3_keys_deleted?: string[] | null
+          total_size_bytes?: number | null
         }
         Relationships: []
       }

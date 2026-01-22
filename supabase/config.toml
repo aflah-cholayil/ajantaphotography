@@ -41,3 +41,6 @@ verify_jwt = false
 
 [functions.questionnaire]
 verify_jwt = false
+
+[functions.storage-cleanup]
+verify_jwt = false

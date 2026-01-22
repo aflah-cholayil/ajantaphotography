@@ -1,14 +1,16 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { format } from 'date-fns';
-import { Search, Plus, MoreVertical, Upload, Eye, Share2, CheckCircle } from 'lucide-react';
+import { format, formatDistanceToNow } from 'date-fns';
+import { Search, Plus, MoreVertical, Upload, Eye, Share2, CheckCircle, Trash2, Calendar } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { AdminLayout } from '@/components/admin/AdminLayout';
 import { AlbumStatusBadge } from '@/components/admin/AlbumStatusBadge';
 import { ShareLinkDialog } from '@/components/admin/ShareLinkDialog';
+import { DeleteConfirmDialog } from '@/components/admin/DeleteConfirmDialog';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import {
   Table,
   TableBody,
@@ -50,6 +52,7 @@ interface Album {
   status: AlbumStatus;
   created_at: string;
   ready_at: string | null;
+  expires_at: string | null;
   client_id: string;
   clients: {
     id: string;
@@ -87,6 +90,10 @@ const AdminAlbums = () => {
   const [newAlbumTitle, setNewAlbumTitle] = useState('');
   const [newAlbumClientId, setNewAlbumClientId] = useState('');
   const [isCreating, setIsCreating] = useState(false);
+  
+  // Delete album state
+  const [deleteAlbumId, setDeleteAlbumId] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const clientFilter = searchParams.get('client');
 
@@ -101,6 +108,7 @@ const AdminAlbums = () => {
           status,
           created_at,
           ready_at,
+          expires_at,
           client_id,
           clients (
             id,
@@ -109,6 +117,7 @@ const AdminAlbums = () => {
           ),
           media(id)
         `)
+        .eq('is_deleted', false)
         .order('created_at', { ascending: false });
 
       if (clientFilter) {
@@ -243,6 +252,30 @@ const AdminAlbums = () => {
       });
     }
   };
+
+  const handleDeleteAlbum = async () => {
+    if (!deleteAlbumId) return;
+    const albumToDelete = albums.find(a => a.id === deleteAlbumId);
+    setIsDeleting(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('storage-cleanup', {
+        body: { action: 'delete_album', albumId: deleteAlbumId },
+      });
+      if (error) throw error;
+      toast({
+        title: 'Album deleted',
+        description: `"${albumToDelete?.title}" deleted. ${data?.mediaCount || 0} files removed.`,
+      });
+      setDeleteAlbumId(null);
+      fetchAlbums();
+    } catch (error) {
+      toast({ title: 'Error', description: error instanceof Error ? error.message : 'Failed to delete', variant: 'destructive' });
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const getAlbumToDelete = () => albums.find(a => a.id === deleteAlbumId);
 
   const filteredAlbums = albums.filter((album) => {
     const matchesSearch = 
@@ -451,6 +484,14 @@ const AdminAlbums = () => {
                               Mark as Pending
                             </DropdownMenuItem>
                           )}
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem 
+                            className="text-destructive focus:text-destructive"
+                            onClick={() => setDeleteAlbumId(album.id)}
+                          >
+                            <Trash2 size={16} className="mr-2" />
+                            Delete Album
+                          </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>
@@ -460,6 +501,23 @@ const AdminAlbums = () => {
             </TableBody>
           </Table>
         </div>
+
+        {/* Delete Album Dialog */}
+        <DeleteConfirmDialog
+          title="Delete Album"
+          description="This will permanently delete this album and all media from AWS S3 storage."
+          entityName={getAlbumToDelete()?.title}
+          warningItems={[
+            'All photos and videos in this album',
+            'All share links for this album',
+            'Face detection data and favorites',
+          ]}
+          confirmText="DELETE"
+          isDeleting={isDeleting}
+          onConfirm={handleDeleteAlbum}
+          open={!!deleteAlbumId}
+          onOpenChange={(open) => !open && setDeleteAlbumId(null)}
+        />
       </div>
     </AdminLayout>
   );

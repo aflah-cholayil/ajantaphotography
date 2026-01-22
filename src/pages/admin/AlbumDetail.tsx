@@ -293,16 +293,19 @@ const AdminAlbumDetail = () => {
     if (!deleteMediaId) return;
 
     try {
-      const { error } = await supabase
-        .from('media')
-        .delete()
-        .eq('id', deleteMediaId);
+      // Use storage-cleanup to delete from S3 and database
+      const { error } = await supabase.functions.invoke('storage-cleanup', {
+        body: {
+          action: 'delete_media',
+          mediaId: deleteMediaId,
+        },
+      });
 
       if (error) throw error;
 
       toast({
         title: 'Media deleted',
-        description: 'The file has been removed from the album',
+        description: 'The file has been removed from the album and S3 storage',
       });
 
       setDeleteMediaId(null);
