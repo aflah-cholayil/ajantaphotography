@@ -1,12 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
 import { format } from 'date-fns';
-import { Search, MoreVertical, Mail, Eye, RefreshCw, History, X, Filter, AlertTriangle } from 'lucide-react';
+import { Search, MoreVertical, Mail, Eye, RefreshCw, History, X, Filter, AlertTriangle, Trash2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import { useToast } from '@/hooks/use-toast';
 import { AdminLayout } from '@/components/admin/AdminLayout';
 import { CreateClientDialog } from '@/components/admin/CreateClientDialog';
 import { EmailStatusBadge, type EmailStatus } from '@/components/admin/EmailStatusBadge';
 import { EmailHistoryDialog } from '@/components/admin/EmailHistoryDialog';
 import { BulkEmailDialog } from '@/components/admin/BulkEmailDialog';
+import { DeleteConfirmDialog } from '@/components/admin/DeleteConfirmDialog';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -22,6 +24,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useNavigate } from 'react-router-dom';
@@ -50,11 +53,14 @@ type EmailStatusFilter = 'all' | 'sent' | 'failed' | 'none' | 'pending';
 
 const AdminClients = () => {
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [clients, setClients] = useState<Client[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkEmailOpen, setBulkEmailOpen] = useState(false);
+  const [deleteClientId, setDeleteClientId] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [emailStatusFilter, setEmailStatusFilter] = useState<EmailStatusFilter>('all');
 
   const fetchClients = useCallback(async () => {
@@ -205,6 +211,45 @@ const AdminClients = () => {
 
   const clearSelection = () => {
     setSelectedIds(new Set());
+  };
+
+  const handleDeleteClient = async () => {
+    if (!deleteClientId) return;
+
+    const clientToDelete = clients.find(c => c.id === deleteClientId);
+    setIsDeleting(true);
+
+    try {
+      const { data, error } = await supabase.functions.invoke('storage-cleanup', {
+        body: {
+          action: 'delete_client',
+          clientId: deleteClientId,
+        },
+      });
+
+      if (error) throw error;
+
+      toast({
+        title: 'Client deleted',
+        description: `${clientToDelete?.profiles?.name || 'Client'} and all associated data have been permanently deleted. ${data?.mediaCount || 0} files removed from storage.`,
+      });
+
+      setDeleteClientId(null);
+      fetchClients();
+    } catch (error) {
+      console.error('Error deleting client:', error);
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to delete client',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const getClientToDelete = () => {
+    return clients.find(c => c.id === deleteClientId);
   };
 
   const selectedClients = filteredClients
@@ -411,6 +456,14 @@ const AdminClients = () => {
                         <Mail size={16} className="mr-2" />
                         Send Email
                       </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem 
+                        className="text-destructive focus:text-destructive"
+                        onClick={() => setDeleteClientId(client.id)}
+                      >
+                        <Trash2 size={16} className="mr-2" />
+                        Delete Client
+                      </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
@@ -542,6 +595,14 @@ const AdminClients = () => {
                             <Mail size={16} className="mr-2" />
                             Send Email
                           </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem 
+                            className="text-destructive focus:text-destructive"
+                            onClick={() => setDeleteClientId(client.id)}
+                          >
+                            <Trash2 size={16} className="mr-2" />
+                            Delete Client
+                          </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>
@@ -561,6 +622,24 @@ const AdminClients = () => {
             fetchClients();
             clearSelection();
           }}
+        />
+
+        {/* Delete Client Dialog */}
+        <DeleteConfirmDialog
+          title="Delete Client"
+          description="This action will permanently delete this client and all associated data from your system and AWS S3 storage."
+          entityName={getClientToDelete()?.profiles?.name || getClientToDelete()?.event_name}
+          warningItems={[
+            'All albums belonging to this client',
+            'All photos and videos in those albums (from S3 storage)',
+            'All share links and access permissions',
+            'Email history and client profile',
+          ]}
+          confirmText="DELETE"
+          isDeleting={isDeleting}
+          onConfirm={handleDeleteClient}
+          open={!!deleteClientId}
+          onOpenChange={(open) => !open && setDeleteClientId(null)}
         />
       </div>
     </AdminLayout>
