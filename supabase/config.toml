@@ -44,3 +44,6 @@ verify_jwt = false
 
 [functions.storage-cleanup]
 verify_jwt = false
+
+[functions.s3-multipart-upload]
+verify_jwt = false

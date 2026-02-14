@@ -1,20 +1,11 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Upload, X, CheckCircle, AlertCircle, Image, Video, Loader2 } from 'lucide-react';
+import { Upload, FolderUp } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { Progress } from '@/components/ui/progress';
 import { Button } from '@/components/ui/button';
-
-interface UploadingFile {
-  id: string;
-  file: File;
-  progress: number;
-  status: 'pending' | 'uploading' | 'success' | 'error';
-  error?: string;
-  preview?: string;
-}
+import { UploadProgressPanel } from '@/components/admin/UploadProgressPanel';
+import { UploadEngine, type UploadEngineState } from '@/lib/uploadEngine';
 
 interface MediaUploaderProps {
   albumId: string;
@@ -34,193 +25,57 @@ const ACCEPTED_TYPES = {
 
 const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB
 
+const isMediaFile = (file: File) => {
+  const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'video/mp4', 'video/quicktime', 'video/x-msvideo'];
+  return validTypes.includes(file.type) || /\.(jpg|jpeg|png|webp|heic|mp4|mov|avi)$/i.test(file.name);
+};
+
 export const MediaUploader = ({ albumId, onUploadComplete, onTriggerFaceDetection }: MediaUploaderProps) => {
-  const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([]);
-  const [isUploading, setIsUploading] = useState(false);
+  const [uploadState, setUploadState] = useState<UploadEngineState | null>(null);
+  const engineRef = useRef<UploadEngine | null>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
-  const uploadFile = async (uploadFile: UploadingFile) => {
-    const { file, id } = uploadFile;
-
-    try {
-      // Update status to uploading
-      setUploadingFiles(prev => 
-        prev.map(f => f.id === id ? { ...f, status: 'uploading' as const } : f)
-      );
-
-      // Get presigned URL from edge function
-      const { data: urlData, error: urlError } = await supabase.functions.invoke('s3-upload', {
-        body: {
-          albumId,
-          fileName: file.name,
-          fileType: file.type,
-          fileSize: file.size,
-        },
-      });
-
-      if (urlError || urlData?.error) {
-        throw new Error(urlData?.error || urlError?.message || 'Failed to get upload URL');
-      }
-
-      // Upload to S3 with progress tracking
-      await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        
-        xhr.upload.addEventListener('progress', (e) => {
-          if (e.lengthComputable) {
-            const progress = Math.round((e.loaded / e.total) * 100);
-            setUploadingFiles(prev => 
-              prev.map(f => f.id === id ? { ...f, progress } : f)
-            );
-          }
-        });
-
-        xhr.addEventListener('load', () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            resolve();
-          } else {
-            reject(new Error(`Upload failed with status ${xhr.status}`));
-          }
-        });
-
-        xhr.addEventListener('error', () => reject(new Error('Upload failed')));
-        xhr.addEventListener('abort', () => reject(new Error('Upload aborted')));
-
-        xhr.open('PUT', urlData.presignedUrl);
-        xhr.setRequestHeader('Content-Type', file.type);
-        xhr.send(file);
-      });
-
-      // Get image/video dimensions
-      let width: number | undefined;
-      let height: number | undefined;
-      let duration: number | undefined;
-
-      if (file.type.startsWith('image/')) {
-        const img = new window.Image();
-        img.src = URL.createObjectURL(file);
-        await new Promise<void>((resolve) => {
-          img.onload = () => {
-            width = img.naturalWidth;
-            height = img.naturalHeight;
-            URL.revokeObjectURL(img.src);
-            resolve();
-          };
-        });
-      } else if (file.type.startsWith('video/')) {
-        const video = document.createElement('video');
-        video.src = URL.createObjectURL(file);
-        await new Promise<void>((resolve) => {
-          video.onloadedmetadata = () => {
-            width = video.videoWidth;
-            height = video.videoHeight;
-            duration = Math.round(video.duration);
-            URL.revokeObjectURL(video.src);
-            resolve();
-          };
-        });
-      }
-
-      // Save media record to database
-      const mediaType = file.type.startsWith('video/') ? 'video' : 'photo';
-      const { error: dbError } = await supabase.from('media').insert({
-        album_id: albumId,
-        s3_key: urlData.s3Key,
-        file_name: file.name,
-        mime_type: file.type,
-        size: file.size,
-        type: mediaType,
-        width,
-        height,
-        duration,
-      });
-
-      if (dbError) {
-        throw dbError;
-      }
-
-      // Mark as success
-      setUploadingFiles(prev => 
-        prev.map(f => f.id === id ? { ...f, status: 'success' as const, progress: 100 } : f)
-      );
-
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : 'Upload failed';
-      setUploadingFiles(prev => 
-        prev.map(f => f.id === id ? { ...f, status: 'error' as const, error: errorMessage } : f)
-      );
-    }
-  };
-
-  const onDrop = useCallback(async (acceptedFiles: File[]) => {
-    // Create upload entries
-    const newFiles: UploadingFile[] = acceptedFiles.map(file => ({
-      id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      file,
-      progress: 0,
-      status: 'pending' as const,
-      preview: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
-    }));
-
-    setUploadingFiles(prev => [...prev, ...newFiles]);
-    setIsUploading(true);
-
-    // Upload files concurrently (max 3 at a time)
-    const uploadPromises: Promise<void>[] = [];
-    const concurrencyLimit = 3;
-
-    for (let i = 0; i < newFiles.length; i += concurrencyLimit) {
-      const batch = newFiles.slice(i, i + concurrencyLimit);
-      await Promise.all(batch.map(f => uploadFile(f)));
+  const startUpload = useCallback((files: File[]) => {
+    const mediaFiles = files.filter(isMediaFile);
+    if (mediaFiles.length === 0) {
+      toast({ title: 'No valid files', description: 'No supported image or video files found.', variant: 'destructive' });
+      return;
     }
 
-    setIsUploading(false);
-    
-    // Count successful uploads
-    setUploadingFiles(prev => {
-      const successCount = prev.filter(f => f.status === 'success').length;
-      
-      if (successCount > 0) {
-        toast({
-          title: 'Upload complete',
-          description: `${successCount} file(s) uploaded successfully`,
-        });
-        
-        // Trigger face detection for new photos
-        if (onTriggerFaceDetection) {
-          onTriggerFaceDetection();
-        }
-      }
-      
-      return prev;
+    const engine = new UploadEngine(albumId, mediaFiles, (state) => {
+      setUploadState({ ...state });
     });
+    engineRef.current = engine;
 
-    onUploadComplete?.();
+    engine.start().then(() => {
+      const finalState = engineRef.current;
+      if (finalState) {
+        onUploadComplete?.();
+        onTriggerFaceDetection?.();
+      }
+    });
   }, [albumId, onUploadComplete, onTriggerFaceDetection, toast]);
+
+  const onDrop = useCallback((acceptedFiles: File[]) => {
+    startUpload(acceptedFiles);
+  }, [startUpload]);
+
+  const handleFolderSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length > 0) startUpload(files);
+    // Reset input so same folder can be selected again
+    e.target.value = '';
+  }, [startUpload]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: ACCEPTED_TYPES,
     maxSize: MAX_FILE_SIZE,
-    disabled: isUploading,
+    disabled: uploadState?.isUploading,
   });
 
-  const removeFile = (id: string) => {
-    setUploadingFiles(prev => {
-      const file = prev.find(f => f.id === id);
-      if (file?.preview) {
-        URL.revokeObjectURL(file.preview);
-      }
-      return prev.filter(f => f.id !== id);
-    });
-  };
-
-  const clearCompleted = () => {
-    setUploadingFiles(prev => prev.filter(f => f.status !== 'success'));
-  };
-
-  const completedCount = uploadingFiles.filter(f => f.status === 'success').length;
-  const errorCount = uploadingFiles.filter(f => f.status === 'error').length;
+  const isUploading = uploadState?.isUploading ?? false;
 
   return (
     <div className="space-y-4">
@@ -236,11 +91,11 @@ export const MediaUploader = ({ albumId, onUploadComplete, onTriggerFaceDetectio
         <input {...getInputProps()} />
         <Upload className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
         {isDragActive ? (
-          <p className="text-lg font-medium text-primary">Drop files here...</p>
+          <p className="text-lg font-medium text-primary">Drop files or folder here...</p>
         ) : (
           <>
             <p className="text-lg font-medium text-foreground mb-1">
-              Drag & drop photos and videos
+              Drag & drop photos, videos, or a folder
             </p>
             <p className="text-sm text-muted-foreground">
               or click to browse • JPEG, PNG, WebP, MP4, MOV • Max 500MB per file
@@ -249,102 +104,38 @@ export const MediaUploader = ({ albumId, onUploadComplete, onTriggerFaceDetectio
         )}
       </div>
 
-      {/* Upload status summary */}
-      {uploadingFiles.length > 0 && (
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4 text-sm">
-            <span className="text-muted-foreground">
-              {uploadingFiles.length} file(s)
-            </span>
-            {completedCount > 0 && (
-              <span className="text-green-500 flex items-center gap-1">
-                <CheckCircle size={14} />
-                {completedCount} completed
-              </span>
-            )}
-            {errorCount > 0 && (
-              <span className="text-destructive flex items-center gap-1">
-                <AlertCircle size={14} />
-                {errorCount} failed
-              </span>
-            )}
-          </div>
-          {completedCount > 0 && (
-            <Button variant="ghost" size="sm" onClick={clearCompleted}>
-              Clear completed
-            </Button>
-          )}
-        </div>
+      {/* Folder picker button */}
+      <div className="flex gap-2">
+        <input
+          ref={folderInputRef}
+          type="file"
+          // @ts-ignore - webkitdirectory is not in TS types
+          webkitdirectory=""
+          directory=""
+          multiple
+          className="hidden"
+          onChange={handleFolderSelect}
+        />
+        <Button
+          variant="outline"
+          onClick={() => folderInputRef.current?.click()}
+          disabled={isUploading}
+          className="gap-2"
+        >
+          <FolderUp size={16} />
+          Upload Folder
+        </Button>
+      </div>
+
+      {/* Upload progress panel */}
+      {uploadState && uploadState.files.length > 0 && (
+        <UploadProgressPanel
+          state={uploadState}
+          onCancel={() => engineRef.current?.cancel()}
+          onRetryFailed={() => engineRef.current?.retryFailed()}
+          onClear={() => setUploadState(null)}
+        />
       )}
-
-      {/* File list */}
-      <AnimatePresence>
-        {uploadingFiles.length > 0 && (
-          <div className="space-y-2 max-h-80 overflow-y-auto">
-            {uploadingFiles.map((uploadFile) => (
-              <motion.div
-                key={uploadFile.id}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, x: -10 }}
-                className="flex items-center gap-3 p-3 bg-card rounded-lg border border-border"
-              >
-                {/* Thumbnail */}
-                <div className="w-12 h-12 rounded bg-muted flex items-center justify-center overflow-hidden flex-shrink-0">
-                  {uploadFile.preview ? (
-                    <img 
-                      src={uploadFile.preview} 
-                      alt="" 
-                      className="w-full h-full object-cover"
-                    />
-                  ) : uploadFile.file.type.startsWith('video/') ? (
-                    <Video size={20} className="text-muted-foreground" />
-                  ) : (
-                    <Image size={20} className="text-muted-foreground" />
-                  )}
-                </div>
-
-                {/* File info */}
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{uploadFile.file.name}</p>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground">
-                      {(uploadFile.file.size / 1024 / 1024).toFixed(1)} MB
-                    </span>
-                    {uploadFile.status === 'error' && (
-                      <span className="text-xs text-destructive">{uploadFile.error}</span>
-                    )}
-                  </div>
-                  {(uploadFile.status === 'uploading' || uploadFile.status === 'pending') && (
-                    <Progress value={uploadFile.progress} className="h-1 mt-2" />
-                  )}
-                </div>
-
-                {/* Status icon */}
-                <div className="flex-shrink-0">
-                  {uploadFile.status === 'uploading' && (
-                    <Loader2 size={20} className="animate-spin text-primary" />
-                  )}
-                  {uploadFile.status === 'success' && (
-                    <CheckCircle size={20} className="text-green-500" />
-                  )}
-                  {uploadFile.status === 'error' && (
-                    <AlertCircle size={20} className="text-destructive" />
-                  )}
-                  {(uploadFile.status === 'success' || uploadFile.status === 'error') && (
-                    <button
-                      onClick={() => removeFile(uploadFile.id)}
-                      className="ml-2 p-1 hover:bg-muted rounded"
-                    >
-                      <X size={16} className="text-muted-foreground" />
-                    </button>
-                  )}
-                </div>
-              </motion.div>
-            ))}
-          </div>
-        )}
-      </AnimatePresence>
     </div>
   );
 };

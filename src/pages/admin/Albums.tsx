@@ -1,13 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
-import { Search, Plus, MoreVertical, Upload, Eye, Share2, CheckCircle, Trash2, Calendar } from 'lucide-react';
+import { Search, Plus, MoreVertical, Upload, Eye, Share2, CheckCircle, Trash2, Calendar, FolderUp } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { AdminLayout } from '@/components/admin/AdminLayout';
 import { AlbumStatusBadge } from '@/components/admin/AlbumStatusBadge';
 import { ShareLinkDialog } from '@/components/admin/ShareLinkDialog';
 import { DeleteConfirmDialog } from '@/components/admin/DeleteConfirmDialog';
+import { FolderUploadDialog } from '@/components/admin/FolderUploadDialog';
+import { UploadEngine, type UploadEngineState } from '@/lib/uploadEngine';
+import { UploadProgressPanel } from '@/components/admin/UploadProgressPanel';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -94,6 +97,49 @@ const AdminAlbums = () => {
   // Delete album state
   const [deleteAlbumId, setDeleteAlbumId] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Folder upload state
+  const [folderDialogOpen, setFolderDialogOpen] = useState(false);
+  const [folderFiles, setFolderFiles] = useState<File[]>([]);
+  const [folderName, setFolderName] = useState('');
+  const [uploadState, setUploadState] = useState<UploadEngineState | null>(null);
+  const engineRef = useRef<UploadEngine | null>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
+
+  const isMediaFile = (file: File) => {
+    const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'video/mp4', 'video/quicktime', 'video/x-msvideo'];
+    return validTypes.includes(file.type) || /\.(jpg|jpeg|png|webp|heic|mp4|mov|avi)$/i.test(file.name);
+  };
+
+  const handleFolderSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []).filter(isMediaFile);
+    if (files.length === 0) return;
+
+    // Extract folder name from path
+    const firstPath = files[0]?.webkitRelativePath || '';
+    const name = firstPath.split('/')[0] || 'Untitled Album';
+
+    setFolderFiles(files);
+    setFolderName(name);
+    setFolderDialogOpen(true);
+    e.target.value = '';
+  }, []);
+
+  const handleFolderUploadConfirm = useCallback((albumId: string, scanFaces: boolean) => {
+    const engine = new UploadEngine(albumId, folderFiles, (state) => {
+      setUploadState({ ...state });
+    });
+    engineRef.current = engine;
+
+    engine.start().then(() => {
+      fetchAlbums();
+      if (scanFaces) {
+        supabase.functions.invoke('face-detection', {
+          body: { action: 'process_album', albumId },
+        }).catch(err => console.error('Face detection error:', err));
+      }
+    });
+  }, [folderFiles]);
 
   const clientFilter = searchParams.get('client');
 
@@ -302,13 +348,34 @@ const AdminAlbums = () => {
               }
             </p>
           </div>
-          <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
-            <DialogTrigger asChild>
-              <Button className="btn-gold">
-                <Plus size={18} className="mr-2" />
-                Create Album
-              </Button>
-            </DialogTrigger>
+          <div className="flex gap-2">
+            {/* Hidden folder input */}
+            <input
+              ref={folderInputRef}
+              type="file"
+              // @ts-ignore
+              webkitdirectory=""
+              directory=""
+              multiple
+              className="hidden"
+              onChange={handleFolderSelect}
+            />
+            <Button
+              variant="outline"
+              onClick={() => folderInputRef.current?.click()}
+              disabled={uploadState?.isUploading}
+              className="gap-2"
+            >
+              <FolderUp size={18} />
+              Upload Folder
+            </Button>
+            <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+              <DialogTrigger asChild>
+                <Button className="btn-gold">
+                  <Plus size={18} className="mr-2" />
+                  Create Album
+                </Button>
+              </DialogTrigger>
             <DialogContent>
               <DialogHeader>
                 <DialogTitle className="font-serif text-2xl">Create New Album</DialogTitle>
@@ -359,6 +426,7 @@ const AdminAlbums = () => {
               </div>
             </DialogContent>
           </Dialog>
+          </div>
         </div>
 
         {/* Filters */}
@@ -518,6 +586,25 @@ const AdminAlbums = () => {
           open={!!deleteAlbumId}
           onOpenChange={(open) => !open && setDeleteAlbumId(null)}
         />
+
+        {/* Folder Upload Dialog */}
+        <FolderUploadDialog
+          open={folderDialogOpen}
+          onOpenChange={setFolderDialogOpen}
+          files={folderFiles}
+          folderName={folderName}
+          onConfirm={handleFolderUploadConfirm}
+        />
+
+        {/* Upload Progress */}
+        {uploadState && uploadState.files.length > 0 && (
+          <UploadProgressPanel
+            state={uploadState}
+            onCancel={() => engineRef.current?.cancel()}
+            onRetryFailed={() => engineRef.current?.retryFailed()}
+            onClear={() => setUploadState(null)}
+          />
+        )}
       </div>
     </AdminLayout>
   );
