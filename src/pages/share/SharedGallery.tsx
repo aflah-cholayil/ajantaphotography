@@ -262,13 +262,16 @@ const SharedGallery = () => {
       });
       
       if (data?.url) {
-        const link = document.createElement('a');
-        link.href = data.url;
-        link.download = item.file_name;
-        link.target = '_blank';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        const response = await fetch(data.url);
+        const blob = await response.blob();
+        const blobUrl = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = item.file_name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(blobUrl);
         toast.success(`Downloading ${item.file_name}`);
       } else {
         toast.error('Failed to generate download link');
