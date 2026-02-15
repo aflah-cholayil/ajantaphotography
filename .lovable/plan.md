@@ -1,116 +1,109 @@
 
 
-# Complete AWS S3 Removal — R2 Only
+# Fix R2 Upload Failures — Root Cause Found
 
-## Summary
-Remove all AWS S3 client initialization, dual-provider branching, and AWS environment variable usage from every edge function. Keep the `storage_provider` column in the database (it's harmless and avoids a migration) but default everything to `'r2'`. The `s3-signed-url` function needs special handling since existing DB records may still say `'aws'` — we'll update those records and then simplify the function.
+## Root Cause (Confirmed from Network Logs)
 
-## Pre-requisite: Update existing DB records
+Two issues are causing every upload to fail:
 
-Before deploying the new code, update all existing `storage_provider = 'aws'` records to `'r2'` since all files now live in R2:
+### Issue 1: Signature Mismatch (Code Bug)
 
-```sql
-UPDATE media SET storage_provider = 'r2' WHERE storage_provider = 'aws';
-UPDATE works SET storage_provider = 'r2' WHERE storage_provider = 'aws';
+The presigned URLs contain `X-Amz-SignedHeaders=host;x-amz-expires`. This means R2 expects the browser to send an `X-Amz-Expires` HTTP header in its PUT request. But the browser XHR only sends `Content-Type` -- it never sends `X-Amz-Expires` as a header. R2 computes a different signature than what's in the URL and rejects the request.
+
+**Cause**: The `s3-upload` edge function passes `"X-Amz-Expires": "3600"` inside the `headers` object of `r2.sign()`. The `aws4fetch` library treats this as a header that must be present in the actual request. It should NOT be in headers at all -- `aws4fetch` with `signQuery: true` automatically puts the expiry in the query string.
+
+Similarly, `Content-Type` and `Content-Length` are in the sign headers but they cause the same issue -- the signature requires these exact header values, but the browser may send slightly different values (or R2 processes them differently).
+
+**Fix**: Sign with ONLY the `host` header (which is automatic). Remove `Content-Type`, `Content-Length`, and `X-Amz-Expires` from the headers passed to `sign()`. The browser can send whatever headers it wants as long as they're not in the signed set.
+
+### Issue 2: CORS (Configuration)
+
+The browser origin for testing is `https://3c0363e9-f83f-432c-8d7c-86574eed00e0.lovableproject.com`. Your R2 bucket CORS must include this origin (and your production domain). Without it, the browser blocks the PUT request entirely, which shows up as a generic "network error."
+
+**Action required by you**: In your Cloudflare dashboard, go to R2 > ajanta-media bucket > Settings > CORS Policy, and set:
+```json
+[
+  {
+    "AllowedOrigins": [
+      "https://ajantaphotography.in",
+      "https://*.lovableproject.com",
+      "https://*.lovable.app"
+    ],
+    "AllowedMethods": ["GET", "PUT", "POST", "DELETE", "HEAD"],
+    "AllowedHeaders": ["*"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3600
+  }
+]
+```
+Note: `ExposeHeaders: ["ETag"]` is critical for multipart uploads -- the browser needs to read the ETag response header from each part upload.
+
+Wait 2-3 minutes after saving for CORS to propagate.
+
+## Code Changes
+
+### File 1: `supabase/functions/s3-upload/index.ts`
+
+Remove all headers from the `sign()` call except let `host` be automatic:
+
+```typescript
+// BEFORE (broken):
+const signedReq = await r2.sign(objectUrl, {
+  method: "PUT",
+  headers: {
+    "Content-Type": fileType,
+    "Content-Length": String(fileSize),
+    "X-Amz-Expires": "3600",
+  },
+  aws: { signQuery: true },
+});
+
+// AFTER (fixed):
+const signedReq = await r2.sign(objectUrl, {
+  method: "PUT",
+  aws: { signQuery: true },
+});
 ```
 
-This is a data update (not schema change), so it will be done via the insert/update tool.
+This produces `X-Amz-SignedHeaders=host` only, so the browser's PUT request will always match.
 
-## Files to Modify (7 edge functions)
+### File 2: `supabase/functions/s3-multipart-upload/index.ts`
 
-### 1. `supabase/functions/s3-signed-url/index.ts`
-**Current**: Initializes both `awsClient` and `r2Client`, has `resolveProvider()` that checks DB and defaults to `'aws'`, and `getSignedUrl()` branches on provider.
+Same fix for the `getPartUploadUrl` function -- remove `X-Amz-Expires` from headers:
 
-**Changes**:
-- Remove lines 11-19 (AWS client init)
-- Simplify `getSignedUrl()` to only use R2 (remove the provider parameter and AWS branch)
-- Remove `resolveProvider()` entirely — always use R2
-- Remove `storageProvider` resolution logic; just use R2 directly
-- Keep all access control logic (auth, share tokens, etc.) unchanged
+```typescript
+// BEFORE:
+const signed = await r2Client.sign(url, {
+  method: "PUT",
+  headers: { "X-Amz-Expires": "3600" },
+  aws: { signQuery: true },
+});
 
-### 2. `supabase/functions/storage-cleanup/index.ts`
-**Current**: Initializes both `awsClient` and `r2Client` (lines 10-28), has `getStorageClient(provider)` and `getBaseUrl(provider)` helpers, and `deleteStorageObject()` branches on provider. Also deletes cover images and face thumbnails from "both providers."
+// AFTER:
+const signed = await r2Client.sign(url, {
+  method: "PUT",
+  aws: { signQuery: true },
+});
+```
 
-**Changes**:
-- Remove lines 10-18 (AWS client init)
-- Remove `getStorageClient()` and `getBaseUrl()` helpers — not needed
-- Simplify `deleteStorageObject()` to only use R2 (remove provider parameter)
-- Remove `provider` variable usage everywhere in `deleteMediaFromStorage`, `deleteAlbumFromStorage`, `bulkDeleteMedia`
-- Remove the "try both providers" pattern for cover images and face thumbnails (lines 200-216) — just use R2
+### File 3: `src/lib/uploadEngine.ts`
 
-### 3. `supabase/functions/manage-work/index.ts`
-**Current**: Initializes both clients (lines 10-28), has `getStorageClient(provider)` and `getBaseUrl(provider)`, delete action looks up `storage_provider` from DB, signed-url action looks up provider from DB.
+Add a diagnostic test endpoint call to help debug any remaining issues. When a PUT fails, capture the actual HTTP status from the XHR response (currently it fires the `error` event with no details because CORS blocks reading the response). After CORS is fixed, the `load` event will fire instead, and we'll get the actual R2 error message.
 
-**Changes**:
-- Remove lines 10-18 (AWS client init)
-- Remove `getStorageClient()` and `getBaseUrl()` helpers
-- Simplify delete action: just use R2 client directly, no provider lookup
-- Simplify signed-url action: just use R2 client directly
-- In create action: hardcode `storage_provider: 'r2'` (already mostly does this)
-
-### 4. `supabase/functions/face-detection/index.ts`
-**Current**: Initializes both `aws` and `r2Client` (lines 10-27). `detectFacesInImage()` downloads from R2 for `provider === "r2"`, uses S3Object reference for AWS. Uses AWS Rekognition (which requires AWS credentials for the Rekognition service itself).
-
-**Changes**:
-- Remove AWS S3 client init (lines 10-17: `awsRegion`, `awsBucket`, `aws` client for S3)
-- **Keep** a separate AWS client for Rekognition only (needs AWS_ACCESS_KEY_ID and AWS_REGION for the Rekognition API) — this is not S3 storage, it's a separate AWS service
-- Simplify `detectFacesInImage()`: always download from R2 (remove the S3Object branch), always send bytes to Rekognition
-- Remove `provider` parameter from `detectFacesInImage()` signature
-- Remove `storage_provider` usage in `processAlbumFaces()`
-
-### 5. `supabase/functions/storage-stats/index.ts`
-**Current**: Lists both AWS and R2 buckets, merges stats, calculates costs for both.
-
-**Changes**:
-- Remove AWS client init (lines 151-158)
-- Remove AWS bucket listing (line 172)
-- Only list R2 bucket
-- Remove `providerBreakdown.aws` from response (set to zeros for backward compatibility with the StorageDashboard UI, or remove — the dashboard will be updated)
-- Simplify cost calculations to R2 only
-
-### 6. `supabase/functions/migrate-to-r2/index.ts`
-**Current**: Contains the full AWS-to-R2 migration logic.
-
-**Changes**: This function is no longer needed since migration is complete. However, to avoid breaking the StorageDashboard UI that calls it, we'll simplify it to just return "migration complete" status:
-- Remove AWS client init
-- For `action: "status"`: return all zeros for AWS counts (everything is R2 now)
-- For `action: "start"`: return "No files remaining to migrate"
-
-### 7. `supabase/functions/save-media-record/index.ts`
-**Current**: Already hardcodes `storage_provider: "r2"`. No changes needed.
-
-### 8. `supabase/functions/s3-upload/index.ts`
-**Current**: Already R2-only. No changes needed.
-
-### 9. `supabase/functions/s3-multipart-upload/index.ts`
-**Current**: Already R2-only. No changes needed.
-
-### 10. `supabase/functions/upload-asset/index.ts`
-**Current**: Already R2-only. No changes needed.
-
-## Frontend Changes
-
-### `src/pages/admin/StorageDashboard.tsx`
-- The dashboard references `providerBreakdown.aws` — update to handle the simplified response where AWS stats are zero or absent
-- The migration panel can show "Migration Complete" permanently
-
-## No Schema Changes
-The `storage_provider` column stays in both `media` and `works` tables. It will just always be `'r2'`. Removing it would require a migration and code changes to types — not worth the risk.
-
-## AWS Secrets
-After deployment and verification, the following secrets can optionally be removed from the backend configuration:
-- `AWS_ACCESS_KEY_ID` — **KEEP** (still needed for AWS Rekognition in face-detection)
-- `AWS_SECRET_ACCESS_KEY` — **KEEP** (still needed for AWS Rekognition)
-- `AWS_BUCKET_NAME` — can be removed after deployment
-- `AWS_REGION` — **KEEP** (still needed for Rekognition endpoint)
+No major structural changes needed -- the existing timeout, retry, and concurrency logic is already correct.
 
 ## Deployment Order
-1. Run the data update (media + works tables set to r2)
-2. Deploy all 7 modified edge functions
-3. Update StorageDashboard UI
-4. Test uploads, signed URLs, and deletions
 
-## Technical Notes
-- The `storage_provider` column default in DB is `'aws'` — this should be changed to `'r2'` via migration for any future inserts that don't explicitly set it
-- Face detection still needs AWS credentials for the Rekognition API (not S3), so AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_REGION must remain as secrets
+1. I will update `s3-upload` and `s3-multipart-upload` edge functions (code fix)
+2. Deploy both functions
+3. **You** must update R2 bucket CORS in Cloudflare dashboard (manual step)
+4. Wait 2-3 minutes for CORS propagation
+5. Test upload of 1 small image
+
+## Why This Will Work
+
+- The presigned URL will only sign the `host` header, so any PUT request from any origin with any headers will have a valid signature
+- CORS will allow the browser to actually make the PUT request and read the response
+- The existing retry and timeout logic will handle any transient failures
+- ETag exposure in CORS ensures multipart uploads can read the part ETags
 
