@@ -12,7 +12,8 @@ import {
   MessageSquare,
   Menu,
   X,
-  ExternalLink
+  ExternalLink,
+  HardDrive
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
@@ -30,6 +31,7 @@ const navItems = [
   { path: '/admin/bookings', label: 'Bookings', icon: Calendar },
   { path: '/admin/messages', label: 'Messages', icon: MessageSquare },
   { path: '/admin/users', label: 'Admin Users', icon: UserCog, ownerOnly: true },
+  { path: '/admin/storage', label: 'Storage Dashboard', icon: HardDrive },
   { path: '/admin/settings', label: 'Studio Settings', icon: Settings },
 ];
 
