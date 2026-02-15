@@ -1,100 +1,117 @@
 
 
-# Bulk Select and Delete System (Admin Album Gallery)
+# Storage Dashboard - Implementation Plan
 
-Add a professional bulk selection and deletion system to the Admin Album Detail page, with full S3 cleanup, progress tracking, and automatic stat updates.
+## Overview
+Add a new "Storage Dashboard" page to the admin panel that displays real-time AWS S3 usage analytics, bandwidth estimates, and cost projections. Data is fetched securely via a backend function using existing AWS credentials.
 
----
+## Architecture
 
-## 1. Add a New `bulk_delete_media` Action to `storage-cleanup` Edge Function
+### Backend: New Edge Function `storage-stats`
+A single edge function that queries AWS S3 (using `aws4fetch`, already used in other functions) and the local database to compile storage statistics. Admin-only access enforced via JWT validation.
 
-**File: `supabase/functions/storage-cleanup/index.ts`**
+**Data Sources:**
+- **S3 ListObjectsV2** - List all objects to calculate total bucket size, group by prefix (album/client)
+- **Database queries** - Join `media`, `albums`, `clients`, `profiles` tables to map storage per client
+- **Database aggregation** - Calculate monthly uploads from `media.created_at` timestamps
+- **Share links** - Use `view_count` and `download_count` from `share_links` for bandwidth estimates
 
-Add a new action `bulk_delete_media` that accepts an array of `mediaIds` and processes them server-side in a single request:
+**Why not CloudWatch/Cost Explorer?**
+- CloudWatch `GetMetricStatistics` and Cost Explorer APIs require additional IAM permissions (`cloudwatch:GetMetricData`, `ce:GetCostAndUsage`) that may not be configured
+- Instead, we calculate estimates from actual S3 object data and database records, which is more reliable and doesn't require extra permissions
 
-- Fetch all media records for the given IDs
-- Delete S3 objects (original + preview) for each
-- Delete associated `detected_faces` and `media_favorites` rows
-- Delete `media` records
-- Log the bulk deletion in `deletion_logs` as a single audit entry with total count and size
-- Clean up orphan `people` records (where `photo_count` drops to 0) by recounting faces per person and deleting empty ones
-- Return `{ success, deletedCount, totalSize, peopleRemoved }`
+**Caching:**
+- Results cached in `studio_settings` table with a 10-minute TTL key (`storage_stats_cache` + `storage_stats_cache_time`)
+- On each request, check if cache is fresh; if so, return cached data without calling AWS
 
-This avoids making hundreds of individual API calls from the frontend.
-
----
-
-## 2. Add Selection State and Logic to `AlbumDetail.tsx`
-
-**File: `src/pages/admin/AlbumDetail.tsx`**
-
-Add the following state and behavior:
-
-- `selectionMode: boolean` -- toggled by a "Select" button in the gallery header
-- `selectedIds: Set<string>` -- tracks selected media IDs
-- `lastClickedIndex: number | null` -- for Shift+Click range selection
-- `isBulkDeleting: boolean` and `bulkDeleteProgress: { current, total }` -- for progress tracking
-- `showBulkDeleteConfirm: boolean` -- for confirmation dialog
-
-**Selection Mode UI (gallery header bar):**
-- "Select" / "Cancel" toggle button
-- When in selection mode, show: "X Selected" count, "Select All", "Clear Selection", "Delete Selected" (red)
-
-**Gallery grid changes (when in selection mode):**
-- Each media item shows a checkbox in the top-left corner
-- Clicking an item toggles its selection (instead of showing delete overlay)
-- Selected items get a gold/amber ring border (`ring-2 ring-amber-500`)
-- Shift+Click selects the range between `lastClickedIndex` and clicked index
-
-**Bulk delete flow:**
-1. Click "Delete Selected" -- opens `DeleteConfirmDialog` with warning about permanent S3 deletion
-2. On confirm -- call `storage-cleanup` with `action: 'bulk_delete_media'` and the array of IDs
-3. Show a progress toast or inline progress bar
-4. On completion -- clear selection, refresh media list and people list, show success toast
-5. Exit selection mode
+### Frontend: New Admin Page
+A dashboard page at `/admin/storage` with summary cards, charts, and per-client table.
 
 ---
 
-## 3. Update `DeleteConfirmDialog` for Bulk Context
+## Step-by-Step Implementation
 
-**File: `src/components/admin/DeleteConfirmDialog.tsx`**
+### Step 1: Create the `storage-stats` Edge Function
 
-No structural changes needed. The existing component already supports custom `title`, `description`, `warningItems`, and `entityName` props. We will pass bulk-specific text like:
+File: `supabase/functions/storage-stats/index.ts`
 
-- Title: "Delete 12 Files"
-- Description: "You are about to permanently delete 12 files from this album."
-- Warning items: "All original files from AWS S3", "All preview/thumbnail versions", "Face detection data for these files", "Client selections (favorites) for these files"
+- CORS headers (matching existing pattern)
+- JWT auth validation (admin-only via `getClaims` + role check)
+- S3 ListObjectsV2 pagination to enumerate all objects
+- Group objects by prefix to map to albums
+- Query `media` + `albums` + `clients` + `profiles` to build per-client breakdown
+- Calculate:
+  - Total storage (sum of all object sizes)
+  - This month's uploads (filter `media` by `created_at` in current month)
+  - Per-client storage usage
+  - Estimated downloads from `share_links.download_count` and average file sizes
+  - Cost projections using provided INR rates (1.9/GB storage, 7/GB transfer after 100GB free)
+- Cache results in `studio_settings` for 10 minutes
+- Return JSON response
+
+### Step 2: Add Route Config
+
+Update `supabase/config.toml` to add:
+```toml
+[functions.storage-stats]
+verify_jwt = false
+```
+
+### Step 3: Create the Dashboard Page
+
+File: `src/pages/admin/StorageDashboard.tsx`
+
+**Summary Cards (top row):**
+- Total Storage Used (GB) with HardDrive icon
+- This Month Uploads (GB) with Upload icon
+- Estimated Downloads (GB) with Download icon
+- Estimated Monthly Cost (INR) with IndianRupee icon
+
+**Charts (middle section):**
+- Storage growth line chart (last 6 months) using Recharts
+- Cost breakdown pie chart (Storage vs Transfer vs Requests)
+
+**Per-Client Table (bottom section):**
+- Client Name, Albums, Storage Used, Downloads, Estimated Cost
+- Sortable columns
+
+**Warning Alerts:**
+- Banner if storage exceeds 80% of a configurable threshold
+- Banner if monthly cost exceeds 5000 INR
+
+### Step 4: Add Navigation and Route
+
+- Update `AdminLayout.tsx` nav items to include Storage Dashboard with `HardDrive` icon
+- Update `App.tsx` to add route `/admin/storage` pointing to `StorageDashboard`
 
 ---
 
 ## Technical Details
 
-### Bulk Delete Edge Function Action
+### Cost Calculation Formula
+```
+Storage Cost = totalGB * 1.9 INR
+Transfer Cost = max(0, downloadGB - 100) * 7 INR
+Total = Storage Cost + Transfer Cost
+```
 
-The new `bulk_delete_media` action in `storage-cleanup`:
-- Accepts `{ action: "bulk_delete_media", mediaIds: string[], albumId: string }`
-- Fetches all media records in one query: `.in("id", mediaIds)`
-- Deletes S3 objects sequentially (to avoid rate limiting)
-- Batch-deletes DB records: `detected_faces`, `media_favorites`, `media` using `.in("media_id", mediaIds)` / `.in("id", mediaIds)`
-- Recounts people: queries remaining `detected_faces` grouped by `person_id`, deletes people with 0 remaining faces
-- Single `deletion_logs` entry for the batch
+### Caching Strategy
+- Store serialized JSON in `studio_settings` with key `storage_stats_cache`
+- Store timestamp in `storage_stats_cache_time`
+- Edge function checks: if `now - cache_time < 10 minutes`, return cached data
+- Frontend shows "Last updated X minutes ago" indicator
+- Manual refresh button bypasses cache (passes `force=true` param)
 
-### Shift+Click Range Selection
+### Security
+- Edge function validates JWT and checks user role is owner/admin via database query
+- Only users with `owner` or `admin` role can access
+- AWS credentials never exposed to frontend
+- All data flows through the edge function
 
-Track `lastClickedIndex` (index in the `media` array). On click:
-- If Shift held and `lastClickedIndex` is set: select all items between `lastClickedIndex` and current index
-- Otherwise: toggle the single item and set `lastClickedIndex`
-
-### Performance
-
-- All S3 deletions happen server-side in the edge function (no browser overhead)
-- Single API call regardless of selection size
-- Gallery refresh happens once after the entire batch completes
-
-### Files Summary
-
-| File | Change |
-|---|---|
-| `supabase/functions/storage-cleanup/index.ts` | Add `bulk_delete_media` action |
-| `src/pages/admin/AlbumDetail.tsx` | Add selection mode, Shift+Click, bulk delete flow |
+### Files to Create/Modify
+1. **Create** `supabase/functions/storage-stats/index.ts` - Backend edge function
+2. **Create** `src/pages/admin/StorageDashboard.tsx` - Dashboard UI page
+3. **Modify** `supabase/config.toml` - Add function config
+4. **Modify** `src/components/admin/AdminLayout.tsx` - Add nav item
+5. **Modify** `src/App.tsx` - Add route
 
