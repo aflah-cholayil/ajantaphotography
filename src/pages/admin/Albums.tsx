@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { format, formatDistanceToNow } from 'date-fns';
-import { Search, Plus, MoreVertical, Upload, Eye, Share2, CheckCircle, Trash2, Calendar, FolderUp } from 'lucide-react';
+import { format } from 'date-fns';
+import { Search, Plus, MoreVertical, Upload, Eye, Share2, CheckCircle, Trash2, FolderUp, ChevronDown, Calendar, Image } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { AdminLayout } from '@/components/admin/AdminLayout';
@@ -14,14 +14,8 @@ import { UploadProgressPanel } from '@/components/admin/UploadProgressPanel';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -60,6 +54,7 @@ interface Album {
   clients: {
     id: string;
     event_name: string;
+    event_date: string | null;
     profiles: {
       name: string;
     };
@@ -75,6 +70,16 @@ interface ClientOption {
   profiles: {
     name: string;
   };
+}
+
+interface ClientGroup {
+  clientId: string;
+  clientName: string;
+  eventName: string;
+  eventDate: string | null;
+  albums: Album[];
+  totalMedia: number;
+  overallStatus: 'ready' | 'pending';
 }
 
 const AdminAlbums = () => {
@@ -106,6 +111,9 @@ const AdminAlbums = () => {
   const engineRef = useRef<UploadEngine | null>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
+  // Collapsible open state
+  const [openClients, setOpenClients] = useState<Record<string, boolean>>({});
+
   const isMediaFile = (file: File) => {
     const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'video/mp4', 'video/quicktime', 'video/x-msvideo'];
     return validTypes.includes(file.type) || /\.(jpg|jpeg|png|webp|heic|mp4|mov|avi)$/i.test(file.name);
@@ -115,7 +123,6 @@ const AdminAlbums = () => {
     const files = Array.from(e.target.files || []).filter(isMediaFile);
     if (files.length === 0) return;
 
-    // Extract folder name from path
     const firstPath = files[0]?.webkitRelativePath || '';
     const name = firstPath.split('/')[0] || 'Untitled Album';
 
@@ -159,6 +166,7 @@ const AdminAlbums = () => {
           clients (
             id,
             event_name,
+            event_date,
             user_id
           ),
           media(id)
@@ -174,7 +182,6 @@ const AdminAlbums = () => {
 
       if (error) throw error;
 
-      // Fetch profiles for clients
       const userIds = (data || [])
         .map(a => a.clients?.user_id)
         .filter((id): id is string => !!id);
@@ -191,7 +198,6 @@ const AdminAlbums = () => {
         });
       }
 
-      // Add profiles to albums
       const albumsWithProfiles = (data || []).map(album => ({
         ...album,
         clients: {
@@ -334,6 +340,43 @@ const AdminAlbums = () => {
     return matchesSearch && matchesStatus;
   });
 
+  // Group filtered albums by client
+  const clientGroups = useMemo<ClientGroup[]>(() => {
+    const map: Record<string, ClientGroup> = {};
+    
+    filteredAlbums.forEach((album) => {
+      const key = album.client_id;
+      if (!map[key]) {
+        map[key] = {
+          clientId: key,
+          clientName: album.clients.profiles.name,
+          eventName: album.clients.event_name,
+          eventDate: album.clients.event_date,
+          albums: [],
+          totalMedia: 0,
+          overallStatus: 'ready',
+        };
+      }
+      map[key].albums.push(album);
+      map[key].totalMedia += album.media.length;
+      if (album.status === 'pending') {
+        map[key].overallStatus = 'pending';
+      }
+    });
+
+    return Object.values(map);
+  }, [filteredAlbums]);
+
+  const handleCreateForClient = (clientId: string) => {
+    setNewAlbumClientId(clientId);
+    setNewAlbumTitle('');
+    setCreateDialogOpen(true);
+  };
+
+  const toggleClient = (clientId: string) => {
+    setOpenClients(prev => ({ ...prev, [clientId]: !prev[clientId] }));
+  };
+
   return (
     <AdminLayout>
       <div className="space-y-6">
@@ -349,7 +392,6 @@ const AdminAlbums = () => {
             </p>
           </div>
           <div className="flex gap-2">
-            {/* Hidden folder input */}
             <input
               ref={folderInputRef}
               type="file"
@@ -376,56 +418,56 @@ const AdminAlbums = () => {
                   Create Album
                 </Button>
               </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle className="font-serif text-2xl">Create New Album</DialogTitle>
-                <DialogDescription>
-                  Create a new photo album for a client
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 pt-4">
-                <div className="space-y-2">
-                  <Label>Client</Label>
-                  <Select value={newAlbumClientId} onValueChange={setNewAlbumClientId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select a client" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {clients.map((client) => (
-                        <SelectItem key={client.id} value={client.id}>
-                          {client.profiles.name} - {client.event_name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle className="font-serif text-2xl">Create New Album</DialogTitle>
+                  <DialogDescription>
+                    Create a new photo album for a client
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 pt-4">
+                  <div className="space-y-2">
+                    <Label>Client</Label>
+                    <Select value={newAlbumClientId} onValueChange={setNewAlbumClientId}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select a client" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {clients.map((client) => (
+                          <SelectItem key={client.id} value={client.id}>
+                            {client.profiles.name} - {client.event_name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Album Title</Label>
+                    <Input
+                      placeholder="Wedding Day Photos"
+                      value={newAlbumTitle}
+                      onChange={(e) => setNewAlbumTitle(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex gap-2 pt-4">
+                    <Button 
+                      variant="outline" 
+                      onClick={() => setCreateDialogOpen(false)}
+                      className="flex-1"
+                    >
+                      Cancel
+                    </Button>
+                    <Button 
+                      onClick={handleCreateAlbum}
+                      disabled={isCreating || !newAlbumTitle.trim() || !newAlbumClientId}
+                      className="flex-1 btn-gold"
+                    >
+                      Create Album
+                    </Button>
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <Label>Album Title</Label>
-                  <Input
-                    placeholder="Wedding Day Photos"
-                    value={newAlbumTitle}
-                    onChange={(e) => setNewAlbumTitle(e.target.value)}
-                  />
-                </div>
-                <div className="flex gap-2 pt-4">
-                  <Button 
-                    variant="outline" 
-                    onClick={() => setCreateDialogOpen(false)}
-                    className="flex-1"
-                  >
-                    Cancel
-                  </Button>
-                  <Button 
-                    onClick={handleCreateAlbum}
-                    disabled={isCreating || !newAlbumTitle.trim() || !newAlbumClientId}
-                    className="flex-1 btn-gold"
-                  >
-                    Create Album
-                  </Button>
-                </div>
-              </div>
-            </DialogContent>
-          </Dialog>
+              </DialogContent>
+            </Dialog>
           </div>
         </div>
 
@@ -448,7 +490,6 @@ const AdminAlbums = () => {
               <SelectItem value="all">All Status</SelectItem>
               <SelectItem value="pending">Pending</SelectItem>
               <SelectItem value="ready">Ready</SelectItem>
-              <SelectItem value="delivered">Delivered</SelectItem>
             </SelectContent>
           </Select>
           {clientFilter && (
@@ -458,117 +499,161 @@ const AdminAlbums = () => {
           )}
         </div>
 
-        {/* Table */}
-        <div className="border border-border rounded-lg overflow-hidden">
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-muted/30">
-                <TableHead>Album</TableHead>
-                <TableHead>Client</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Media</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead className="w-12"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {isLoading ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                    Loading albums...
-                  </TableCell>
-                </TableRow>
-              ) : filteredAlbums.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                    {searchQuery || statusFilter !== 'all' 
-                      ? 'No albums found matching your criteria' 
-                      : 'No albums yet'
-                    }
-                  </TableCell>
-                </TableRow>
-              ) : (
-                filteredAlbums.map((album) => (
-                  <TableRow key={album.id} className="hover:bg-muted/20">
-                    <TableCell>
-                      <p className="font-medium">{album.title}</p>
-                      {album.description && (
-                        <p className="text-sm text-muted-foreground line-clamp-1">
-                          {album.description}
-                        </p>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <div>
-                        <p className="font-medium">{album.clients.profiles.name}</p>
-                        <p className="text-sm text-muted-foreground">{album.clients.event_name}</p>
+        {/* Client-grouped cards */}
+        {isLoading ? (
+          <div className="text-center py-12 text-muted-foreground">Loading albums...</div>
+        ) : clientGroups.length === 0 ? (
+          <div className="text-center py-12 text-muted-foreground">
+            {searchQuery || statusFilter !== 'all'
+              ? 'No albums found matching your criteria'
+              : 'No albums yet'}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {clientGroups.map((group) => (
+              <Card key={group.clientId} className="overflow-hidden">
+                <CardHeader className="pb-3">
+                  <div className="flex items-start justify-between">
+                    <div className="space-y-1">
+                      <h3 className="text-lg font-semibold text-foreground">{group.clientName}</h3>
+                      <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                        <span>{group.eventName}</span>
+                        {group.eventDate && (
+                          <>
+                            <span className="text-border">•</span>
+                            <span className="flex items-center gap-1">
+                              <Calendar size={13} />
+                              {format(new Date(group.eventDate), 'MMM d, yyyy')}
+                            </span>
+                          </>
+                        )}
                       </div>
-                    </TableCell>
-                    <TableCell>
-                      <AlbumStatusBadge status={album.status} />
-                    </TableCell>
-                    <TableCell>
-                      {album.media.length} item{album.media.length !== 1 ? 's' : ''}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {format(new Date(album.created_at), 'MMM d, yyyy')}
-                    </TableCell>
-                    <TableCell>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon">
-                            <MoreVertical size={16} />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => navigate(`/admin/albums/${album.id}`)}>
-                            <Upload size={16} className="mr-2" />
-                            Upload Media
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => navigate(`/admin/albums/${album.id}`)}>
-                            <Eye size={16} className="mr-2" />
-                            View Album
-                          </DropdownMenuItem>
-                          <ShareLinkDialog 
-                            albumId={album.id} 
-                            albumTitle={album.title}
-                            trigger={
-                              <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
-                                <Share2 size={16} className="mr-2" />
-                                Create Share Link
-                              </DropdownMenuItem>
-                            }
-                          />
-                          <DropdownMenuSeparator />
-                          {album.status !== 'ready' && (
-                            <DropdownMenuItem onClick={() => handleUpdateStatus(album.id, 'ready')}>
-                              <CheckCircle size={16} className="mr-2" />
-                              Mark as Ready
-                            </DropdownMenuItem>
-                          )}
-                          {album.status === 'ready' && (
-                            <DropdownMenuItem onClick={() => handleUpdateStatus(album.id, 'pending')}>
-                              <CheckCircle size={16} className="mr-2" />
-                              Mark as Pending
-                            </DropdownMenuItem>
-                          )}
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem 
-                            className="text-destructive focus:text-destructive"
-                            onClick={() => setDeleteAlbumId(album.id)}
+                    </div>
+                    <AlbumStatusBadge status={group.overallStatus} />
+                  </div>
+                  <div className="flex items-center gap-2 pt-2">
+                    <Badge variant="secondary" className="text-xs">
+                      {group.albums.length} Album{group.albums.length !== 1 ? 's' : ''}
+                    </Badge>
+                    <Badge variant="outline" className="text-xs">
+                      <Image size={12} className="mr-1" />
+                      {group.totalMedia} Media
+                    </Badge>
+                  </div>
+                </CardHeader>
+
+                <CardContent className="pt-0">
+                  <Collapsible
+                    open={openClients[group.clientId] ?? false}
+                    onOpenChange={() => toggleClient(group.clientId)}
+                  >
+                    <CollapsibleTrigger asChild>
+                      <Button variant="ghost" size="sm" className="w-full justify-between text-muted-foreground hover:text-foreground mb-2">
+                        <span className="text-sm font-medium">Albums</span>
+                        <ChevronDown
+                          size={16}
+                          className={`transition-transform duration-200 ${
+                            openClients[group.clientId] ? 'rotate-180' : ''
+                          }`}
+                        />
+                      </Button>
+                    </CollapsibleTrigger>
+
+                    <CollapsibleContent>
+                      <div className="space-y-1 mb-3">
+                        {group.albums.map((album) => (
+                          <div
+                            key={album.id}
+                            className="flex items-center justify-between rounded-md px-3 py-2.5 hover:bg-muted/40 transition-colors group"
                           >
-                            <Trash2 size={16} className="mr-2" />
-                            Delete Album
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </div>
+                            <button
+                              onClick={() => navigate(`/admin/albums/${album.id}`)}
+                              className="flex-1 text-left flex items-center gap-4 min-w-0"
+                            >
+                              <span className="font-medium text-sm text-foreground truncate">
+                                {album.title}
+                              </span>
+                              <span className="text-xs text-muted-foreground shrink-0">
+                                {album.media.length} item{album.media.length !== 1 ? 's' : ''}
+                              </span>
+                              <span className="text-xs text-muted-foreground shrink-0 hidden sm:inline">
+                                {format(new Date(album.created_at), 'MMM d, yyyy')}
+                              </span>
+                              <AlbumStatusBadge status={album.status} />
+                            </button>
+
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                                >
+                                  <MoreVertical size={14} />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => navigate(`/admin/albums/${album.id}`)}>
+                                  <Upload size={16} className="mr-2" />
+                                  Upload Media
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => navigate(`/admin/albums/${album.id}`)}>
+                                  <Eye size={16} className="mr-2" />
+                                  View Album
+                                </DropdownMenuItem>
+                                <ShareLinkDialog
+                                  albumId={album.id}
+                                  albumTitle={album.title}
+                                  trigger={
+                                    <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
+                                      <Share2 size={16} className="mr-2" />
+                                      Create Share Link
+                                    </DropdownMenuItem>
+                                  }
+                                />
+                                <DropdownMenuSeparator />
+                                {album.status !== 'ready' && (
+                                  <DropdownMenuItem onClick={() => handleUpdateStatus(album.id, 'ready')}>
+                                    <CheckCircle size={16} className="mr-2" />
+                                    Mark as Ready
+                                  </DropdownMenuItem>
+                                )}
+                                {album.status === 'ready' && (
+                                  <DropdownMenuItem onClick={() => handleUpdateStatus(album.id, 'pending')}>
+                                    <CheckCircle size={16} className="mr-2" />
+                                    Mark as Pending
+                                  </DropdownMenuItem>
+                                )}
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  className="text-destructive focus:text-destructive"
+                                  onClick={() => setDeleteAlbumId(album.id)}
+                                >
+                                  <Trash2 size={16} className="mr-2" />
+                                  Delete Album
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </div>
+                        ))}
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
+
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full mt-1"
+                    onClick={() => handleCreateForClient(group.clientId)}
+                  >
+                    <Plus size={14} className="mr-1.5" />
+                    Create Album
+                  </Button>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
 
         {/* Delete Album Dialog */}
         <DeleteConfirmDialog
