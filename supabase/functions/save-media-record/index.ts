@@ -60,6 +60,7 @@ serve(async (req: Request) => {
       });
     }
 
+    // Always use R2 for new uploads regardless of client input
     const { data, error } = await serviceClient
       .from("media")
       .insert({
@@ -72,7 +73,7 @@ serve(async (req: Request) => {
         width: width || null,
         height: height || null,
         duration: duration || null,
-        storage_provider: storageProvider || "r2",
+        storage_provider: "r2",
       })
       .select("id, s3_key")
       .single();

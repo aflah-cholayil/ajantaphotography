@@ -1,14 +1,16 @@
 import { supabase } from '@/integrations/supabase/client';
 
 const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB
-const MAX_CONCURRENT_FILES = 8;
+const MAX_CONCURRENT_FILES = 4; // Reduced from 8 to avoid cold-start storms
 const MAX_CONCURRENT_PARTS = 5;
 const MAX_RETRIES = 3;
-const RETRY_DELAYS = [1000, 3000, 5000]; // Exponential backoff
+const RETRY_DELAYS = [1000, 3000, 5000];
 const SMALL_FILE_THRESHOLD = 10 * 1024 * 1024; // 10MB
 const SESSION_REFRESH_INTERVAL = 30 * 60 * 1000; // 30 minutes
 const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024; // 2GB
 const MAX_BATCH_SIZE = 50 * 1024 * 1024 * 1024; // 50GB
+const SMALL_FILE_TIMEOUT = 60000; // 60s
+const MULTIPART_TIMEOUT = 300000; // 5min per part
 
 export type FileUploadStatus = 'pending' | 'uploading' | 'success' | 'error' | 'cancelled';
 
@@ -121,7 +123,6 @@ export class UploadEngine {
   }
 
   async start() {
-    // Refresh session before starting
     await supabase.auth.refreshSession();
     this.lastSessionRefresh = Date.now();
 
@@ -129,7 +130,6 @@ export class UploadEngine {
     this.state.startTime = Date.now();
     this.notify();
 
-    // Semaphore-based queue: simple pool with Promise.race
     const pending = this.state.files.filter(f => f.status === 'pending');
     let nextIndex = 0;
     const active: Set<Promise<void>> = new Set();
@@ -145,7 +145,6 @@ export class UploadEngine {
         const p = this.uploadFileWithRetry(fileState).finally(() => active.delete(p));
         active.add(p);
       }
-      // Wait for all remaining
       while (active.size > 0) {
         await Promise.race(active);
       }
@@ -164,7 +163,6 @@ export class UploadEngine {
 
     for (const file of this.state.files) {
       if (file.status === 'uploading') {
-        // Abort multipart if in progress
         if (file.uploadId && file.s3Key) {
           supabase.functions.invoke('s3-multipart-upload', {
             body: { action: 'abort', s3Key: file.s3Key, uploadId: file.uploadId },
@@ -232,9 +230,11 @@ export class UploadEngine {
         if (this.state.isCancelled) return;
 
         const msg = error instanceof Error ? error.message : 'Upload failed';
+        console.error(`[UploadEngine] File "${fileState.file.name}" attempt ${attempt + 1} failed:`, msg);
 
         if (attempt < MAX_RETRIES) {
           const delay = RETRY_DELAYS[attempt] || 5000;
+          const jitter = Math.random() * 1000; // Add jitter to prevent retry stampede
           this.updateFile(fileState.id, {
             status: 'uploading',
             error: `Retrying (${attempt + 1}/${MAX_RETRIES})...`,
@@ -243,7 +243,7 @@ export class UploadEngine {
             bytesUploaded: 0,
           });
           this.notify();
-          await new Promise(r => setTimeout(r, delay));
+          await new Promise(r => setTimeout(r, delay + jitter));
         } else {
           this.updateFile(fileState.id, { status: 'error', error: msg, retryCount: attempt });
           this.notify();
@@ -270,7 +270,6 @@ export class UploadEngine {
     this.updateFile(fileState.id, { status: 'success', progress: 100, bytesUploaded: fileState.file.size, dbSaved: true });
     this.notify();
 
-    // Notify per-file callback
     this.onFileUploaded?.(this.state.files.find(f => f.id === fileState.id)!);
   }
 
@@ -294,6 +293,9 @@ export class UploadEngine {
     await new Promise<void>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
 
+      // Set timeout for small file uploads
+      xhr.timeout = SMALL_FILE_TIMEOUT;
+
       xhr.upload.addEventListener('progress', (e) => {
         if (e.lengthComputable) {
           const progress = Math.round((e.loaded / e.total) * 100);
@@ -304,10 +306,11 @@ export class UploadEngine {
 
       xhr.addEventListener('load', () => {
         if (xhr.status >= 200 && xhr.status < 300) resolve();
-        else reject(new Error(`Upload failed: ${xhr.status}`));
+        else reject(new Error(`Upload failed: ${xhr.status} - ${xhr.responseText?.substring(0, 200) || 'No response body'}`));
       });
-      xhr.addEventListener('error', () => reject(new Error('Upload failed')));
+      xhr.addEventListener('error', () => reject(new Error(`Upload network error for ${fileState.file.name}`)));
       xhr.addEventListener('abort', () => reject(new Error('Cancelled')));
+      xhr.addEventListener('timeout', () => reject(new Error(`Upload timed out after ${SMALL_FILE_TIMEOUT / 1000}s`)));
 
       controller.signal.addEventListener('abort', () => xhr.abort());
 
@@ -339,7 +342,6 @@ export class UploadEngine {
     const completedParts: { PartNumber: number; ETag: string }[] = [];
     const partProgress: number[] = new Array(totalParts).fill(0);
 
-    // Semaphore-based part upload pool
     const partNumbers = Array.from({ length: totalParts }, (_, i) => i + 1);
     let partIndex = 0;
     const activeParts: Set<Promise<void>> = new Set();
@@ -364,6 +366,9 @@ export class UploadEngine {
           const etag = await new Promise<string>((resolve, reject) => {
             const xhr = new XMLHttpRequest();
 
+            // Set timeout for multipart part uploads
+            xhr.timeout = MULTIPART_TIMEOUT;
+
             xhr.upload.addEventListener('progress', (e) => {
               if (e.lengthComputable) {
                 partProgress[partNumber - 1] = e.loaded;
@@ -378,10 +383,11 @@ export class UploadEngine {
               if (xhr.status >= 200 && xhr.status < 300) {
                 resolve(xhr.getResponseHeader('ETag') || '');
               } else {
-                reject(new Error(`Part ${partNumber} failed: ${xhr.status}`));
+                reject(new Error(`Part ${partNumber} failed: ${xhr.status} - ${xhr.responseText?.substring(0, 200) || 'No body'}`));
               }
             });
             xhr.addEventListener('error', () => reject(new Error(`Part ${partNumber} network error`)));
+            xhr.addEventListener('timeout', () => reject(new Error(`Part ${partNumber} timed out after ${MULTIPART_TIMEOUT / 1000}s`)));
 
             xhr.open('PUT', partData.url);
             xhr.send(chunk);
@@ -392,7 +398,9 @@ export class UploadEngine {
         } catch (err) {
           lastError = err instanceof Error ? err : new Error(String(err));
           if (retry < MAX_RETRIES) {
-            await new Promise(r => setTimeout(r, RETRY_DELAYS[retry] || 5000));
+            const delay = RETRY_DELAYS[retry] || 5000;
+            const jitter = Math.random() * 1000;
+            await new Promise(r => setTimeout(r, delay + jitter));
           }
         }
       }
@@ -411,18 +419,19 @@ export class UploadEngine {
         activeParts.add(p);
       }
 
-      // Wait for remaining
       if (activeParts.size > 0) {
         await Promise.all(activeParts);
       }
 
       if (this.state.isCancelled) return;
 
-      const { error: completeError } = await supabase.functions.invoke('s3-multipart-upload', {
+      const { data: completeData, error: completeError } = await supabase.functions.invoke('s3-multipart-upload', {
         body: { action: 'complete', s3Key, uploadId, parts: completedParts },
       });
 
-      if (completeError) throw new Error('Failed to complete multipart upload');
+      if (completeError || completeData?.error) {
+        throw new Error(completeData?.error || 'Failed to complete multipart upload');
+      }
     } catch (err) {
       if (!this.state.isCancelled) {
         await supabase.functions.invoke('s3-multipart-upload', {
@@ -438,7 +447,6 @@ export class UploadEngine {
     const s3Key = this.state.files.find(f => f.id === fileState.id)?.s3Key;
     if (!s3Key) throw new Error('No S3 key available');
 
-    // Get dimensions client-side
     let width: number | undefined;
     let height: number | undefined;
     let duration: number | undefined;
@@ -451,7 +459,7 @@ export class UploadEngine {
           img.onload = () => { width = img.naturalWidth; height = img.naturalHeight; URL.revokeObjectURL(img.src); resolve(); };
           img.onerror = () => { URL.revokeObjectURL(img.src); resolve(); };
         });
-      } catch {}
+      } catch { }
     } else if (file.type.startsWith('video/')) {
       try {
         const video = document.createElement('video');
@@ -460,12 +468,11 @@ export class UploadEngine {
           video.onloadedmetadata = () => { width = video.videoWidth; height = video.videoHeight; duration = Math.round(video.duration); URL.revokeObjectURL(video.src); resolve(); };
           video.onerror = () => { URL.revokeObjectURL(video.src); resolve(); };
         });
-      } catch {}
+      } catch { }
     }
 
     const mediaType = file.type.startsWith('video/') ? 'video' : 'photo';
 
-    // Retry DB save up to 3 times via server-side edge function
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const { data, error } = await supabase.functions.invoke('save-media-record', {
@@ -491,7 +498,8 @@ export class UploadEngine {
         return;
       } catch (err) {
         if (attempt < 2) {
-          await new Promise(r => setTimeout(r, RETRY_DELAYS[attempt] || 1000));
+          const jitter = Math.random() * 500;
+          await new Promise(r => setTimeout(r, (RETRY_DELAYS[attempt] || 1000) + jitter));
         } else {
           throw err;
         }
@@ -501,19 +509,29 @@ export class UploadEngine {
 }
 
 export function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-  return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+export function formatDuration(ms: number): string {
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  if (hours > 0) return `${hours}h ${minutes % 60}m`;
+  if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
+  return `${seconds}s`;
 }
 
 export function formatSpeed(bytesPerSecond: number): string {
-  if (bytesPerSecond < 1024 * 1024) return `${(bytesPerSecond / 1024).toFixed(0)} KB/s`;
-  return `${(bytesPerSecond / 1024 / 1024).toFixed(1)} MB/s`;
+  if (bytesPerSecond === 0) return '0 B/s';
+  return formatBytes(bytesPerSecond) + '/s';
 }
 
-export function formatTimeRemaining(seconds: number): string {
-  if (seconds < 60) return `${Math.round(seconds)}s`;
-  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
-  return `${Math.floor(seconds / 3600)}h ${Math.round((seconds % 3600) / 60)}m`;
+export function formatTimeRemaining(ms: number): string {
+  if (!ms || !isFinite(ms) || ms <= 0) return '--';
+  return formatDuration(ms);
 }
+
