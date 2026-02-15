@@ -5,12 +5,13 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { UploadProgressPanel } from '@/components/admin/UploadProgressPanel';
-import { UploadEngine, type UploadEngineState } from '@/lib/uploadEngine';
+import { UploadEngine, validateBatch, type UploadEngineState, type FileUploadState, formatBytes } from '@/lib/uploadEngine';
 
 interface MediaUploaderProps {
   albumId: string;
   onUploadComplete?: () => void;
   onTriggerFaceDetection?: () => void;
+  onFileUploaded?: () => void;
 }
 
 const ACCEPTED_TYPES = {
@@ -23,39 +24,67 @@ const ACCEPTED_TYPES = {
   'video/x-msvideo': ['.avi'],
 };
 
-const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB
+const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024; // 2GB
 
 const isMediaFile = (file: File) => {
   const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'video/mp4', 'video/quicktime', 'video/x-msvideo'];
   return validTypes.includes(file.type) || /\.(jpg|jpeg|png|webp|heic|mp4|mov|avi)$/i.test(file.name);
 };
 
-export const MediaUploader = ({ albumId, onUploadComplete, onTriggerFaceDetection }: MediaUploaderProps) => {
+export const MediaUploader = ({ albumId, onUploadComplete, onTriggerFaceDetection, onFileUploaded }: MediaUploaderProps) => {
   const [uploadState, setUploadState] = useState<UploadEngineState | null>(null);
   const engineRef = useRef<UploadEngine | null>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
-  const startUpload = useCallback((files: File[]) => {
+  const startUpload = useCallback(async (files: File[]) => {
     const mediaFiles = files.filter(isMediaFile);
     if (mediaFiles.length === 0) {
       toast({ title: 'No valid files', description: 'No supported image or video files found.', variant: 'destructive' });
       return;
     }
 
-    const engine = new UploadEngine(albumId, mediaFiles, (state) => {
-      setUploadState({ ...state });
+    // Batch validation
+    const validation = validateBatch(mediaFiles);
+    if (validation.oversizedFiles.length > 0) {
+      toast({
+        title: 'Files too large',
+        description: `${validation.oversizedFiles.length} files exceed the 2GB limit and were skipped.`,
+        variant: 'destructive',
+      });
+      const validFiles = mediaFiles.filter(f => f.size <= MAX_FILE_SIZE);
+      if (validFiles.length === 0) return;
+    }
+
+    if (validation.exceedsBatchLimit) {
+      toast({
+        title: 'Batch too large',
+        description: `Total size ${formatBytes(validation.totalSize)} exceeds the 50GB batch limit.`,
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    toast({
+      title: 'Starting upload',
+      description: `${mediaFiles.length} files (${formatBytes(validation.totalSize)})`,
     });
+
+    const validFiles = mediaFiles.filter(f => f.size <= MAX_FILE_SIZE);
+
+    const engine = new UploadEngine(
+      albumId,
+      validFiles,
+      (state) => setUploadState({ ...state }),
+      onFileUploaded ? () => onFileUploaded() : undefined
+    );
     engineRef.current = engine;
 
     engine.start().then(() => {
-      const finalState = engineRef.current;
-      if (finalState) {
-        onUploadComplete?.();
-        onTriggerFaceDetection?.();
-      }
+      onUploadComplete?.();
+      onTriggerFaceDetection?.();
     });
-  }, [albumId, onUploadComplete, onTriggerFaceDetection, toast]);
+  }, [albumId, onUploadComplete, onTriggerFaceDetection, onFileUploaded, toast]);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     startUpload(acceptedFiles);
@@ -64,7 +93,6 @@ export const MediaUploader = ({ albumId, onUploadComplete, onTriggerFaceDetectio
   const handleFolderSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (files.length > 0) startUpload(files);
-    // Reset input so same folder can be selected again
     e.target.value = '';
   }, [startUpload]);
 
@@ -79,7 +107,6 @@ export const MediaUploader = ({ albumId, onUploadComplete, onTriggerFaceDetectio
 
   return (
     <div className="space-y-4">
-      {/* Dropzone */}
       <div
         {...getRootProps()}
         className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-all duration-200 ${
@@ -98,18 +125,17 @@ export const MediaUploader = ({ albumId, onUploadComplete, onTriggerFaceDetectio
               Drag & drop photos, videos, or a folder
             </p>
             <p className="text-sm text-muted-foreground">
-              or click to browse • JPEG, PNG, WebP, MP4, MOV • Max 500MB per file
+              or click to browse • JPEG, PNG, WebP, MP4, MOV • Max 2GB per file
             </p>
           </>
         )}
       </div>
 
-      {/* Folder picker button */}
       <div className="flex gap-2">
         <input
           ref={folderInputRef}
           type="file"
-          // @ts-ignore - webkitdirectory is not in TS types
+          // @ts-ignore
           webkitdirectory=""
           directory=""
           multiple
@@ -127,7 +153,6 @@ export const MediaUploader = ({ albumId, onUploadComplete, onTriggerFaceDetectio
         </Button>
       </div>
 
-      {/* Upload progress panel */}
       {uploadState && uploadState.files.length > 0 && (
         <UploadProgressPanel
           state={uploadState}

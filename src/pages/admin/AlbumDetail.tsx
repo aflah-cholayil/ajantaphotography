@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { 
@@ -94,6 +94,21 @@ const AdminAlbumDetail = () => {
   
   // Admin favorites hook
   const { favorites, favoritesCount, isFavorited, favoritesByClient } = useAdminFavorites(id || '');
+
+  // Debounced gallery refresh for incremental uploads
+  const uploadCountRef = useRef(0);
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleFileUploaded = useCallback(() => {
+    uploadCountRef.current += 1;
+    // Refresh gallery every 10 successful uploads (debounced)
+    if (uploadCountRef.current % 10 === 0) {
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = setTimeout(() => {
+        fetchMedia();
+      }, 2000);
+    }
+  }, []);
 
   const fetchAlbum = async () => {
     if (!id) return;
@@ -702,9 +717,11 @@ const AdminAlbumDetail = () => {
             {id && (
               <MediaUploader 
                 albumId={id} 
-                onUploadComplete={fetchMedia}
+                onUploadComplete={() => {
+                  uploadCountRef.current = 0;
+                  fetchMedia();
+                }}
                 onTriggerFaceDetection={() => {
-                  // Auto-trigger face detection after uploads
                   if (album?.status === 'ready') {
                     supabase.functions.invoke('face-detection', {
                       body: { action: 'process_album', albumId: id },
@@ -715,6 +732,7 @@ const AdminAlbumDetail = () => {
                     });
                   }
                 }}
+                onFileUploaded={handleFileUploaded}
               />
             )}
           </CardContent>
