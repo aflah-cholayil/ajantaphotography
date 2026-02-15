@@ -81,9 +81,6 @@ async function getPartUploadUrl(s3Key: string, uploadId: string, partNumber: num
 
   const signed = await r2Client.sign(url, {
     method: "PUT",
-    headers: {
-      "X-Amz-Expires": "3600",
-    },
     aws: { signQuery: true },
   });
 
