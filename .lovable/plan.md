@@ -1,77 +1,134 @@
 
 
-# Storage Dashboard UI — Full Rebuild
+# Albums Page Restructure — Group by Client
 
-## Summary
-Rebuild `src/pages/admin/StorageDashboard.tsx` to show dual-provider analytics, migration controls, and cost comparison. Uses existing edge function data (no backend changes needed).
+## Overview
+Replace the flat table layout with a card-based layout grouped by client. Each client gets one collapsible card showing their albums inside.
 
-## What Changes
+## Data Flow
 
-### Single file: `src/pages/admin/StorageDashboard.tsx`
+Current: Fetch albums -> render flat table rows
+New: Fetch albums -> group by `client_id` -> render one card per client with collapsible album list
 
-**1. Update the `StorageStats` interface** to include the `providerBreakdown` field already returned by the `storage-stats` edge function:
+No database or schema changes needed. Same query, just client-side grouping.
+
+## UI Structure
+
 ```text
-providerBreakdown: {
-  aws: { totalBytes, totalGB, totalObjects, costINR };
-  r2:  { totalBytes, totalGB, totalObjects, costINR };
-};
++----------------------------------------------+
+| Albums                        [Upload Folder] |
+|                               [+ Create Album]|
+| [Search...] [Status Filter] [Clear]           |
++----------------------------------------------+
+|                                                |
+| +------------------------------------------+  |
+| | Neymar Jr                                |  |
+| | Club Shoot  |  Jan 17, 2026              |  |
+| | 2 Albums  |  12 Media  |  Ready          |  |
+| |                                          |  |
+| | v Albums                                 |  |
+| | +--------------------------------------+ |  |
+| | | Album 1    3 items   Jan 10   Ready  | |  |
+| | |                              [...] | |  |
+| | +--------------------------------------+ |  |
+| | | Album 2    9 items   Jan 12  Pending | |  |
+| | |                              [...] | |  |
+| | +--------------------------------------+ |  |
+| |                                          |  |
+| |            [+ Create Album]              |  |
+| +------------------------------------------+  |
+|                                                |
+| +------------------------------------------+  |
+| | Another Client                           |  |
+| | Wedding  |  Mar 5, 2026                  |  |
+| | 1 Album  |  45 Media  |  Pending         |  |
+| | ...                                      |  |
+| +------------------------------------------+  |
++------------------------------------------------+
 ```
 
-**2. Add migration state and API calls:**
-- New state: `migrationStatus` (idle / running / done), `migrationResult` (last batch result), `migrationCounts` (from `migrate-to-r2?action=status`)
-- `fetchMigrationStatus()` — calls `migrate-to-r2` with `action: "status"`, returns `{ media: {aws, r2}, works: {aws, r2}, totalRemaining }`
-- `startMigrationBatch()` — calls `migrate-to-r2` with `action: "start"`, returns `{ migrated, failed, errors, message }`
-- Auto-polls migration status every 5 seconds while running
+## Implementation Details
 
-**3. New UI sections (top to bottom):**
+### Single file to modify: `src/pages/admin/Albums.tsx`
 
-**Section A — Provider Breakdown Cards (replaces current 4-card grid)**
-- 6 cards in 2 rows:
-  - Row 1: Total Storage (combined), AWS Storage (GB + file count), R2 Storage (GB + file count)
-  - Row 2: This Month Uploads, Est. Monthly Cost, Cost Savings (R2 vs AWS comparison)
-- AWS cards have orange/amber accent, R2 cards have blue accent
+### 1. Grouping Logic
+After fetching albums (existing `fetchAlbums` function, no changes needed), group them client-side:
 
-**Section B — Migration Control Panel**
-- Card with title "Storage Migration — AWS to R2"
-- Progress bar showing `(r2Files / totalFiles) * 100`
-- Text: "X of Y files migrated (Z remaining on AWS)"
-- Status badges: media counts (AWS/R2), works counts (AWS/R2)
-- "Start Migration" button (with confirmation dialog)
-  - Safety warning: "This will copy files from AWS to R2 in batches of 20. Existing files will not be deleted. Continue?"
-  - Shows spinner while running
-- After each batch: shows result (migrated/failed counts)
-- "Run Next Batch" button to continue
-- Error list (if any failures)
+```text
+interface ClientGroup {
+  clientId: string;
+  clientName: string;
+  eventName: string;
+  eventDate: string | null;
+  albums: Album[];
+  totalMedia: number;
+  overallStatus: 'ready' | 'pending';  // ready if all albums ready
+}
 
-**Section C — Cost Comparison Table**
-- Side-by-side table: AWS vs R2
-  - Storage cost per GB (AWS: ~₹1.9/GB, R2: ₹1.2/GB after 10GB free)
-  - Transfer cost (AWS: ₹7/GB after 100GB, R2: Free)
-  - Current monthly cost per provider
-  - Projected cost if fully on R2
-  - Monthly savings
+// Group filtered albums by client_id
+const grouped = filteredAlbums.reduce((map, album) => {
+  const key = album.client_id;
+  if (!map[key]) map[key] = { ...clientInfo, albums: [] };
+  map[key].albums.push(album);
+  return map;
+}, {});
+```
 
-**Section D — Charts (keep existing)**
-- Storage Growth bar chart (unchanged)
-- Cost Breakdown pie chart — update to show AWS vs R2 storage cost split instead of storage vs transfer
+### 2. Fetch Enhancement
+Add `event_date` to the albums query's client select:
+```text
+clients (id, event_name, event_date, user_id)
+```
+This is a minor change to the existing select statement (line ~160).
 
-**Section E — Per-Client Table (keep existing, unchanged)**
+### 3. Card Layout (replaces the Table)
+Each client group renders as a `Card` component containing:
+- **Header row**: Client name (bold), event name, event date (formatted)
+- **Stats row**: Album count badge, total media count badge, overall status badge
+- **Collapsible section** (using `Collapsible` from radix): Lists each album as a row with:
+  - Album title (clickable, navigates to `/admin/albums/:id`)
+  - Media count
+  - Created date
+  - Status badge
+  - 3-dot `DropdownMenu` with existing actions (View, Upload, Share, Mark Ready/Pending, Delete)
+- **Footer**: "+ Create Album" button that pre-selects this client in the create dialog
 
-**4. Confirmation Dialog for Migration**
-- Uses existing `AlertDialog` component
-- Title: "Start Storage Migration"
-- Warning text explaining the process
-- "Cancel" and "Start Migration" buttons
+### 4. Create Album from Client Card
+When clicking "+ Create Album" inside a client card:
+- Open the existing create dialog
+- Pre-fill `newAlbumClientId` with that client's ID
+- User only needs to enter the album title
 
-## Technical Details
+### 5. Components Used (all already available)
+- `Card`, `CardHeader`, `CardContent` for the client card
+- `Collapsible`, `CollapsibleTrigger`, `CollapsibleContent` for expandable album list
+- `Badge` for album count and media count
+- `AlbumStatusBadge` for status
+- `DropdownMenu` for the 3-dot menu (reuse existing menu items)
+- `Button` for create album
+- `ChevronDown` icon for collapse indicator
 
-- All data comes from two existing edge functions: `storage-stats` and `migrate-to-r2`
-- No new edge functions or DB changes needed
-- Migration runs one batch at a time (user clicks to continue) — prevents runaway costs
-- Uses `useQuery` for storage stats, `useState` + manual fetch for migration (since it's a mutation)
-- Progress percentage: `totalR2Files / (totalAWSFiles + totalR2Files) * 100`
-- Icons: `Cloud` for R2, `Server` for AWS, `ArrowRightLeft` for migration
-- Dark theme: matches existing card/chart styling with `hsl(30, 10%, 12%)` backgrounds
+### 6. Preserved Functionality
+- Search filter works the same (filters albums, then groups)
+- Status filter works the same
+- Client filter from URL params still works
+- Delete album updates counts (re-fetches albums)
+- Folder upload dialog unchanged
+- Upload progress panel unchanged
+- All navigation to album detail pages unchanged
 
-## Files to Modify
-1. `src/pages/admin/StorageDashboard.tsx` — full rewrite of this single page
+### 7. Styling
+- Cards use existing dark theme classes (`bg-card border-border`)
+- Amber/muted color accents for badges
+- Hover states on album rows within the collapsible
+- Smooth expand/collapse animation from Collapsible component
+- Responsive: cards stack vertically, album rows adapt on mobile
+
+## Technical Notes
+
+- No new components needed; everything uses existing UI primitives
+- No new imports beyond adding `Collapsible` components and `ChevronDown` icon
+- The `Album` interface needs `event_date` added to the `clients` sub-type
+- Performance: grouping is O(n) on already-fetched data, no extra queries
+- All existing handlers (delete, status update, create, folder upload) remain unchanged
+
