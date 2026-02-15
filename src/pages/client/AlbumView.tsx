@@ -227,16 +227,19 @@ const ClientAlbumView = () => {
     
     try {
       toast.info('Preparing download...');
-      const url = await getSignedUrl(item.s3_key, id);
+      const signedUrl = await getSignedUrl(item.s3_key, id);
       
-      if (url) {
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = item.file_name;
-        link.target = '_blank';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+      if (signedUrl) {
+        const response = await fetch(signedUrl);
+        const blob = await response.blob();
+        const blobUrl = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = item.file_name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(blobUrl);
         toast.success(`Downloading ${item.file_name}`);
       } else {
         toast.error('Failed to get download URL');
