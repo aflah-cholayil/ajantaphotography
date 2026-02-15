@@ -1,4 +1,4 @@
-import { createContext, useContext, useSyncExternalStore, type ReactNode } from 'react';
+import { createContext, useContext, useCallback, useRef, useSyncExternalStore, type ReactNode } from 'react';
 import { uploadManager, type UploadManagerSnapshot } from '@/lib/uploadManager';
 
 const UploadManagerContext = createContext<typeof uploadManager | null>(null);
@@ -11,14 +11,25 @@ export const UploadManagerProvider = ({ children }: { children: ReactNode }) => 
   );
 };
 
+// Stable snapshot cache to avoid infinite re-renders with useSyncExternalStore
+let cachedSnapshot: UploadManagerSnapshot = uploadManager.getSnapshot();
+let snapshotVersion = 0;
+
+uploadManager.subscribe(() => {
+  snapshotVersion++;
+  cachedSnapshot = uploadManager.getSnapshot();
+});
+
+function getSnapshot(): UploadManagerSnapshot {
+  return cachedSnapshot;
+}
+
 export function useUploadManager() {
   const manager = useContext(UploadManagerContext);
   if (!manager) throw new Error('useUploadManager must be used within UploadManagerProvider');
 
-  const snapshot = useSyncExternalStore(
-    (cb) => manager.subscribe(cb),
-    () => manager.getSnapshot()
-  );
+  const subscribe = useCallback((cb: () => void) => manager.subscribe(cb), [manager]);
+  const snapshot = useSyncExternalStore(subscribe, getSnapshot);
 
   return { manager, snapshot };
 }
