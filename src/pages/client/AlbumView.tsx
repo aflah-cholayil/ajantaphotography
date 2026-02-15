@@ -250,21 +250,93 @@ const ClientAlbumView = () => {
     }
   };
 
+  // Fetch event name for ZIP filename
+  const [eventName, setEventName] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchEventName = async () => {
+      if (!id) return;
+      try {
+        const { data } = await supabase
+          .from('albums')
+          .select('client_id')
+          .eq('id', id)
+          .maybeSingle();
+        if (data?.client_id) {
+          const { data: client } = await supabase
+            .from('clients')
+            .select('event_name')
+            .eq('id', data.client_id)
+            .maybeSingle();
+          if (client?.event_name) setEventName(client.event_name);
+        }
+      } catch (err) {
+        console.error('Error fetching event name:', err);
+      }
+    };
+    fetchEventName();
+  }, [id]);
+
+  const getZipFilename = () => {
+    if (!album) return 'gallery.zip';
+    const sanitize = (s: string) => s.replace(/[^a-zA-Z0-9]/g, '_');
+    if (eventName) {
+      return `${sanitize(eventName)}_${sanitize(album.title)}.zip`;
+    }
+    return `${sanitize(album.title)}_gallery.zip`;
+  };
+
   const handleDownloadSelected = async () => {
     if (selectedItems.size === 0) {
       toast.error('No items selected');
       return;
     }
 
-    const selectedMedia = media.filter(m => selectedItems.has(m.id));
-    await downloadMultiple(selectedMedia);
+    const selected = media.filter(m => selectedItems.has(m.id));
+    
+    // Single file: direct blob download
+    if (selected.length === 1) {
+      await handleDownload(selected[0]);
+      setSelectedItems(new Set());
+      setIsSelectionMode(false);
+      return;
+    }
+
+    await downloadMultiple(selected);
     setSelectedItems(new Set());
     setIsSelectionMode(false);
   };
 
-  const handleDownloadAll = async () => {
-    if (media.length === 0 || !album) return;
-    await downloadMultiple(media);
+  const handleDownloadEntireAlbum = async () => {
+    if (!album || !id) return;
+
+    // Load all remaining pages first
+    let allMedia = [...media];
+    if (hasMore) {
+      toast.info('Loading all media...');
+      let page = currentPage + 1;
+      let moreAvailable = true;
+      while (moreAvailable) {
+        const from = page * PAGE_SIZE;
+        const to = from + PAGE_SIZE - 1;
+        const { data: pageData } = await supabase
+          .from('media')
+          .select('id, file_name, s3_key, s3_preview_key, type, width, height')
+          .eq('album_id', id)
+          .order('sort_order', { ascending: true })
+          .range(from, to);
+
+        if (pageData && pageData.length > 0) {
+          allMedia = [...allMedia, ...pageData];
+          moreAvailable = pageData.length === PAGE_SIZE;
+          page++;
+        } else {
+          moreAvailable = false;
+        }
+      }
+    }
+
+    await downloadMultiple(allMedia);
   };
 
   const downloadMultiple = async (items: Media[]) => {
@@ -316,7 +388,7 @@ const ClientAlbumView = () => {
       const url = URL.createObjectURL(zipBlob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `${album.title.replace(/[^a-zA-Z0-9]/g, '_')}_gallery.zip`;
+      link.download = getZipFilename();
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -432,47 +504,16 @@ const ClientAlbumView = () => {
               </div>
             </div>
             <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
-              {isSelectionMode && selectedItems.size > 0 && (
-                <>
-                  <span className="text-xs sm:text-sm text-muted-foreground hidden sm:inline">
-                    {selectedItems.size} selected
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleDownloadSelected}
-                    className="gap-1 sm:gap-2 px-2 sm:px-3"
-                  >
-                    <Download size={14} />
-                    <span className="hidden sm:inline">Download</span>
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={clearSelection} className="px-2 sm:px-3">
-                    <X size={14} className="sm:hidden" />
-                    <span className="hidden sm:inline">Clear</span>
-                  </Button>
-                </>
-              )}
               {!isSelectionMode && media.length > 0 && (
-                <>
-                  <Button variant="ghost" size="sm" onClick={() => setIsSelectionMode(true)} className="px-2 sm:px-3">
-                    <Check size={14} className="sm:mr-2" />
-                    <span className="hidden sm:inline">Select</span>
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleDownloadAll}
-                    disabled={isDownloadingAll}
-                    className="gap-1 sm:gap-2 px-2 sm:px-3"
-                  >
-                    {isDownloadingAll ? (
-                      <Loader2 size={14} className="animate-spin" />
-                    ) : (
-                      <FolderDown size={14} />
-                    )}
-                    <span className="hidden sm:inline">{isDownloadingAll ? 'Downloading...' : 'Download All'}</span>
-                  </Button>
-                </>
+                <Button variant="ghost" size="sm" onClick={() => setIsSelectionMode(true)} className="px-2 sm:px-3">
+                  <Check size={14} className="sm:mr-2" />
+                  <span className="hidden sm:inline">Select</span>
+                </Button>
+              )}
+              {isSelectionMode && (
+                <span className="text-xs sm:text-sm text-muted-foreground">
+                  {selectedItems.size} selected
+                </span>
               )}
             </div>
           </div>
@@ -525,13 +566,6 @@ const ClientAlbumView = () => {
 
           {/* Photos Tab */}
           <TabsContent value="photos">
-            {isSelectionMode && photos.length > 0 && (
-              <div className="flex items-center gap-4 mb-4">
-                <Button variant="outline" size="sm" onClick={() => selectAll('photo')}>
-                  Select All Photos
-                </Button>
-              </div>
-            )}
             <OptimizedMediaGrid
               media={media}
               albumId={album.id}
@@ -561,13 +595,6 @@ const ClientAlbumView = () => {
 
           {/* Videos Tab */}
           <TabsContent value="videos">
-            {isSelectionMode && videos.length > 0 && (
-              <div className="flex items-center gap-4 mb-4">
-                <Button variant="outline" size="sm" onClick={() => selectAll('video')}>
-                  Select All Videos
-                </Button>
-              </div>
-            )}
             <OptimizedMediaGrid
               media={media}
               albumId={album.id}
@@ -594,6 +621,63 @@ const ClientAlbumView = () => {
           </TabsContent>
         </Tabs>
       </main>
+
+      {/* Sticky Bottom Action Bar */}
+      <AnimatePresence>
+        {isSelectionMode && (
+          <motion.div
+            initial={{ y: 100, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 100, opacity: 0 }}
+            transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+            className="fixed bottom-0 left-0 right-0 z-40 bg-card/95 backdrop-blur-md border-t border-border shadow-lg"
+          >
+            <div className="container mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-2">
+              <span className="text-sm font-medium text-foreground">
+                {selectedItems.size} selected
+              </span>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    const currentType = activeTab === 'videos' ? 'video' : 'photo';
+                    selectAll(currentType as 'photo' | 'video');
+                  }}
+                >
+                  <Check size={14} className="mr-1" />
+                  Select All
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleDownloadEntireAlbum}
+                  disabled={isDownloadingAll}
+                >
+                  {isDownloadingAll ? (
+                    <Loader2 size={14} className="mr-1 animate-spin" />
+                  ) : (
+                    <FolderDown size={14} className="mr-1" />
+                  )}
+                  Entire Album
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleDownloadSelected}
+                  disabled={selectedItems.size === 0 || isDownloadingAll}
+                >
+                  <Download size={14} className="mr-1" />
+                  Download{selectedItems.size > 0 ? ` (${selectedItems.size})` : ''}
+                </Button>
+                <Button variant="ghost" size="sm" onClick={clearSelection}>
+                  <X size={14} className="mr-1" />
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Lightbox */}
       <AnimatePresence>
