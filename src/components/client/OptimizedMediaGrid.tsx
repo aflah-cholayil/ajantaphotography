@@ -27,6 +27,9 @@ interface OptimizedMediaGridProps {
   type: 'photo' | 'video';
   favorites?: Set<string>;
   onToggleFavorite?: (id: string) => void;
+  hasMore?: boolean;
+  isLoadingMore?: boolean;
+  onLoadMore?: () => void;
 }
 
 interface MediaItemProps {
@@ -335,9 +338,32 @@ export function OptimizedMediaGrid({
   type,
   favorites,
   onToggleFavorite,
+  hasMore,
+  isLoadingMore,
+  onLoadMore,
 }: OptimizedMediaGridProps) {
   const filteredMedia = media.filter(m => m.type === type);
   const isPhoto = type === 'photo';
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  // IntersectionObserver for infinite scroll
+  useEffect(() => {
+    if (!hasMore || !onLoadMore) return;
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting && hasMore && !isLoadingMore) {
+          onLoadMore();
+        }
+      },
+      { rootMargin: '200px' }
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMore, isLoadingMore, onLoadMore]);
 
   if (filteredMedia.length === 0) {
     return (
@@ -355,27 +381,37 @@ export function OptimizedMediaGrid({
   }
 
   return (
-    <div className={`grid gap-2 sm:gap-3 lg:gap-4 ${
-      isPhoto 
-        ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4' 
-        : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3'
-    }`}>
-      {filteredMedia.map((item, index) => (
-        <MediaItem
-          key={item.id}
-          item={item}
-          albumId={albumId}
-          index={index}
-          isSelectionMode={isSelectionMode}
-          isSelected={selectedItems.has(item.id)}
-          onToggleSelection={onToggleSelection}
-          onMediaClick={onMediaClick}
-          onDownload={onDownload}
-          isFavorited={favorites?.has(item.id)}
-          onToggleFavorite={onToggleFavorite}
-        />
-      ))}
-    </div>
+    <>
+      <div className={`grid gap-2 sm:gap-3 lg:gap-4 ${
+        isPhoto 
+          ? 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4' 
+          : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3'
+      }`}>
+        {filteredMedia.map((item, index) => (
+          <MediaItem
+            key={item.id}
+            item={item}
+            albumId={albumId}
+            index={index}
+            isSelectionMode={isSelectionMode}
+            isSelected={selectedItems.has(item.id)}
+            onToggleSelection={onToggleSelection}
+            onMediaClick={onMediaClick}
+            onDownload={onDownload}
+            isFavorited={favorites?.has(item.id)}
+            onToggleFavorite={onToggleFavorite}
+          />
+        ))}
+      </div>
+      {/* Sentinel for infinite scroll */}
+      {hasMore && (
+        <div ref={sentinelRef} className="flex justify-center py-6">
+          {isLoadingMore && (
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          )}
+        </div>
+      )}
+    </>
   );
 }
 

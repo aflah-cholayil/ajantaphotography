@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -40,6 +40,8 @@ interface ShareLinkInfo {
   downloadCount: number;
 }
 
+const PAGE_SIZE = 200;
+
 const SharedGallery = () => {
   const { token } = useParams<{ token: string }>();
   const [album, setAlbum] = useState<Album | null>(null);
@@ -57,6 +59,13 @@ const SharedGallery = () => {
   const [zoomLevel, setZoomLevel] = useState(1);
   const [activeTab, setActiveTab] = useState('photos');
   const [retryCount, setRetryCount] = useState(0);
+
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   const photos = media.filter(m => m.type === 'photo');
   const videos = media.filter(m => m.type === 'video');
@@ -131,10 +140,14 @@ const SharedGallery = () => {
   }, [token, retryCount]);
 
   // Load gallery data
-  const loadGallery = async (providedPassword?: string) => {
+  const loadGallery = async (providedPassword?: string, page = 0) => {
     if (!token) return;
 
-    setIsLoading(true);
+    if (page === 0) {
+      setIsLoading(true);
+    } else {
+      setIsLoadingMore(true);
+    }
     const normalizedToken = token.trim();
 
     try {
@@ -142,7 +155,9 @@ const SharedGallery = () => {
         body: { 
           token: normalizedToken, 
           password: providedPassword || password,
-          action: 'load' 
+          action: 'load',
+          page,
+          pageSize: PAGE_SIZE,
         },
       });
 
@@ -150,6 +165,7 @@ const SharedGallery = () => {
         console.error('Load gallery error:', funcError);
         setError('An error occurred while loading the gallery');
         setIsLoading(false);
+        setIsLoadingMore(false);
         return;
       }
 
@@ -157,21 +173,30 @@ const SharedGallery = () => {
         if (data.requiresPassword) {
           setRequiresPassword(true);
           setIsLoading(false);
+          setIsLoadingMore(false);
           return;
         }
         console.log('Load gallery failed:', data.error);
         setError(data.error);
         setIsLoading(false);
+        setIsLoadingMore(false);
         return;
       }
 
       if (data?.album) {
         setAlbum(data.album);
-        setMedia(data.media || []);
+        if (page === 0) {
+          setMedia(data.media || []);
+        } else {
+          setMedia(prev => [...prev, ...(data.media || [])]);
+        }
         setShareLink(data.shareLink);
+        setTotalCount(data.totalCount || 0);
+        setHasMore(data.hasMore || false);
+        setCurrentPage(page);
         setIsAuthenticated(true);
         setIsVerifying(false);
-        console.log('Gallery loaded successfully:', data.album.title);
+        console.log('Gallery loaded successfully:', data.album.title, `page ${page}, total ${data.totalCount}`);
       } else {
         setError('This gallery does not exist');
       }
@@ -180,9 +205,15 @@ const SharedGallery = () => {
       setError('An error occurred while loading the gallery');
     } finally {
       setIsLoading(false);
+      setIsLoadingMore(false);
       setIsVerifying(false);
     }
   };
+
+  const handleLoadMore = useCallback(() => {
+    if (isLoadingMore || !hasMore) return;
+    loadGallery(password, currentPage + 1);
+  }, [isLoadingMore, hasMore, password, currentPage]);
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -191,6 +222,21 @@ const SharedGallery = () => {
     setIsLoading(true);
     await loadGallery(password);
   };
+
+  // IntersectionObserver for infinite scroll
+  useEffect(() => {
+    if (!hasMore || !sentinelRef.current) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting && hasMore && !isLoadingMore) {
+          handleLoadMore();
+        }
+      },
+      { rootMargin: '200px' }
+    );
+    observer.observe(sentinelRef.current);
+    return () => observer.disconnect();
+  }, [hasMore, isLoadingMore, handleLoadMore]);
 
   useEffect(() => {
     verifyShareLink();
@@ -480,7 +526,7 @@ const SharedGallery = () => {
           <TabsList className="mb-6 bg-card border border-border">
             <TabsTrigger value="photos" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <Image size={16} />
-              Photos ({photos.length})
+              Photos ({totalCount > 0 ? photos.length + (hasMore ? '+' : '') : photos.length})
             </TabsTrigger>
             <TabsTrigger value="videos" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <Video size={16} />
@@ -496,13 +542,14 @@ const SharedGallery = () => {
                 <p className="text-muted-foreground">No photos in this gallery.</p>
               </div>
             ) : (
+              <>
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 {photos.map((item, index) => (
                   <motion.div
                     key={item.id}
                     initial={{ opacity: 0, scale: 0.9 }}
                     animate={{ opacity: 1, scale: 1 }}
-                    transition={{ duration: 0.3, delay: index * 0.03 }}
+                    transition={{ duration: 0.3, delay: Math.min(index * 0.03, 0.3) }}
                     className="aspect-square relative group cursor-pointer overflow-hidden rounded-lg bg-muted"
                     onClick={() => setSelectedMedia(item)}
                   >
@@ -531,6 +578,15 @@ const SharedGallery = () => {
                   </motion.div>
                 ))}
               </div>
+              {/* Sentinel for infinite scroll */}
+              {hasMore && (
+                <div ref={sentinelRef} className="flex justify-center py-6">
+                  {isLoadingMore && (
+                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                  )}
+                </div>
+              )}
+              </>
             )}
           </TabsContent>
 
