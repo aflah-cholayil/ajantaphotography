@@ -7,17 +7,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// AWS (legacy)
-const awsRegion = Deno.env.get("AWS_REGION") || "ap-south-1";
-const awsBucket = Deno.env.get("AWS_BUCKET_NAME")!;
-const awsClient = new AwsClient({
-  accessKeyId: Deno.env.get("AWS_ACCESS_KEY_ID")!,
-  secretAccessKey: Deno.env.get("AWS_SECRET_ACCESS_KEY")!,
-  region: awsRegion,
-  service: "s3",
-});
-
-// R2
+// R2 only
 const r2Endpoint = Deno.env.get("R2_ENDPOINT")!;
 const r2Bucket = Deno.env.get("R2_BUCKET_NAME")!;
 const r2Client = new AwsClient({
@@ -43,7 +33,6 @@ interface MediaRecord {
   size: number;
   file_name: string;
   album_id: string;
-  storage_provider: string;
 }
 
 interface AlbumRecord {
@@ -67,25 +56,15 @@ interface ProfileRecord {
   name: string;
 }
 
-async function deleteStorageObject(s3Key: string, provider: string): Promise<boolean> {
+async function deleteStorageObject(s3Key: string): Promise<boolean> {
   try {
-    let deleteUrl: string;
-    let client: AwsClient;
-
-    if (provider === "r2") {
-      deleteUrl = `${r2Endpoint}/${r2Bucket}/${s3Key}`;
-      client = r2Client;
-    } else {
-      deleteUrl = `https://${awsBucket}.s3.${awsRegion}.amazonaws.com/${s3Key}`;
-      client = awsClient;
-    }
-
-    const deleteReq = await client.sign(deleteUrl, { method: "DELETE" });
+    const deleteUrl = `${r2Endpoint}/${r2Bucket}/${s3Key}`;
+    const deleteReq = await r2Client.sign(deleteUrl, { method: "DELETE" });
     const response = await fetch(deleteReq.url, { method: "DELETE", headers: deleteReq.headers });
-    console.log(`Deleted ${provider} object: ${s3Key}, status: ${response.status}`);
+    console.log(`Deleted R2 object: ${s3Key}, status: ${response.status}`);
     return response.ok || response.status === 404;
   } catch (error) {
-    console.error(`Failed to delete ${provider} object ${s3Key}:`, error);
+    console.error(`Failed to delete R2 object ${s3Key}:`, error);
     return false;
   }
 }
@@ -99,7 +78,7 @@ async function deleteMediaFromStorage(
 ): Promise<{ success: boolean; s3Keys: string[]; totalSize: number }> {
   const { data, error } = await supabase
     .from("media")
-    .select("id, s3_key, s3_preview_key, size, file_name, album_id, storage_provider")
+    .select("id, s3_key, s3_preview_key, size, file_name, album_id")
     .eq("id", mediaId)
     .single();
 
@@ -109,16 +88,15 @@ async function deleteMediaFromStorage(
   }
 
   const media = data as MediaRecord;
-  const provider = media.storage_provider || "aws";
   const s3Keys: string[] = [];
 
   if (media.s3_key) {
-    await deleteStorageObject(media.s3_key, provider);
+    await deleteStorageObject(media.s3_key);
     s3Keys.push(media.s3_key);
   }
 
   if (media.s3_preview_key) {
-    await deleteStorageObject(media.s3_preview_key, provider);
+    await deleteStorageObject(media.s3_preview_key);
     s3Keys.push(media.s3_preview_key);
   }
 
@@ -171,35 +149,32 @@ async function deleteAlbumFromStorage(
 
   const { data: mediaData, error: mediaError } = await supabase
     .from("media")
-    .select("id, s3_key, s3_preview_key, size, storage_provider")
+    .select("id, s3_key, s3_preview_key, size")
     .eq("album_id", albumId);
 
   if (mediaError) {
     return { success: false, mediaCount: 0, s3Keys: [], totalSize: 0 };
   }
 
-  const mediaItems = (mediaData || []) as Array<{ id: string; s3_key: string; s3_preview_key: string | null; size: number; storage_provider: string }>;
+  const mediaItems = (mediaData || []) as Array<{ id: string; s3_key: string; s3_preview_key: string | null; size: number }>;
   const allS3Keys: string[] = [];
   let totalSize = 0;
 
   if (!softDelete) {
     for (const media of mediaItems) {
-      const provider = media.storage_provider || "aws";
       if (media.s3_key) {
-        await deleteStorageObject(media.s3_key, provider);
+        await deleteStorageObject(media.s3_key);
         allS3Keys.push(media.s3_key);
       }
       if (media.s3_preview_key) {
-        await deleteStorageObject(media.s3_preview_key, provider);
+        await deleteStorageObject(media.s3_preview_key);
         allS3Keys.push(media.s3_preview_key);
       }
       totalSize += media.size || 0;
     }
 
-    // Cover and face thumbnails — try both providers
     if (album.cover_image_key) {
-      await deleteStorageObject(album.cover_image_key, "aws");
-      await deleteStorageObject(album.cover_image_key, "r2");
+      await deleteStorageObject(album.cover_image_key);
       allS3Keys.push(album.cover_image_key);
     }
 
@@ -210,8 +185,7 @@ async function deleteAlbumFromStorage(
 
     for (const person of (peopleData || []) as PersonRecord[]) {
       if (person.face_thumbnail_key) {
-        await deleteStorageObject(person.face_thumbnail_key, "aws");
-        await deleteStorageObject(person.face_thumbnail_key, "r2");
+        await deleteStorageObject(person.face_thumbnail_key);
         allS3Keys.push(person.face_thumbnail_key);
       }
     }
@@ -351,13 +325,13 @@ async function bulkDeleteMedia(
   userId: string
 ): Promise<{ success: boolean; deletedCount: number; totalSize: number; peopleRemoved: number }> {
   const BATCH_SIZE = 100;
-  const allMedia: Array<{ id: string; s3_key: string; s3_preview_key: string | null; size: number; file_name: string; storage_provider: string }> = [];
+  const allMedia: Array<{ id: string; s3_key: string; s3_preview_key: string | null; size: number; file_name: string }> = [];
 
   for (let i = 0; i < mediaIds.length; i += BATCH_SIZE) {
     const batch = mediaIds.slice(i, i + BATCH_SIZE);
     const { data, error } = await supabase
       .from("media")
-      .select("id, s3_key, s3_preview_key, size, file_name, storage_provider")
+      .select("id, s3_key, s3_preview_key, size, file_name")
       .in("id", batch);
 
     if (error) continue;
@@ -372,13 +346,12 @@ async function bulkDeleteMedia(
   let totalSize = 0;
 
   for (const item of allMedia) {
-    const provider = item.storage_provider || "aws";
     if (item.s3_key) {
-      await deleteStorageObject(item.s3_key, provider);
+      await deleteStorageObject(item.s3_key);
       allS3Keys.push(item.s3_key);
     }
     if (item.s3_preview_key) {
-      await deleteStorageObject(item.s3_preview_key, provider);
+      await deleteStorageObject(item.s3_preview_key);
       allS3Keys.push(item.s3_preview_key);
     }
     totalSize += item.size || 0;
@@ -412,8 +385,7 @@ async function bulkDeleteMedia(
           .single();
 
         if (personDetail?.face_thumbnail_key) {
-          await deleteStorageObject(personDetail.face_thumbnail_key, "aws");
-          await deleteStorageObject(personDetail.face_thumbnail_key, "r2");
+          await deleteStorageObject(personDetail.face_thumbnail_key);
         }
 
         await supabase.from("people").delete().eq("id", person.id);

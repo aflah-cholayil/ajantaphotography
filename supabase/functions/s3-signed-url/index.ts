@@ -8,17 +8,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// AWS (legacy)
-const awsRegion = Deno.env.get("AWS_REGION") || "us-east-1";
-const awsBucket = Deno.env.get("AWS_BUCKET_NAME")!;
-const awsClient = new AwsClient({
-  accessKeyId: Deno.env.get("AWS_ACCESS_KEY_ID")!,
-  secretAccessKey: Deno.env.get("AWS_SECRET_ACCESS_KEY")!,
-  region: awsRegion,
-  service: "s3",
-});
-
-// R2
+// R2 only
 const r2Endpoint = Deno.env.get("R2_ENDPOINT")!;
 const r2Bucket = Deno.env.get("R2_BUCKET_NAME")!;
 const r2Client = new AwsClient({
@@ -28,37 +18,9 @@ const r2Client = new AwsClient({
   service: "s3",
 });
 
-function getSignedUrl(s3Key: string, provider: string) {
-  if (provider === "r2") {
-    const objectUrl = `${r2Endpoint}/${r2Bucket}/${s3Key}`;
-    return r2Client.sign(objectUrl, { method: "GET", aws: { signQuery: true } });
-  }
-  const objectUrl = `https://${awsBucket}.s3.${awsRegion}.amazonaws.com/${s3Key}`;
-  return awsClient.sign(objectUrl, { method: "GET", aws: { signQuery: true } });
-}
-
-// Try to determine provider from DB for a media item
-async function resolveProvider(supabase: any, s3Key: string, albumId?: string): Promise<string> {
-  // Check media table
-  const { data: media } = await supabase
-    .from("media")
-    .select("storage_provider")
-    .or(`s3_key.eq.${s3Key},s3_preview_key.eq.${s3Key}`)
-    .limit(1)
-    .maybeSingle();
-  if (media?.storage_provider) return media.storage_provider;
-
-  // Check works table
-  const { data: work } = await supabase
-    .from("works")
-    .select("storage_provider")
-    .or(`s3_key.eq.${s3Key},s3_preview_key.eq.${s3Key}`)
-    .limit(1)
-    .maybeSingle();
-  if (work?.storage_provider) return work.storage_provider;
-
-  // Default to aws for existing content
-  return "aws";
+function getSignedUrl(s3Key: string) {
+  const objectUrl = `${r2Endpoint}/${r2Bucket}/${s3Key}`;
+  return r2Client.sign(objectUrl, { method: "GET", aws: { signQuery: true } });
 }
 
 interface SignedUrlRequest {
@@ -67,7 +29,6 @@ interface SignedUrlRequest {
   albumId?: string;
   shareToken?: string;
   sharePassword?: string;
-  storageProvider?: string;
 }
 
 const handler = async (req: Request): Promise<Response> => {
@@ -86,13 +47,11 @@ const handler = async (req: Request): Promise<Response> => {
     let albumId: string | undefined;
     let shareToken: string | undefined;
     let sharePassword: string | undefined;
-    let storageProvider: string | undefined;
     let isPublicAsset = false;
 
     if (req.method === "GET") {
       const url = new URL(req.url);
       s3Key = url.searchParams.get("key") || "";
-      storageProvider = url.searchParams.get("provider") || undefined;
       
       if (s3Key.startsWith("assets/showcase_video/") || s3Key.startsWith("assets/public/")) {
         isPublicAsset = true;
@@ -101,13 +60,12 @@ const handler = async (req: Request): Promise<Response> => {
       if (s3Key.startsWith("works/") || s3Key.startsWith("works/previews/")) {
         const { data: work } = await supabase
           .from("works")
-          .select("id, status, show_on_gallery, storage_provider")
+          .select("id, status, show_on_gallery")
           .or(`s3_key.eq.${s3Key},s3_preview_key.eq.${s3Key}`)
           .single();
         
         if (work && work.status === "active" && work.show_on_gallery) {
           isPublicAsset = true;
-          storageProvider = work.storage_provider;
         }
       }
     } else {
@@ -117,7 +75,6 @@ const handler = async (req: Request): Promise<Response> => {
       albumId = body.albumId;
       shareToken = body.shareToken;
       sharePassword = body.sharePassword;
-      storageProvider = body.storageProvider;
     }
 
     if (!s3Key) {
@@ -125,11 +82,6 @@ const handler = async (req: Request): Promise<Response> => {
         status: 400,
         headers: { "Content-Type": "application/json", ...corsHeaders },
       });
-    }
-
-    // Resolve provider if not provided
-    if (!storageProvider) {
-      storageProvider = await resolveProvider(supabase, s3Key, albumId);
     }
 
     let hasAccess = isPublicAsset;
@@ -263,9 +215,9 @@ const handler = async (req: Request): Promise<Response> => {
       });
     }
 
-    console.log(`Generating signed URL for: ${s3Key} (provider: ${storageProvider})`);
+    console.log(`Generating signed URL for: ${s3Key} (provider: r2)`);
 
-    const signedReq = await getSignedUrl(s3Key, storageProvider);
+    const signedReq = await getSignedUrl(s3Key);
     const presignedUrl = signedReq.url;
 
     return new Response(

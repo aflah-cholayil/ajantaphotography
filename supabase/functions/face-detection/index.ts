@@ -7,16 +7,15 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// AWS Rekognition client (NOT S3 storage — this is a separate AWS service)
 const awsRegion = Deno.env.get("AWS_REGION") || "us-east-1";
-const awsBucket = Deno.env.get("AWS_BUCKET_NAME")!;
-
-const aws = new AwsClient({
+const rekognitionClient = new AwsClient({
   accessKeyId: Deno.env.get("AWS_ACCESS_KEY_ID")!,
   secretAccessKey: Deno.env.get("AWS_SECRET_ACCESS_KEY")!,
   region: awsRegion,
 });
 
-// R2 for fetching images stored there
+// R2 for fetching images
 const r2Endpoint = Deno.env.get("R2_ENDPOINT")!;
 const r2Bucket = Deno.env.get("R2_BUCKET_NAME")!;
 const r2Client = new AwsClient({
@@ -47,36 +46,21 @@ interface RekognitionFace {
   FaceId?: string;
 }
 
-async function detectFacesInImage(s3Key: string, provider: string): Promise<RekognitionFace[]> {
+async function detectFacesInImage(s3Key: string): Promise<RekognitionFace[]> {
   const endpoint = `https://rekognition.${awsRegion}.amazonaws.com`;
   
-  let body: string;
-
-  if (provider === "r2") {
-    // Download from R2 and send as bytes
-    const objectUrl = `${r2Endpoint}/${r2Bucket}/${s3Key}`;
-    const signedReq = await r2Client.sign(objectUrl, { method: "GET", aws: { signQuery: true } });
-    const imageRes = await fetch(signedReq.url);
-    if (!imageRes.ok) throw new Error(`Failed to download R2 image: ${imageRes.status}`);
-    const imageBytes = await imageRes.arrayBuffer();
-    const base64 = btoa(String.fromCharCode(...new Uint8Array(imageBytes)));
-    
-    body = JSON.stringify({
-      Image: { Bytes: base64 },
-      Attributes: ["DEFAULT"],
-    });
-  } else {
-    // Use S3Object reference for AWS-stored images
-    body = JSON.stringify({
-      Image: {
-        S3Object: {
-          Bucket: awsBucket,
-          Name: s3Key,
-        },
-      },
-      Attributes: ["DEFAULT"],
-    });
-  }
+  // Always download from R2 and send as bytes to Rekognition
+  const objectUrl = `${r2Endpoint}/${r2Bucket}/${s3Key}`;
+  const signedReq = await r2Client.sign(objectUrl, { method: "GET", aws: { signQuery: true } });
+  const imageRes = await fetch(signedReq.url);
+  if (!imageRes.ok) throw new Error(`Failed to download R2 image: ${imageRes.status}`);
+  const imageBytes = await imageRes.arrayBuffer();
+  const base64 = btoa(String.fromCharCode(...new Uint8Array(imageBytes)));
+  
+  const body = JSON.stringify({
+    Image: { Bytes: base64 },
+    Attributes: ["DEFAULT"],
+  });
 
   const request = new Request(endpoint, {
     method: "POST",
@@ -87,7 +71,7 @@ async function detectFacesInImage(s3Key: string, provider: string): Promise<Reko
     body,
   });
 
-  const signedRequest = await aws.sign(request, {
+  const signedRequest = await rekognitionClient.sign(request, {
     aws: { service: "rekognition" },
   });
 
@@ -122,7 +106,7 @@ async function processAlbumFaces(albumId: string) {
 
     const { data: mediaItems, error: mediaError } = await supabase
       .from("media")
-      .select("id, s3_key, s3_preview_key, storage_provider")
+      .select("id, s3_key, s3_preview_key")
       .eq("album_id", albumId)
       .eq("type", "photo");
 
@@ -137,10 +121,9 @@ async function processAlbumFaces(albumId: string) {
     for (const item of mediaItems || []) {
       try {
         const s3Key = item.s3_preview_key || item.s3_key;
-        const provider = (item as any).storage_provider || "aws";
-        console.log(`[Background] Processing image: ${s3Key} (${provider})`);
+        console.log(`[Background] Processing image: ${s3Key}`);
 
-        const faces = await detectFacesInImage(s3Key, provider);
+        const faces = await detectFacesInImage(s3Key);
         console.log(`[Background] Detected ${faces.length} faces in ${item.id}`);
 
         for (const face of faces) {
