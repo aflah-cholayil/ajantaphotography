@@ -1,55 +1,60 @@
 
 
-# Fix Download Behavior -- Blob-Based Downloads
+# Multi-Select Download System -- UI Enhancement
 
-## Problem
+## Current State
 
-Download buttons currently set an R2 signed URL as `link.href` with `link.download`. Since the URL is cross-origin, browsers ignore the `download` attribute and open the file in a new tab instead of downloading it.
+The codebase already has working multi-select and ZIP download:
+- Selection mode toggle, checkboxes on items, "Select All" buttons
+- `handleDownloadSelected` creates a ZIP via JSZip with blob downloads
+- Single file download uses blob approach
 
-## Solution
+## What Needs Improving
 
-Use the blob fetch approach: fetch the signed URL as a blob, create an object URL, and trigger download from that. This works reliably cross-origin.
+### 1. Sticky Bottom Action Bar (`src/pages/client/AlbumView.tsx`)
 
-## Changes
+Currently, selection controls are only in the header and can be hard to see. Add a fixed bottom action bar that appears when in selection mode:
 
-### 1. `src/pages/client/AlbumView.tsx` -- `handleDownload`
-
-Replace the current `<a>` link approach with:
-
-```typescript
-const response = await fetch(url);
-const blob = await response.blob();
-const blobUrl = window.URL.createObjectURL(blob);
-const a = document.createElement('a');
-a.href = blobUrl;
-a.download = item.file_name;
-document.body.appendChild(a);
-a.click();
-a.remove();
-window.URL.revokeObjectURL(blobUrl);
+```text
++------------------------------------------------------+
+|  [X] 5 selected    [Download Selected]  [Cancel]     |
++------------------------------------------------------+
 ```
 
-Remove `link.target = '_blank'` -- no longer needed.
+- Fixed to viewport bottom with `fixed bottom-0 left-0 right-0 z-40`
+- Shows selected count
+- "Download Selected" button (disabled if 0 selected)
+- "Cancel" to exit selection mode
+- Animated slide-up/down with framer-motion
 
-### 2. `src/pages/share/SharedGallery.tsx` -- `handleDownload`
+### 2. Single vs Multi Download Logic
 
-Same blob-based download pattern as above, replacing the current direct-link approach.
+Update `handleDownloadSelected`:
+- If exactly 1 item selected: use direct blob download (no ZIP overhead)
+- If 2+ items selected: create ZIP as currently implemented
 
-### 3. `src/pages/admin/AlbumDetail.tsx` -- Admin download (if applicable)
+### 3. ZIP Filename Improvement
 
-Apply the same pattern to any single-file download in the admin view. The ZIP download logic already works correctly (it creates a blob via JSZip), so no changes needed there.
+Change ZIP filename from `{title}_gallery.zip` to include event context. Fetch client event name and use: `{EventName}_{AlbumTitle}.zip` format. If event name unavailable, fall back to `{AlbumTitle}_gallery.zip`.
 
-## What stays unchanged
+### 4. "Download Entire Album" Option
 
-- Signed URL generation in the edge function (no backend changes needed)
-- ZIP download logic (already blob-based)
-- Upload logic
-- All other edge functions
+When entering selection mode, show a "Select All" and "Download Entire Album" option. "Download Entire Album" should:
+- First load ALL media (paginate through remaining pages if `hasMore` is true)
+- Then ZIP all items
 
-## Technical Notes
+### 5. Move Header Selection Controls to Bottom Bar
 
-- The blob approach works for both images and videos
-- Content-Type is preserved automatically by the browser's fetch
-- File name is controlled by `a.download` which works with blob URLs (same-origin)
-- For very large video files, this will buffer the entire file in memory before saving -- acceptable for typical gallery use cases
+Remove the selection-mode buttons from the header. Keep only the "Select" toggle button in the header. All active selection controls move to the bottom bar.
+
+## Files to Modify
+
+- `src/pages/client/AlbumView.tsx` -- Bottom action bar, improved download logic, fetch-all for entire album download
+
+## What Stays Unchanged
+
+- `OptimizedMediaGrid.tsx` -- Checkbox rendering already works
+- Edge functions -- No backend changes needed
+- JSZip logic -- Already correct, just needs filename tweak
+- Admin album detail -- Separate concern
 
