@@ -11,6 +11,7 @@ import { AlbumStatusBadge } from '@/components/admin/AlbumStatusBadge';
 import { PullToRefresh } from '@/components/ui/PullToRefresh';
 import { Logo } from '@/components/shared/Logo';
 import { MinimalFooter } from '@/components/shared/MinimalFooter';
+import { AlbumCover } from '@/components/client/AlbumCover';
 import { ChangePasswordDialog } from '@/components/client/ChangePasswordDialog';
 
 interface ClientData {
@@ -290,17 +291,11 @@ const ClientDashboard = () => {
                     <Card className="bg-card border-border hover:border-primary/50 transition-colors overflow-hidden">
                       {/* Album Cover */}
                       <div className="aspect-video bg-muted relative">
-                        {album.cover_image_key ? (
-                          <img
-                            src={`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/s3-signed-url?key=${album.cover_image_key}`}
-                            alt={album.title}
-                            className="w-full h-full object-cover"
-                          />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center">
-                            <Image size={40} className="text-muted-foreground/30" />
-                          </div>
-                        )}
+                        <AlbumCover
+                          albumId={album.id}
+                          coverImageKey={album.cover_image_key}
+                          alt={album.title}
+                        />
                         <div className="absolute top-2 right-2 sm:top-3 sm:right-3">
                           <AlbumStatusBadge status={album.status} />
                         </div>
