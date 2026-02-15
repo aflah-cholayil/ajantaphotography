@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useCallback } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AdminLayout } from '@/components/admin/AdminLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -93,19 +93,21 @@ const TOOLTIP_STYLE = {
 // ─── Component ──────────────────────────────────────────────────────────────
 
 const StorageDashboard = () => {
-  const [forceRefresh, setForceRefresh] = useState(false);
+  const queryClient = useQueryClient();
 
-  const { data: stats, isLoading, error, refetch, isFetching } = useQuery({
-    queryKey: ['storage-stats', forceRefresh],
-    queryFn: () => fetchStorageStats(forceRefresh),
+  const { data: stats, isLoading, error, isFetching } = useQuery({
+    queryKey: ['storage-stats'],
+    queryFn: () => fetchStorageStats(false),
     staleTime: 10 * 60 * 1000,
     retry: 1,
   });
 
-  const handleRefresh = () => {
-    setForceRefresh(true);
-    setTimeout(() => { refetch(); setForceRefresh(false); }, 100);
-  };
+  const handleRefresh = useCallback(async () => {
+    await queryClient.fetchQuery({
+      queryKey: ['storage-stats'],
+      queryFn: () => fetchStorageStats(true),
+    });
+  }, [queryClient]);
 
   const cacheAge = stats ? Math.round((Date.now() - stats.cachedAt) / 60000) : null;
 
