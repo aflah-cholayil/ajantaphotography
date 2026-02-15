@@ -63,6 +63,21 @@ async function getSignedUrl(s3Key: string, albumId: string, retryCount = 0): Pro
       body: { s3Key, albumId },
     });
 
+    // Don't retry on auth/access errors (403)
+    if (response.error) {
+      const status = (response.error as any)?.context?.status;
+      if (status === 403 || status === 401) {
+        console.warn('Access denied for signed URL:', s3Key);
+        return null;
+      }
+      // Retry transient errors
+      if (retryCount < 2) {
+        await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
+        return getSignedUrl(s3Key, albumId, retryCount + 1);
+      }
+      return null;
+    }
+
     if (response.data?.url) {
       urlCache.set(cacheKey, {
         url: response.data.url,
@@ -72,7 +87,6 @@ async function getSignedUrl(s3Key: string, albumId: string, retryCount = 0): Pro
     }
   } catch (err) {
     console.error('Error getting signed URL:', err);
-    // Retry up to 2 times
     if (retryCount < 2) {
       await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1)));
       return getSignedUrl(s3Key, albumId, retryCount + 1);

@@ -53,6 +53,15 @@ async function getSignedUrl(s3Key: string, albumId: string): Promise<string | nu
       body: { s3Key, albumId },
     });
 
+    // Don't retry on auth/access errors
+    if (response.error) {
+      const status = (response.error as any)?.context?.status;
+      if (status === 403 || status === 401) {
+        console.warn('Access denied for signed URL:', s3Key);
+        return null;
+      }
+    }
+
     if (response.data?.url) {
       urlCache.set(cacheKey, {
         url: response.data.url,
