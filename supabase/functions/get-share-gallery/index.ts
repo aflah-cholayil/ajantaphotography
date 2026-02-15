@@ -8,15 +8,36 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// AWS (legacy)
 const awsRegion = Deno.env.get("AWS_REGION") || "us-east-1";
-const bucketName = Deno.env.get("AWS_BUCKET_NAME")!;
-
-const aws = new AwsClient({
+const awsBucket = Deno.env.get("AWS_BUCKET_NAME")!;
+const awsClient = new AwsClient({
   accessKeyId: Deno.env.get("AWS_ACCESS_KEY_ID")!,
   secretAccessKey: Deno.env.get("AWS_SECRET_ACCESS_KEY")!,
   region: awsRegion,
   service: "s3",
 });
+
+// R2
+const r2Endpoint = Deno.env.get("R2_ENDPOINT")!;
+const r2Bucket = Deno.env.get("R2_BUCKET_NAME")!;
+const r2Client = new AwsClient({
+  accessKeyId: Deno.env.get("R2_ACCESS_KEY_ID")!,
+  secretAccessKey: Deno.env.get("R2_SECRET_ACCESS_KEY")!,
+  region: "auto",
+  service: "s3",
+});
+
+async function signUrl(s3Key: string, provider: string) {
+  if (provider === "r2") {
+    const objectUrl = `${r2Endpoint}/${r2Bucket}/${s3Key}`;
+    const signed = await r2Client.sign(objectUrl, { method: "GET", aws: { signQuery: true } });
+    return signed.url;
+  }
+  const objectUrl = `https://${awsBucket}.s3.${awsRegion}.amazonaws.com/${s3Key}`;
+  const signed = await awsClient.sign(objectUrl, { method: "GET", aws: { signQuery: true } });
+  return signed.url;
+}
 
 interface RequestBody {
   token: string;
@@ -26,7 +47,6 @@ interface RequestBody {
 }
 
 const handler = async (req: Request): Promise<Response> => {
-  // Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -35,19 +55,15 @@ const handler = async (req: Request): Promise<Response> => {
     const body: RequestBody = await req.json();
     const { token, password, action, s3Key } = body;
 
-    // Validate token
     if (!token || typeof token !== "string") {
-      console.log("Missing or invalid token");
       return new Response(
         JSON.stringify({ error: "Invalid share link" }),
         { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } }
       );
     }
 
-    // Trim and normalize token
     const normalizedToken = token.trim();
     
-    // Initialize Supabase with service role (bypasses RLS)
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
@@ -55,7 +71,6 @@ const handler = async (req: Request): Promise<Response> => {
 
     console.log(`Processing share gallery request: action=${action}, token=${normalizedToken.substring(0, 8)}...`);
 
-    // Fetch share link using service role (bypasses RLS)
     const { data: shareLink, error: shareLinkError } = await supabase
       .from("share_links")
       .select("*")
@@ -71,23 +86,19 @@ const handler = async (req: Request): Promise<Response> => {
     }
 
     if (!shareLink) {
-      console.log("Share link not found for token:", normalizedToken.substring(0, 8));
       return new Response(
         JSON.stringify({ error: "This share link is invalid or has been removed" }),
         { status: 404, headers: { "Content-Type": "application/json", ...corsHeaders } }
       );
     }
 
-    // Check expiry
     if (shareLink.expires_at && new Date(shareLink.expires_at) < new Date()) {
-      console.log("Share link expired:", shareLink.id);
       return new Response(
         JSON.stringify({ error: "This share link has expired" }),
         { status: 410, headers: { "Content-Type": "application/json", ...corsHeaders } }
       );
     }
 
-    // VERIFY action - just check if share link exists and if password is required
     if (action === "verify") {
       return new Response(
         JSON.stringify({
@@ -100,7 +111,7 @@ const handler = async (req: Request): Promise<Response> => {
       );
     }
 
-    // For load and get-signed-url actions, verify password if required
+    // Verify password if required
     if (shareLink.password_hash) {
       if (!password) {
         return new Response(
@@ -118,9 +129,7 @@ const handler = async (req: Request): Promise<Response> => {
       }
     }
 
-    // LOAD action - fetch album and media data
     if (action === "load") {
-      // Fetch album
       const { data: album, error: albumError } = await supabase
         .from("albums")
         .select("id, title, description")
@@ -128,17 +137,16 @@ const handler = async (req: Request): Promise<Response> => {
         .maybeSingle();
 
       if (albumError || !album) {
-        console.error("Error fetching album:", albumError);
         return new Response(
           JSON.stringify({ error: "This gallery does not exist" }),
           { status: 404, headers: { "Content-Type": "application/json", ...corsHeaders } }
         );
       }
 
-      // Fetch media
+      // Fetch media with storage_provider
       const { data: media, error: mediaError } = await supabase
         .from("media")
-        .select("id, file_name, s3_key, s3_preview_key, type, width, height")
+        .select("id, file_name, s3_key, s3_preview_key, type, width, height, storage_provider")
         .eq("album_id", shareLink.album_id)
         .order("sort_order", { ascending: true });
 
@@ -146,17 +154,14 @@ const handler = async (req: Request): Promise<Response> => {
         console.error("Error fetching media:", mediaError);
       }
 
-      // Generate signed URLs for all media
+      // Generate signed URLs using correct provider per item
       const mediaWithUrls = await Promise.all(
-        (media || []).map(async (item) => {
+        (media || []).map(async (item: any) => {
           const previewKey = item.s3_preview_key || item.s3_key;
+          const provider = item.storage_provider || "aws";
           try {
-            const objectUrl = `https://${bucketName}.s3.${awsRegion}.amazonaws.com/${previewKey}`;
-            const signedReq = await aws.sign(objectUrl, {
-              method: "GET",
-              aws: { signQuery: true },
-            });
-            return { ...item, signedUrl: signedReq.url };
+            const url = await signUrl(previewKey, provider);
+            return { ...item, signedUrl: url };
           } catch (err) {
             console.error(`Error signing URL for ${item.id}:`, err);
             return { ...item, signedUrl: null };
@@ -164,13 +169,10 @@ const handler = async (req: Request): Promise<Response> => {
         })
       );
 
-      // Increment view count
       await supabase
         .from("share_links")
         .update({ view_count: (shareLink.view_count || 0) + 1 })
         .eq("id", shareLink.id);
-
-      console.log(`Gallery loaded: ${album.title} with ${mediaWithUrls.length} media items`);
 
       return new Response(
         JSON.stringify({
@@ -187,17 +189,21 @@ const handler = async (req: Request): Promise<Response> => {
       );
     }
 
-    // GET-SIGNED-URL action - get signed URL for a specific media item
     if (action === "get-signed-url" && s3Key) {
-      try {
-        const objectUrl = `https://${bucketName}.s3.${awsRegion}.amazonaws.com/${s3Key}`;
-        const signedReq = await aws.sign(objectUrl, {
-          method: "GET",
-          aws: { signQuery: true },
-        });
+      // Look up provider for this specific key
+      const { data: mediaItem } = await supabase
+        .from("media")
+        .select("storage_provider")
+        .or(`s3_key.eq.${s3Key},s3_preview_key.eq.${s3Key}`)
+        .limit(1)
+        .maybeSingle();
+      
+      const provider = mediaItem?.storage_provider || "aws";
 
+      try {
+        const url = await signUrl(s3Key, provider);
         return new Response(
-          JSON.stringify({ url: signedReq.url }),
+          JSON.stringify({ url }),
           { headers: { "Content-Type": "application/json", ...corsHeaders } }
         );
       } catch (err) {
@@ -215,7 +221,6 @@ const handler = async (req: Request): Promise<Response> => {
     );
   } catch (error: unknown) {
     console.error("Error in get-share-gallery function:", error);
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
     return new Response(
       JSON.stringify({ error: "An error occurred while loading the gallery" }),
       { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } }

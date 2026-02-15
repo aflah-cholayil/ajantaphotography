@@ -479,6 +479,7 @@ export class UploadEngine {
             width,
             height,
             duration,
+            storageProvider: 'r2',
           },
         });
 
