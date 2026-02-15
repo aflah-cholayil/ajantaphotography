@@ -1,54 +1,55 @@
 
+# Increase Upload Concurrency + Dynamic Throttle
 
-# Fix Storage Dashboard Refresh
+## Overview
 
-## Problem
+Upgrade the upload engine from a fixed 4-concurrent-file limit to a dynamic 4-8 range based on real-time network speed measurement, while maintaining stability and correct UI reporting.
 
-The `handleRefresh` function on line 105-108 has a race condition:
+## Changes
 
-1. Sets `forceRefresh = true` (queryKey becomes `['storage-stats', true]`)
-2. After 100ms, calls `refetch()` and sets `forceRefresh = false`
-3. Setting `forceRefresh = false` changes the queryKey back to `['storage-stats', false]`, which still has stale cached data
-4. The fresh data fetched with `force=true` is stored under a different queryKey and never displayed
+### File: `src/lib/uploadEngine.ts`
 
-## Fix
+**1. Constants Update**
+- Change `MAX_CONCURRENT_FILES` from 4 to 8 (new max ceiling)
+- Add `MIN_CONCURRENT_FILES = 4` (floor for slow networks)
+- Add `SPEED_CHECK_INTERVAL = 5000` (measure speed every 5s)
+- Add speed thresholds: `THROTTLE_DOWN_SPEED = 1 * 1024 * 1024` (1MB/s) and `THROTTLE_UP_SPEED = 5 * 1024 * 1024` (5MB/s)
 
-Replace the current approach with a simpler pattern:
+**2. Dynamic Concurrency in `UploadEngine` class**
+- Add private fields: `currentConcurrency = 8`, `speedSamples: number[]`, `lastSpeedCheck: number`
+- Add a `measureSpeed()` method that calculates bytes/sec from `totalBytesUploaded` delta over the last interval
+- In the `start()` and `retryFailed()` upload loops, replace the fixed `MAX_CONCURRENT_FILES` check with `this.currentConcurrency`
+- After each file completes, call `adjustConcurrency()`:
+  - If average speed < 1MB/s, reduce to 4
+  - If average speed > 5MB/s, allow up to 8
+  - Otherwise keep current value
+- This is a simple approach -- no complex promise pool library needed, just adjusting the gate in the existing `while` loop
 
-- Remove `forceRefresh` from the queryKey entirely
-- Use a ref or direct parameter to control the `force` flag
-- Call `refetch()` after invalidating the cache
+**3. Expose concurrency in state (for UI)**
+- Add `activeConcurrency: number` to `UploadEngineState` interface
+- Set it in `notify()` from `this.currentConcurrency`
 
-### Technical Details
+**4. No changes to:**
+- Retry limit (stays at 3)
+- AbortController logic (already per-upload)
+- File size validation (already done in `validateBatch`)
+- R2 direct upload logic
+- CORS configuration
+- Progress calculation (already uses `bytesUploaded / totalBytes`)
 
-**File: `src/pages/admin/StorageDashboard.tsx`**
+### File: `src/components/admin/UploadProgressPanel.tsx`
 
-Replace the current state + query setup (lines 96-108):
+- Display current concurrency next to the uploading count: e.g., "3 uploading (x8 slots)" so the user can see the dynamic throttle in action
 
-```typescript
-// Remove forceRefresh state entirely
+### Technical Notes
 
-const { data: stats, isLoading, error, refetch, isFetching } = useQuery({
-  queryKey: ['storage-stats'],
-  queryFn: () => fetchStorageStats(false),
-  staleTime: 10 * 60 * 1000,
-  retry: 1,
-});
-
-const handleRefresh = useCallback(async () => {
-  // Fetch fresh data with force=true directly
-  const queryClient = useQueryClient();
-  await queryClient.fetchQuery({
-    queryKey: ['storage-stats'],
-    queryFn: () => fetchStorageStats(true),
-  });
-}, []);
+```text
+Speed < 1MB/s:  concurrency = 4  (protect slow connections)
+Speed 1-5MB/s:  concurrency = unchanged (keep current)  
+Speed > 5MB/s:  concurrency = 8  (maximize throughput)
 ```
 
-This ensures:
-- Fresh data is fetched with `force=true` (bypasses the 10-min server cache)
-- The result is stored under the same queryKey, so the UI updates immediately
-- No race condition between state changes and refetches
-
-One additional import (`useQueryClient` from `@tanstack/react-query`) will be added.
-
+- Speed is measured as a rolling average of the last 3 samples (15 seconds of data) to avoid jitter
+- Concurrency adjustments only happen between file completions, not mid-upload
+- No memory leak risk: speed samples array is capped at 3 entries
+- No duplicate uploads: the existing `nextIndex` counter and `Promise.race` pattern prevents double-queuing
