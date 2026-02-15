@@ -7,35 +7,22 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// AWS (legacy)
-const awsRegion = Deno.env.get("AWS_REGION") || "us-east-1";
-const awsBucket = Deno.env.get("AWS_BUCKET_NAME")!;
-const awsClient = new AwsClient({
-  accessKeyId: Deno.env.get("AWS_ACCESS_KEY_ID")!,
-  secretAccessKey: Deno.env.get("AWS_SECRET_ACCESS_KEY")!,
-  region: awsRegion,
-  service: "s3",
-});
+// R2 only — validate env vars
+const r2Endpoint = Deno.env.get("R2_ENDPOINT") || "";
+const r2Bucket = Deno.env.get("R2_BUCKET_NAME") || "";
+const r2AccessKeyId = Deno.env.get("R2_ACCESS_KEY_ID") || "";
+const r2SecretAccessKey = Deno.env.get("R2_SECRET_ACCESS_KEY") || "";
 
-// R2 (new uploads)
-const r2Endpoint = Deno.env.get("R2_ENDPOINT")!;
-const r2Bucket = Deno.env.get("R2_BUCKET_NAME")!;
+console.log(`[s3-multipart] R2 env check: ENDPOINT=${!!r2Endpoint}, BUCKET=${!!r2Bucket}, ACCESS_KEY=${!!r2AccessKeyId}, SECRET_KEY=${!!r2SecretAccessKey}`);
+
 const r2Client = new AwsClient({
-  accessKeyId: Deno.env.get("R2_ACCESS_KEY_ID")!,
-  secretAccessKey: Deno.env.get("R2_SECRET_ACCESS_KEY")!,
+  accessKeyId: r2AccessKeyId,
+  secretAccessKey: r2SecretAccessKey,
   region: "auto",
   service: "s3",
 });
 
-function getClient(provider: string) {
-  return provider === "r2" ? r2Client : awsClient;
-}
-
-function getBaseUrl(provider: string) {
-  return provider === "r2"
-    ? `${r2Endpoint}/${r2Bucket}`
-    : `https://${awsBucket}.s3.${awsRegion}.amazonaws.com`;
-}
+const baseUrl = `${r2Endpoint}/${r2Bucket}`;
 
 async function verifyAdmin(req: Request) {
   const authHeader = req.headers.get("Authorization");
@@ -68,12 +55,10 @@ async function verifyAdmin(req: Request) {
   return user.id;
 }
 
-async function initiateMultipartUpload(s3Key: string, contentType: string, provider: string) {
-  const client = getClient(provider);
-  const baseUrl = getBaseUrl(provider);
+async function initiateMultipartUpload(s3Key: string, contentType: string) {
   const url = `${baseUrl}/${s3Key}?uploads`;
 
-  const signed = await client.sign(url, {
+  const signed = await r2Client.sign(url, {
     method: "POST",
     headers: { "Content-Type": contentType },
   });
@@ -81,8 +66,8 @@ async function initiateMultipartUpload(s3Key: string, contentType: string, provi
   const res = await fetch(signed);
   if (!res.ok) {
     const text = await res.text();
-    console.error("Initiate multipart error:", text);
-    throw new Error(`Failed to initiate multipart upload: ${res.status}`);
+    console.error(`[s3-multipart] Initiate error for ${s3Key}: status=${res.status}, body=${text}`);
+    throw new Error(`Failed to initiate multipart upload: ${res.status} - ${text}`);
   }
 
   const xml = await res.text();
@@ -91,22 +76,21 @@ async function initiateMultipartUpload(s3Key: string, contentType: string, provi
   return uploadIdMatch[1];
 }
 
-async function getPartUploadUrl(s3Key: string, uploadId: string, partNumber: number, provider: string) {
-  const client = getClient(provider);
-  const baseUrl = getBaseUrl(provider);
+async function getPartUploadUrl(s3Key: string, uploadId: string, partNumber: number) {
   const url = `${baseUrl}/${s3Key}?partNumber=${partNumber}&uploadId=${encodeURIComponent(uploadId)}`;
 
-  const signed = await client.sign(url, {
+  const signed = await r2Client.sign(url, {
     method: "PUT",
+    headers: {
+      "X-Amz-Expires": "3600",
+    },
     aws: { signQuery: true },
   });
 
   return signed.url;
 }
 
-async function completeMultipartUpload(s3Key: string, uploadId: string, parts: { PartNumber: number; ETag: string }[], provider: string) {
-  const client = getClient(provider);
-  const baseUrl = getBaseUrl(provider);
+async function completeMultipartUpload(s3Key: string, uploadId: string, parts: { PartNumber: number; ETag: string }[]) {
   const url = `${baseUrl}/${s3Key}?uploadId=${encodeURIComponent(uploadId)}`;
 
   const partsXml = parts
@@ -116,7 +100,7 @@ async function completeMultipartUpload(s3Key: string, uploadId: string, parts: {
 
   const body = `<CompleteMultipartUpload>${partsXml}</CompleteMultipartUpload>`;
 
-  const signed = await client.sign(url, {
+  const signed = await r2Client.sign(url, {
     method: "POST",
     headers: { "Content-Type": "application/xml" },
     body,
@@ -125,22 +109,20 @@ async function completeMultipartUpload(s3Key: string, uploadId: string, parts: {
   const res = await fetch(signed);
   if (!res.ok) {
     const text = await res.text();
-    console.error("Complete multipart error:", text);
-    throw new Error(`Failed to complete multipart upload: ${res.status}`);
+    console.error(`[s3-multipart] Complete error for ${s3Key}: status=${res.status}, body=${text}`);
+    throw new Error(`Failed to complete multipart upload: ${res.status} - ${text}`);
   }
   return true;
 }
 
-async function abortMultipartUpload(s3Key: string, uploadId: string, provider: string) {
-  const client = getClient(provider);
-  const baseUrl = getBaseUrl(provider);
+async function abortMultipartUpload(s3Key: string, uploadId: string) {
   const url = `${baseUrl}/${s3Key}?uploadId=${encodeURIComponent(uploadId)}`;
 
-  const signed = await client.sign(url, { method: "DELETE" });
+  const signed = await r2Client.sign(url, { method: "DELETE" });
   const res = await fetch(signed);
   if (!res.ok) {
     const text = await res.text();
-    console.error("Abort multipart error:", text);
+    console.error(`[s3-multipart] Abort error for ${s3Key}: status=${res.status}, body=${text}`);
   }
   return true;
 }
@@ -153,10 +135,7 @@ const handler = async (req: Request): Promise<Response> => {
   try {
     await verifyAdmin(req);
 
-    const { action, albumId, fileName, fileType, fileSize, s3Key, uploadId, partNumber, parts, storageProvider } = await req.json();
-
-    // Default new uploads to R2, but support AWS for abort of legacy uploads
-    const provider = storageProvider || "r2";
+    const { action, albumId, fileName, fileType, fileSize, s3Key, uploadId, partNumber, parts } = await req.json();
 
     if (action === "initiate") {
       if (!albumId || !fileName || !fileType) {
@@ -169,7 +148,9 @@ const handler = async (req: Request): Promise<Response> => {
       const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, "_");
       const key = `albums/${albumId}/originals/${timestamp}_${sanitizedFileName}`;
 
-      const uploadIdResult = await initiateMultipartUpload(key, fileType, "r2");
+      console.log(`[s3-multipart] Initiating upload: file=${fileName}, size=${fileSize}, key=${key}`);
+
+      const uploadIdResult = await initiateMultipartUpload(key, fileType);
 
       return new Response(JSON.stringify({ uploadId: uploadIdResult, s3Key: key, storageProvider: "r2" }), {
         status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -183,7 +164,7 @@ const handler = async (req: Request): Promise<Response> => {
         });
       }
 
-      const url = await getPartUploadUrl(s3Key, uploadId, partNumber, provider);
+      const url = await getPartUploadUrl(s3Key, uploadId, partNumber);
 
       return new Response(JSON.stringify({ url }), {
         status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -197,9 +178,10 @@ const handler = async (req: Request): Promise<Response> => {
         });
       }
 
-      await completeMultipartUpload(s3Key, uploadId, parts, provider);
+      console.log(`[s3-multipart] Completing upload: key=${s3Key}, parts=${parts.length}`);
+      await completeMultipartUpload(s3Key, uploadId, parts);
 
-      return new Response(JSON.stringify({ success: true, s3Key, storageProvider: provider }), {
+      return new Response(JSON.stringify({ success: true, s3Key, storageProvider: "r2" }), {
         status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -211,7 +193,8 @@ const handler = async (req: Request): Promise<Response> => {
         });
       }
 
-      await abortMultipartUpload(s3Key, uploadId, provider);
+      console.log(`[s3-multipart] Aborting upload: key=${s3Key}`);
+      await abortMultipartUpload(s3Key, uploadId);
 
       return new Response(JSON.stringify({ success: true }), {
         status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -222,7 +205,7 @@ const handler = async (req: Request): Promise<Response> => {
       status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
-    console.error("Error in s3-multipart-upload:", error);
+    console.error("[s3-multipart] Error:", error);
     const message = error instanceof Error ? error.message : "Unknown error";
     const status = message === "Unauthorized" ? 401 : message === "Admin access required" ? 403 : 500;
     return new Response(JSON.stringify({ error: message }), {
