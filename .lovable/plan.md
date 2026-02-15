@@ -1,193 +1,146 @@
 
 
-# Bulk Folder Upload System (30-40GB Support)
+# Production-Grade Upload System Rebuild
 
-This is a large-scale upgrade to the Admin Album system, turning it into a professional bulk upload platform for large photography projects. The plan is broken into phases for manageable implementation.
-
----
-
-## Phase 1: Folder Upload with Album Creation Dialog
-
-**What it does:** Allows admins to drag-and-drop an entire folder (or use a folder picker) and automatically create an album from it.
-
-- Upgrade `MediaUploader` component to support folder selection via `webkitdirectory` attribute and folder drag-and-drop
-- Recursively detect all images/videos from subfolders
-- When folder is dropped/selected on the Albums page, show a "Create Album from Folder" dialog with:
-  - Album Name (auto-filled from folder name, editable)
-  - Client dropdown
-  - Event Date picker
-  - Auto Scan Faces toggle (default ON)
-- On "Create and Upload": create album record, then begin uploading all files
-
-**Files changed:**
-- `src/components/admin/MediaUploader.tsx` -- add folder support, increase concurrency
-- `src/components/admin/FolderUploadDialog.tsx` -- NEW: album creation modal for folder uploads
-- `src/pages/admin/Albums.tsx` -- add "Upload Folder" button that opens the dialog
-- `src/pages/admin/AlbumDetail.tsx` -- add "Add Folder" / "Add More Files" button
+A complete overhaul of the upload engine, edge functions, and UI to handle 5GB-40GB folders with 2000-6000 files reliably.
 
 ---
 
-## Phase 2: High-Performance Upload Engine
+## Problem Analysis
 
-**What it does:** Replaces the current single-PUT upload with a chunked, parallel, resumable system for handling 30-40GB reliably.
+After reviewing the current code, these specific bugs and gaps cause failures:
 
-- Implement S3 Multipart Upload via a new edge function `s3-multipart-upload` supporting:
-  - `initiate` -- starts a multipart upload, returns uploadId
-  - `get_part_url` -- returns a presigned URL for each part (5-20MB chunks)
-  - `complete` -- finalizes the multipart upload
-  - `abort` -- cancels an incomplete upload
-- Frontend upload engine (`src/lib/uploadEngine.ts`) handles:
-  - Chunking files into 10MB parts
-  - Parallel upload of 5-10 files simultaneously with 3 concurrent parts per file
-  - Per-file and overall progress tracking
-  - Automatic retry of failed chunks (up to 3 retries)
-  - Resume capability (stores upload state in sessionStorage)
-  - Cancel upload option
-  - Presigned URLs expire after 10 minutes
-
-**Files created:**
-- `supabase/functions/s3-multipart-upload/index.ts` -- NEW edge function
-- `src/lib/uploadEngine.ts` -- NEW: chunked parallel upload engine
-
-**Files changed:**
-- `src/components/admin/MediaUploader.tsx` -- use new upload engine
-- `supabase/config.toml` -- register new edge function
+1. **Queue race condition** in `uploadEngine.ts`: The `enqueue()` function calls itself recursively while also being called in a loop, causing duplicate file processing and memory spikes
+2. **No exponential backoff** on file-level retries -- only chunk-level retries exist (with linear delay)
+3. **No session refresh** before starting uploads -- JWT expires mid-upload for large batches
+4. **Incomplete CORS headers** in `s3-upload` function (missing `x-supabase-client-platform` headers) causing random failures
+5. **No server-side media save** -- DB insert runs client-side and silently fails, leaving orphan S3 files
+6. **No batch size validation** -- browser can freeze when 6000 files are queued at once
+7. **Gallery doesn't auto-refresh** after uploads complete
 
 ---
 
-## Phase 3: Professional Upload UI
+## Phase 1: Fix the Upload Engine Core
 
-**What it does:** Displays detailed, real-time upload statistics.
+**File: `src/lib/uploadEngine.ts`** -- Complete rewrite of queue and retry logic
 
-- Redesign the upload progress display to show:
-  - Total files count and total size (e.g., "Uploading 2,435 files (32.4GB)")
-  - Overall progress bar with percentage
-  - Upload speed (MB/s) calculated from bytes transferred over time
-  - Estimated time remaining
-  - Per-file status list: checkmark (done), spinner with % (uploading), X with retry (failed)
-  - Cancel All button
-- Scrollable file list with status icons
-
-**Files changed:**
-- `src/components/admin/MediaUploader.tsx` -- complete UI redesign for bulk upload stats
-- `src/components/admin/UploadProgressPanel.tsx` -- NEW: dedicated progress panel component
+Changes:
+- Replace recursive `enqueue()` with a proper semaphore-based queue (simple loop with `Promise.race`)
+- Add file-level auto-retry with exponential backoff (1s, 3s, 5s) before marking as failed
+- Add session refresh (`supabase.auth.refreshSession()`) before starting and every 30 minutes during upload
+- Add batch validation: warn if total size exceeds 50GB, reject files over 2GB each
+- Increase parallel files to 8, parts per file to 5
+- Add `dbSaved` status field to track if media record was saved
+- Move media record save into a retry loop (3 attempts)
 
 ---
 
-## Phase 4: Auto Face Scan Fix
+## Phase 2: Harden the Edge Functions
 
-**What it does:** Ensures face recognition triggers automatically and never gets stuck.
+**File: `supabase/functions/s3-upload/index.ts`** -- Fix CORS headers
 
-- After upload completes AND album has media, auto-trigger face detection regardless of album status
-- Add timeout handling: if face processing takes longer than 30 minutes, mark as "failed" with a retry option
-- When no faces are found, show "No faces detected" instead of infinite processing
-- When new files are added to an existing album, only scan the new media (pass `mediaIds` to the edge function)
-- Add incremental scan action to `face-detection` edge function (`action: "process_new_media"`)
+- Update CORS headers to match the complete set used by `s3-multipart-upload`
 
-**Files changed:**
-- `supabase/functions/face-detection/index.ts` -- add incremental scan, timeout handling
-- `src/components/admin/MediaUploader.tsx` -- auto-trigger after upload
-- `src/pages/admin/AlbumDetail.tsx` -- improved face status display
+**File: `supabase/functions/s3-multipart-upload/index.ts`** -- Minor hardening
 
----
+- Add request timeout handling
+- Log upload initiation for debugging
 
-## Phase 5: Bulk Selection System (Client Gallery)
+**New File: `supabase/functions/save-media-record/index.ts`** -- Server-side media save
 
-**What it does:** Adds professional selection tools for the client gallery.
-
-- Shift+Click for range selection
-- "Select All" button per tab (photos/videos)
-- Selection counter in header
-- Download Selected as ZIP
-- Filter by Photos / Videos / People (already partially exists via tabs)
-
-**Files changed:**
-- `src/pages/client/AlbumView.tsx` -- add Shift+Click range selection logic
-- `src/components/client/OptimizedMediaGrid.tsx` -- support shift-click
+- Accepts: `albumId`, `s3Key`, `fileName`, `mimeType`, `size`, `type`, `width`, `height`, `duration`
+- Uses service role to insert into `media` table
+- Returns the created media record ID
+- This ensures DB records are created even if client state is lost
 
 ---
 
-## Phase 6: Streaming ZIP Download
+## Phase 3: Upgrade MediaUploader and Progress UI
 
-**What it does:** Replaces the current in-memory ZIP with a streaming approach for large albums.
+**File: `src/components/admin/MediaUploader.tsx`**
 
-- Create `s3-download-zip` edge function that:
-  - Accepts an array of S3 keys
-  - Streams files from S3 and assembles ZIP on-the-fly
-  - Returns the ZIP as a streaming response
-- Frontend shows download progress
-- Fallback to client-side ZIP for small selections (under 50 files)
+- Add session refresh before starting upload
+- Add batch validation with warning toast (file count, total size limits)
+- Call `onUploadComplete` after each successful file (not just at end) for incremental gallery refresh
+- Increase max file size to 2GB
 
-**Files created:**
-- `supabase/functions/s3-download-zip/index.ts` -- NEW: server-side streaming ZIP
+**File: `src/components/admin/UploadProgressPanel.tsx`**
 
-**Files changed:**
-- `src/pages/client/AlbumView.tsx` -- use server-side ZIP for large downloads
-- `supabase/config.toml` -- register new function
+- Add "Saved to gallery" status indicator (checkmark + "saved" label)
+- Show retry attempt count on failing files
+- Add file count summary in header: "2,435 files (32.4 GB) -- 1,200 uploaded, 8 uploading, 3 failed, 1,224 queued"
 
 ---
 
-## Phase 7: Thumbnail Generation and Optimization
+## Phase 4: Auto-Refresh Gallery
 
-**What it does:** Generates web-optimized versions and thumbnails for faster gallery loading.
+**File: `src/pages/admin/AlbumDetail.tsx`**
 
-- After upload, generate thumbnails server-side via a new edge function `generate-thumbnails`
-- Store in S3 under the path: `albums/{albumId}/thumbnails/{filename}`
-- Save `s3_preview_key` to the media record for the optimized version
-- Client gallery loads thumbnail/preview; download gives original
-- Optional: admin toggle for "compress before upload" (client-side, lossless resize to max 4000px)
-
-**Files created:**
-- `supabase/functions/generate-thumbnails/index.ts` -- NEW: background thumbnail generation
-
-**Files changed:**
-- `src/components/admin/MediaUploader.tsx` -- trigger thumbnail generation after upload
-- `supabase/config.toml` -- register function
+- Pass an `onFileUploaded` callback to `MediaUploader` that calls `fetchMedia()` after every batch of 10 successful uploads (debounced)
+- This makes new files appear in the gallery without manual refresh
 
 ---
 
-## Phase 8: Album Expiry Settings in Admin
+## Phase 5: Background Cleanup
 
-**What it does:** Adds configurable expiry to Studio Settings and shows expiry info in UI.
+**File: `supabase/functions/storage-cleanup/index.ts`** -- Add orphan cleanup action
 
-- Add "Album Expiry" card to Settings page with options: 30 / 60 / 90 / No Expiry
-- Show expiry countdown badge on album cards (Admin and Client)
-- Show warning banner in client album view when album expires within 7 days
-
-**Files changed:**
-- `src/pages/admin/Settings.tsx` -- add Album Expiry section
-- `src/pages/admin/Albums.tsx` -- show expiry badges
-- `src/pages/client/AlbumView.tsx` -- show expiry warning
+- Add `action: 'cleanup_orphans'` that:
+  - Lists S3 objects in `albums/` prefix
+  - Checks each against `media` table
+  - Deletes S3 objects without DB records older than 24 hours
+- Add `action: 'abort_stale_multiparts'` that:
+  - Lists incomplete multipart uploads via S3 API
+  - Aborts any older than 24 hours
 
 ---
 
 ## Technical Details
 
-### Database Migration
-- Add `s3_preview_key` column to `media` table if not present (already exists)
-- No new tables needed -- existing `deletion_logs`, `studio_settings`, and album expiry columns are already in place
+### Queue Architecture (Phase 1)
 
-### Edge Functions Summary
-| Function | Purpose |
+The new queue replaces the recursive pattern with:
+
+```text
+┌─────────────┐
+│ File Queue   │  All files start here
+│ (pending)    │
+└──────┬──────┘
+       │ Dequeue up to 8 files
+       v
+┌─────────────┐
+│ Active Pool  │  Max 8 concurrent uploads
+│ (uploading)  │  Each file: 5 concurrent parts
+└──────┬──────┘
+       │
+  ┌────┴────┐
+  │         │
+  v         v
+┌─────┐  ┌─────┐
+│Done │  │Retry│── up to 3 retries with backoff
+│     │  │Queue│   then moves to Failed
+└─────┘  └─────┘
+```
+
+### New Edge Function: `save-media-record`
+
+- Authenticated endpoint (admin only)
+- Inserts into `media` table using service role
+- Returns `{ id, s3_key }` on success
+- Called by upload engine after S3 upload completes
+- Registered in `supabase/config.toml` with `verify_jwt = false`
+
+### Files Summary
+
+| File | Action |
 |---|---|
-| `s3-multipart-upload` | Initiate/part-url/complete/abort multipart uploads |
-| `s3-download-zip` | Server-side streaming ZIP generation |
-| `generate-thumbnails` | Background thumbnail/preview generation |
-
-### Security
-- All upload endpoints require admin Bearer token authentication
-- Presigned URLs expire after 10 minutes
-- Public users cannot upload
-- All delete operations logged in `deletion_logs`
-
-### Browser Compatibility
-- Uses standard Web APIs (XMLHttpRequest for progress, IntersectionObserver for lazy load)
-- Works on Chrome, Safari, Edge
-- Mobile-compatible with simplified UI (no drag-and-drop, file picker only)
-
-### Performance Safeguards
-- Files processed in batches to avoid browser memory issues
-- Upload engine uses Web Workers pattern (non-blocking)
-- Maximum 10 concurrent XHR connections
-- SessionStorage for resume state (cleared on completion)
+| `src/lib/uploadEngine.ts` | Rewrite queue, add retries, session refresh, server-side save |
+| `supabase/functions/s3-upload/index.ts` | Fix CORS headers |
+| `supabase/functions/s3-multipart-upload/index.ts` | Minor hardening |
+| `supabase/functions/save-media-record/index.ts` | NEW: server-side media record creation |
+| `supabase/functions/storage-cleanup/index.ts` | Add orphan cleanup actions |
+| `src/components/admin/MediaUploader.tsx` | Session refresh, batch validation, incremental refresh |
+| `src/components/admin/UploadProgressPanel.tsx` | Enhanced status display |
+| `src/pages/admin/AlbumDetail.tsx` | Auto-refresh gallery on uploads |
+| `supabase/config.toml` | Register `save-media-record` |
 
