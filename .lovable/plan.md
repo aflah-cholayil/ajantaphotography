@@ -1,94 +1,82 @@
 
 
-# Make Uploads Persistent Across Navigation
+# Fix Gallery 1000-Item Limit with Infinite Scroll
 
 ## Problem
 
-The `UploadEngine` instance and its UI state live inside `MediaUploader` component (via `useRef` and `useState`), which is rendered inside `AlbumDetail`. When navigating away, React unmounts the component, the state is lost, and there's no way to see or control ongoing uploads.
+Supabase JS client has a default row limit of 1000. Three places fetch media without pagination, silently capping results:
+- Client AlbumView (`src/pages/client/AlbumView.tsx` line 118)
+- Admin AlbumDetail (`src/pages/admin/AlbumDetail.tsx` line 154)
+- Shared Gallery edge function (`supabase/functions/get-share-gallery/index.ts` line 147)
 
-## Architecture
+## Solution
 
-Create a global singleton `UploadManager` + React Context that lives at the App level, completely decoupled from any page component.
-
-```text
-App.tsx
-  +-- UploadManagerProvider (context + singleton)
-  |     +-- GlobalUploadBar (floating UI, visible on all admin pages)
-  +-- Routes
-        +-- AlbumDetail
-              +-- MediaUploader (triggers uploads via context, no longer owns engine)
-```
+Add cursor-based infinite scroll to the client and admin album views, paginated loading in the shared gallery edge function, and accurate total counts everywhere.
 
 ## Changes
 
-### 1. New file: `src/lib/uploadManager.ts` -- Global Singleton
+### 1. Client AlbumView -- Infinite Scroll (`src/pages/client/AlbumView.tsx`)
 
-A singleton class that owns all `UploadEngine` instances:
+- Replace single `fetchMedia` call with paginated fetching using `.range(offset, offset + PAGE_SIZE - 1)` where `PAGE_SIZE = 200`
+- Add a separate count query: `supabase.from('media').select('id', { count: 'exact', head: true }).eq('album_id', id)` to get the true total
+- Store `totalCount`, `hasMore`, and `page` state
+- Display accurate count in tab headers: `Photos (3248)` instead of `photos.length`
+- Add `IntersectionObserver` sentinel div at the bottom of `OptimizedMediaGrid` to trigger loading next page
+- Append new results to existing `media` array (not replace)
+- Show a small spinner at the bottom while loading more
 
-- `activeUploads: Map<string, UploadEngine>` keyed by albumId
-- `state: Map<string, UploadEngineState>` -- current state per album
-- `listeners: Set<callback>` -- notify React of state changes
-- `startUpload(albumId, files, onFileUploaded?)` -- creates/reuses engine
-- `cancel(albumId)` / `cancelAll()`
-- `retryFailed(albumId)`
-- `getState()` -- returns combined state across all albums
-- `subscribe(listener)` / `unsubscribe(listener)`
-- Registers `beforeunload` event to warn user when uploads are active
-- Lives outside React -- survives navigation
+### 2. OptimizedMediaGrid -- Sentinel Support (`src/components/client/OptimizedMediaGrid.tsx`)
 
-### 2. New file: `src/contexts/UploadManagerContext.tsx` -- React Bridge
+- Accept new optional props: `hasMore`, `isLoadingMore`, `onLoadMore`
+- Render a sentinel `div` at the end of the grid observed by `IntersectionObserver`
+- When sentinel becomes visible and `hasMore` is true, call `onLoadMore`
+- Show `Loader2` spinner when `isLoadingMore` is true
 
-- Creates React context wrapping the singleton
-- `UploadManagerProvider` component that subscribes to the singleton and exposes state via `useSyncExternalStore` or simple `useState` + listener pattern
-- `useUploadManager()` hook for components to access upload state and actions
+### 3. Admin AlbumDetail -- Paginated Fetch (`src/pages/admin/AlbumDetail.tsx`)
 
-### 3. New file: `src/components/admin/GlobalUploadBar.tsx` -- Floating UI
+- Same pagination pattern as client: `PAGE_SIZE = 200`, `.range()` queries
+- Add total count query for accurate stats cards
+- Add "Load More" button at the bottom of the media grid (admin prefers explicit control over infinite scroll)
+- Update the stats card that shows photo/video counts to use `totalCount` not `media.length`
+- Large album warning banner when `totalCount > 3000`: "Large album (X items). Performance may vary."
 
-- Fixed-position bar at bottom-right of screen
-- Only renders when there are active/recent uploads
-- Shows per-album: progress %, active count, failed count, cancel button
-- Collapsible (minimize to just a progress indicator)
-- Visible on ALL admin pages (rendered inside AdminLayout)
-- Click expands to show full `UploadProgressPanel`
+### 4. Shared Gallery Edge Function (`supabase/functions/get-share-gallery/index.ts`)
 
-### 4. Modified: `src/components/admin/MediaUploader.tsx`
+- For the `load` action, accept optional `page` and `pageSize` params (default `pageSize = 200`, `page = 0`)
+- Query with `.range(page * pageSize, (page + 1) * pageSize - 1)`
+- Add a count query: `.select('id', { count: 'exact', head: true })`
+- Return `{ items, totalCount, page, hasMore }` alongside album/shareLink data
+- Shared gallery frontend (`src/pages/share/SharedGallery.tsx`) updated to paginate and append media
 
-- Remove `engineRef`, `uploadState`, and `handleStateUpdate` local state
-- Import `useUploadManager()` instead
-- `startUpload` calls `uploadManager.startUpload(albumId, files, onFileUploaded)`
-- Cancel/retry/clear delegate to the manager
-- Still renders the dropzone and folder picker (file selection UI stays here)
-- No longer renders `UploadProgressPanel` inline (the global bar handles it)
+### 5. SharedGallery Frontend (`src/pages/share/SharedGallery.tsx`)
 
-### 5. Modified: `src/components/admin/AdminLayout.tsx`
+- Add pagination state (`page`, `hasMore`, `totalCount`, `isLoadingMore`)
+- Initial `loadGallery` fetches page 0
+- Add `IntersectionObserver` sentinel at the bottom of the photo/video grids
+- When sentinel visible, call `loadGallery` with next page number and append results
+- Update tab counts to show `totalCount`
 
-- Add `<GlobalUploadBar />` inside the layout, after the main content area
-- This ensures the bar is visible on every admin page
+### 6. Large Album Warning
 
-### 6. Modified: `src/App.tsx`
+- In both admin and client views, when `totalCount > 3000`, show a subtle warning banner:
+  "Large album detected (X items). Performance may be reduced for very large albums."
+- Non-blocking, dismissible
 
-- Wrap admin routes (or the entire app) with `<UploadManagerProvider>`
+## What stays unchanged
 
-### 7. No changes to:
-
-- `src/lib/uploadEngine.ts` -- the engine class itself is unchanged
-- R2 upload logic, CORS config
-- Retry limit (3), concurrency (4-8 dynamic)
-- Edge functions
-
-## Key Behaviors
-
-- **Navigate away**: uploads continue, floating bar shows progress
-- **Come back to album**: MediaUploader reads state from context, shows current progress
-- **Browser close**: `beforeunload` warns if uploads are running
-- **Component unmount**: no cleanup cancels uploads (removed any cleanup effect)
-- **Multiple albums**: supports concurrent uploads to different albums
-- **Cancel**: only via explicit user action (cancel button in floating bar or MediaUploader)
+- `UploadEngine` and upload logic (no changes)
+- R2/S3 signed URL logic
+- RLS policies
+- Sort order behavior
+- Download ZIP logic (operates on loaded media -- downloads what's loaded)
+- Public Gallery page (`src/pages/Gallery.tsx`) -- works table is small, not affected
 
 ## Technical Notes
 
-- The singleton pattern avoids Zustand/Redux dependencies -- no new packages needed
-- `useSyncExternalStore` (React 18) provides the cleanest React integration with external stores
-- The `UploadEngine` class already handles its own `AbortController` per file, retry logic, and progress tracking -- the manager just orchestrates multiple engines
-- IndexedDB persistence for surviving page reloads is deferred (the user's primary concern is navigation, not full reload). The `beforeunload` warning covers the reload case
+```text
+PAGE_SIZE = 200
+Supabase .range(from, to) is inclusive on both ends
+Count query uses { count: 'exact', head: true } to avoid fetching rows
+IntersectionObserver rootMargin = '200px' to prefetch before user reaches bottom
+```
 
