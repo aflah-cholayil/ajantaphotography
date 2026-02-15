@@ -4,8 +4,8 @@ import { Upload, FolderUp, Wifi, Loader2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
-import { UploadProgressPanel } from '@/components/admin/UploadProgressPanel';
-import { UploadEngine, validateBatch, type UploadEngineState, type FileUploadState, formatBytes } from '@/lib/uploadEngine';
+import { useUploadManager } from '@/contexts/UploadManagerContext';
+import { validateBatch, formatBytes } from '@/lib/uploadEngine';
 
 interface MediaUploaderProps {
   albumId: string;
@@ -26,88 +26,34 @@ const ACCEPTED_TYPES = {
 
 const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024; // 2GB
 
-const isMediaFile = (file: File) => {
-  const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'video/mp4', 'video/quicktime', 'video/x-msvideo'];
-  return validTypes.includes(file.type) || /\.(jpg|jpeg|png|webp|heic|mp4|mov|avi)$/i.test(file.name);
-};
-
 export const MediaUploader = ({ albumId, onUploadComplete, onTriggerFaceDetection, onFileUploaded }: MediaUploaderProps) => {
-  const [uploadState, setUploadState] = useState<UploadEngineState | null>(null);
   const [isTestingR2, setIsTestingR2] = useState(false);
   const [r2TestResult, setR2TestResult] = useState<{ success: boolean; message: string } | null>(null);
-  const engineRef = useRef<UploadEngine | null>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
-  const autoClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { toast } = useToast();
+  const { manager, snapshot } = useUploadManager();
 
-  // Auto-clear after successful completion (no errors, no cancelled)
-  const handleStateUpdate = useCallback((state: UploadEngineState) => {
-    setUploadState({ ...state });
+  const albumState = snapshot.albums.find(a => a.albumId === albumId)?.state;
+  const isUploading = albumState?.isUploading ?? false;
 
-    // Check if all done with zero failures
-    const pending = state.files.filter(f => f.status === 'pending').length;
-    const uploading = state.files.filter(f => f.status === 'uploading').length;
-    const errors = state.files.filter(f => f.status === 'error').length;
-    const cancelled = state.files.filter(f => f.status === 'cancelled').length;
-    const allDone = !state.isUploading && pending === 0 && uploading === 0;
+  const startUpload = useCallback((files: File[]) => {
+    const result = manager.startUpload(albumId, files, {
+      onFileUploaded,
+      onUploadComplete,
+      onTriggerFaceDetection,
+    });
 
-    if (allDone && errors === 0 && cancelled === 0 && state.files.length > 0) {
-      if (autoClearTimerRef.current) clearTimeout(autoClearTimerRef.current);
-      autoClearTimerRef.current = setTimeout(() => {
-        setUploadState(null);
-      }, 5000);
-    }
-  }, []);
-
-  const startUpload = useCallback(async (files: File[]) => {
-    const mediaFiles = files.filter(isMediaFile);
-    if (mediaFiles.length === 0) {
-      toast({ title: 'No valid files', description: 'No supported image or video files found.', variant: 'destructive' });
+    if (!result.started) {
+      toast({ title: 'Upload error', description: result.message, variant: 'destructive' });
       return;
     }
 
-    // Batch validation
-    const validation = validateBatch(mediaFiles);
-    if (validation.oversizedFiles.length > 0) {
-      toast({
-        title: 'Files too large',
-        description: `${validation.oversizedFiles.length} files exceed the 2GB limit and were skipped.`,
-        variant: 'destructive',
-      });
-      const validFiles = mediaFiles.filter(f => f.size <= MAX_FILE_SIZE);
-      if (validFiles.length === 0) return;
-    }
-
-    if (validation.exceedsBatchLimit) {
-      toast({
-        title: 'Batch too large',
-        description: `Total size ${formatBytes(validation.totalSize)} exceeds the 50GB batch limit.`,
-        variant: 'destructive',
-      });
-      return;
-    }
-
+    const validation = validateBatch(files);
     toast({
       title: 'Starting upload',
-      description: `${mediaFiles.length} files (${formatBytes(validation.totalSize)})`,
+      description: result.message || `${files.length} files (${formatBytes(validation.totalSize)})`,
     });
-
-    const validFiles = mediaFiles.filter(f => f.size <= MAX_FILE_SIZE);
-
-    if (autoClearTimerRef.current) clearTimeout(autoClearTimerRef.current);
-    const engine = new UploadEngine(
-      albumId,
-      validFiles,
-      handleStateUpdate,
-      onFileUploaded ? () => onFileUploaded() : undefined
-    );
-    engineRef.current = engine;
-
-    engine.start().then(() => {
-      onUploadComplete?.();
-      onTriggerFaceDetection?.();
-    });
-  }, [albumId, onUploadComplete, onTriggerFaceDetection, onFileUploaded, handleStateUpdate, toast]);
+  }, [albumId, manager, onFileUploaded, onUploadComplete, onTriggerFaceDetection, toast]);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     startUpload(acceptedFiles);
@@ -123,10 +69,8 @@ export const MediaUploader = ({ albumId, onUploadComplete, onTriggerFaceDetectio
     onDrop,
     accept: ACCEPTED_TYPES,
     maxSize: MAX_FILE_SIZE,
-    disabled: uploadState?.isUploading,
+    disabled: isUploading,
   });
-
-  const isUploading = uploadState?.isUploading ?? false;
 
   return (
     <div className="space-y-4">
@@ -212,15 +156,6 @@ export const MediaUploader = ({ albumId, onUploadComplete, onTriggerFaceDetectio
         <div className={`text-sm p-3 rounded-md ${r2TestResult.success ? 'bg-green-500/10 text-green-700 dark:text-green-400' : 'bg-destructive/10 text-destructive'}`}>
           {r2TestResult.success ? '✅' : '❌'} {r2TestResult.message}
         </div>
-      )}
-
-      {uploadState && uploadState.files.length > 0 && (
-        <UploadProgressPanel
-          state={uploadState}
-          onCancel={() => engineRef.current?.cancel()}
-          onRetryFailed={() => engineRef.current?.retryFailed()}
-          onClear={() => setUploadState(null)}
-        />
       )}
     </div>
   );

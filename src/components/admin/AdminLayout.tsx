@@ -1,4 +1,5 @@
 import { ReactNode, useState, useEffect } from 'react';
+import { GlobalUploadBar } from '@/components/admin/GlobalUploadBar';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -307,6 +308,9 @@ export const AdminLayout = ({ children }: AdminLayoutProps) => {
           </div>
         </footer>
       </main>
+
+      {/* Global Upload Progress Bar */}
+      <GlobalUploadBar />
     </div>
   );
 };
