@@ -8,12 +8,22 @@ const corsHeaders = {
 };
 
 const awsRegion = Deno.env.get("AWS_REGION") || "us-east-1";
-const bucketName = Deno.env.get("AWS_BUCKET_NAME")!;
+const awsBucket = Deno.env.get("AWS_BUCKET_NAME")!;
 
 const aws = new AwsClient({
   accessKeyId: Deno.env.get("AWS_ACCESS_KEY_ID")!,
   secretAccessKey: Deno.env.get("AWS_SECRET_ACCESS_KEY")!,
   region: awsRegion,
+});
+
+// R2 for fetching images stored there
+const r2Endpoint = Deno.env.get("R2_ENDPOINT")!;
+const r2Bucket = Deno.env.get("R2_BUCKET_NAME")!;
+const r2Client = new AwsClient({
+  accessKeyId: Deno.env.get("R2_ACCESS_KEY_ID")!,
+  secretAccessKey: Deno.env.get("R2_SECRET_ACCESS_KEY")!,
+  region: "auto",
+  service: "s3",
 });
 
 interface FaceDetectionRequest {
@@ -37,18 +47,36 @@ interface RekognitionFace {
   FaceId?: string;
 }
 
-async function detectFacesInImage(s3Key: string): Promise<RekognitionFace[]> {
+async function detectFacesInImage(s3Key: string, provider: string): Promise<RekognitionFace[]> {
   const endpoint = `https://rekognition.${awsRegion}.amazonaws.com`;
   
-  const body = JSON.stringify({
-    Image: {
-      S3Object: {
-        Bucket: bucketName,
-        Name: s3Key,
+  let body: string;
+
+  if (provider === "r2") {
+    // Download from R2 and send as bytes
+    const objectUrl = `${r2Endpoint}/${r2Bucket}/${s3Key}`;
+    const signedReq = await r2Client.sign(objectUrl, { method: "GET", aws: { signQuery: true } });
+    const imageRes = await fetch(signedReq.url);
+    if (!imageRes.ok) throw new Error(`Failed to download R2 image: ${imageRes.status}`);
+    const imageBytes = await imageRes.arrayBuffer();
+    const base64 = btoa(String.fromCharCode(...new Uint8Array(imageBytes)));
+    
+    body = JSON.stringify({
+      Image: { Bytes: base64 },
+      Attributes: ["DEFAULT"],
+    });
+  } else {
+    // Use S3Object reference for AWS-stored images
+    body = JSON.stringify({
+      Image: {
+        S3Object: {
+          Bucket: awsBucket,
+          Name: s3Key,
+        },
       },
-    },
-    Attributes: ["DEFAULT"],
-  });
+      Attributes: ["DEFAULT"],
+    });
+  }
 
   const request = new Request(endpoint, {
     method: "POST",
@@ -75,7 +103,6 @@ async function detectFacesInImage(s3Key: string): Promise<RekognitionFace[]> {
   return data.FaceDetails || [];
 }
 
-// Background task for processing album faces
 async function processAlbumFaces(albumId: string) {
   console.log(`[Background] Starting face detection for album: ${albumId}`);
   
@@ -85,7 +112,6 @@ async function processAlbumFaces(albumId: string) {
   );
 
   try {
-    // Update processing status
     await supabase
       .from("albums")
       .update({ 
@@ -94,17 +120,13 @@ async function processAlbumFaces(albumId: string) {
       })
       .eq("id", albumId);
 
-    // Get all photos in the album
     const { data: mediaItems, error: mediaError } = await supabase
       .from("media")
-      .select("id, s3_key, s3_preview_key")
+      .select("id, s3_key, s3_preview_key, storage_provider")
       .eq("album_id", albumId)
       .eq("type", "photo");
 
-    if (mediaError) {
-      console.error("[Background] Error fetching media:", mediaError);
-      throw new Error(mediaError.message);
-    }
+    if (mediaError) throw new Error(mediaError.message);
 
     console.log(`[Background] Found ${mediaItems?.length || 0} photos to process`);
 
@@ -112,17 +134,17 @@ async function processAlbumFaces(albumId: string) {
     let personCounter = 1;
     const createdPeople: { id: string; referenceFace: any }[] = [];
 
-    // Process each photo
     for (const item of mediaItems || []) {
       try {
         const s3Key = item.s3_preview_key || item.s3_key;
-        console.log(`[Background] Processing image: ${s3Key}`);
+        const provider = (item as any).storage_provider || "aws";
+        console.log(`[Background] Processing image: ${s3Key} (${provider})`);
 
-        const faces = await detectFacesInImage(s3Key);
+        const faces = await detectFacesInImage(s3Key, provider);
         console.log(`[Background] Detected ${faces.length} faces in ${item.id}`);
 
         for (const face of faces) {
-          if (face.Confidence < 90) continue; // Skip low confidence faces
+          if (face.Confidence < 90) continue;
 
           const faceData = {
             media_id: item.id,
@@ -132,7 +154,6 @@ async function processAlbumFaces(albumId: string) {
             person_id: null as string | null,
           };
 
-          // Try to match with existing people based on face size (simplified clustering)
           let matchedPersonId: string | null = null;
 
           for (const existingPerson of createdPeople) {
@@ -140,7 +161,6 @@ async function processAlbumFaces(albumId: string) {
             const sizeDiff = Math.abs(refFace.bounding_box.Width - face.BoundingBox.Width);
             const heightDiff = Math.abs(refFace.bounding_box.Height - face.BoundingBox.Height);
             
-            // Simple heuristic - faces of similar size might be the same person
             if (sizeDiff < 0.08 && heightDiff < 0.08) {
               matchedPersonId = existingPerson.id;
               break;
@@ -148,7 +168,6 @@ async function processAlbumFaces(albumId: string) {
           }
 
           if (!matchedPersonId) {
-            // Create new person
             const { data: newPerson, error: personError } = await supabase
               .from("people")
               .insert({
@@ -160,10 +179,7 @@ async function processAlbumFaces(albumId: string) {
               .select()
               .single();
 
-            if (personError) {
-              console.error("[Background] Error creating person:", personError);
-              continue;
-            }
+            if (personError) continue;
 
             matchedPersonId = newPerson.id;
             createdPeople.push({ id: newPerson.id, referenceFace: { bounding_box: face.BoundingBox } });
@@ -178,18 +194,14 @@ async function processAlbumFaces(albumId: string) {
       }
     }
 
-    // Insert all detected faces
     if (facesDetected.length > 0) {
       const { error: insertError } = await supabase
         .from("detected_faces")
         .insert(facesDetected);
       
-      if (insertError) {
-        console.error("[Background] Error inserting faces:", insertError);
-      }
+      if (insertError) console.error("[Background] Error inserting faces:", insertError);
     }
 
-    // Update photo counts for all people
     for (const person of createdPeople) {
       const { count } = await supabase
         .from("detected_faces")
@@ -202,7 +214,6 @@ async function processAlbumFaces(albumId: string) {
         .eq("id", person.id);
     }
 
-    // Mark processing complete
     await supabase
       .from("albums")
       .update({ 
@@ -215,7 +226,6 @@ async function processAlbumFaces(albumId: string) {
   } catch (error) {
     console.error("[Background] Error in processAlbumFaces:", error);
     
-    // Mark as failed
     await supabase
       .from("albums")
       .update({ face_processing_status: "failed" })
@@ -237,31 +247,23 @@ const handler = async (req: Request): Promise<Response> => {
     const body: FaceDetectionRequest = await req.json();
     const { action, albumId, personId, targetPersonId, name, isHidden } = body;
 
-    // Special case: auto-trigger from album status change (no auth needed for internal call)
     if (action === "process_album" && albumId && req.headers.get("x-internal-trigger") === "album-ready") {
-      console.log("Auto-triggered face processing for album:", albumId);
-      
-      // Use EdgeRuntime.waitUntil for background processing
       const globalThis_ = globalThis as any;
       if (typeof globalThis_.EdgeRuntime !== "undefined" && globalThis_.EdgeRuntime.waitUntil) {
         globalThis_.EdgeRuntime.waitUntil(processAlbumFaces(albumId));
       } else {
-        // Fallback: process synchronously
         await processAlbumFaces(albumId);
       }
       
       return new Response(JSON.stringify({ success: true, message: "Face processing started in background" }), {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Verify auth for all other requests
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
@@ -274,12 +276,10 @@ const handler = async (req: Request): Promise<Response> => {
     const { data: { user } } = await userSupabase.auth.getUser();
     if (!user) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Check user role
     const { data: roleData } = await supabase
       .from("user_roles")
       .select("role")
@@ -289,7 +289,6 @@ const handler = async (req: Request): Promise<Response> => {
     const isAdmin = roleData?.role && ["admin", "owner", "editor"].includes(roleData.role);
     const isClient = roleData?.role === "client";
 
-    // For client access, verify album ownership
     if (isClient && albumId) {
       const { data: album } = await supabase
         .from("albums")
@@ -299,22 +298,18 @@ const handler = async (req: Request): Promise<Response> => {
 
       if (!album || (album as any).clients?.user_id !== user.id) {
         return new Response(JSON.stringify({ error: "Access denied" }), {
-          status: 403,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
     }
 
-    // Action: Get people for an album (clients can do this)
     if (action === "get_people") {
       if (!albumId) {
         return new Response(JSON.stringify({ error: "albumId required" }), {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
-      // Also get album processing status
       const { data: albumData } = await supabase
         .from("albums")
         .select("face_processing_status")
@@ -327,18 +322,13 @@ const handler = async (req: Request): Promise<Response> => {
         .eq("album_id", albumId)
         .order("photo_count", { ascending: false });
 
-      // Clients only see non-hidden people
-      if (isClient) {
-        query.eq("is_hidden", false);
-      }
+      if (isClient) query.eq("is_hidden", false);
 
       const { data: people, error } = await query;
 
       if (error) {
-        console.error("Error fetching people:", error);
         return new Response(JSON.stringify({ error: error.message }), {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
@@ -346,17 +336,14 @@ const handler = async (req: Request): Promise<Response> => {
         people, 
         processingStatus: albumData?.face_processing_status || "pending" 
       }), {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Action: Get photos for a person
     if (action === "get_person_photos") {
       if (!personId) {
         return new Response(JSON.stringify({ error: "personId required" }), {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
@@ -366,82 +353,57 @@ const handler = async (req: Request): Promise<Response> => {
         .eq("person_id", personId);
 
       if (error) {
-        console.error("Error fetching person photos:", error);
         return new Response(JSON.stringify({ error: error.message }), {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
-      // Extract unique media items
       const mediaMap = new Map();
       for (const face of faces || []) {
-        if ((face as any).media) {
-          mediaMap.set((face as any).media.id, (face as any).media);
-        }
+        if ((face as any).media) mediaMap.set((face as any).media.id, (face as any).media);
       }
 
       return new Response(JSON.stringify({ media: Array.from(mediaMap.values()) }), {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Admin-only actions below
     if (!isAdmin) {
       return new Response(JSON.stringify({ error: "Admin access required" }), {
-        status: 403,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Action: Process entire album for faces (admin triggered)
     if (action === "process_album") {
       if (!albumId) {
         return new Response(JSON.stringify({ error: "albumId required" }), {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
-      console.log("Admin triggered face processing for album:", albumId);
-      
-      // Clear existing faces and people for re-processing
       await supabase.from("detected_faces").delete().eq("album_id", albumId);
       await supabase.from("people").delete().eq("album_id", albumId);
       
-      // Use EdgeRuntime.waitUntil for background processing
       const globalThis_ = globalThis as any;
       if (typeof globalThis_.EdgeRuntime !== "undefined" && globalThis_.EdgeRuntime.waitUntil) {
         globalThis_.EdgeRuntime.waitUntil(processAlbumFaces(albumId));
         
-        return new Response(JSON.stringify({ 
-          success: true, 
-          message: "Face processing started in background" 
-        }), {
-          status: 200,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        return new Response(JSON.stringify({ success: true, message: "Face processing started in background" }), {
+          status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       } else {
-        // Fallback: process synchronously
         await processAlbumFaces(albumId);
         
-        return new Response(JSON.stringify({ 
-          success: true, 
-          message: "Face processing completed" 
-        }), {
-          status: 200,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        return new Response(JSON.stringify({ success: true, message: "Face processing completed" }), {
+          status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
     }
 
-    // Action: Update person (rename, hide)
     if (action === "update_person") {
       if (!personId) {
         return new Response(JSON.stringify({ error: "personId required" }), {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
@@ -449,34 +411,26 @@ const handler = async (req: Request): Promise<Response> => {
       if (name !== undefined) updates.name = name;
       if (isHidden !== undefined) updates.is_hidden = isHidden;
 
-      const { error } = await supabase
-        .from("people")
-        .update(updates)
-        .eq("id", personId);
+      const { error } = await supabase.from("people").update(updates).eq("id", personId);
 
       if (error) {
         return new Response(JSON.stringify({ error: error.message }), {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
       return new Response(JSON.stringify({ success: true }), {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Action: Merge two people
     if (action === "merge_people") {
       if (!personId || !targetPersonId) {
         return new Response(JSON.stringify({ error: "personId and targetPersonId required" }), {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
-      // Move all faces from source person to target person
       const { error: updateError } = await supabase
         .from("detected_faces")
         .update({ person_id: targetPersonId })
@@ -484,45 +438,32 @@ const handler = async (req: Request): Promise<Response> => {
 
       if (updateError) {
         return new Response(JSON.stringify({ error: updateError.message }), {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
-      // Update photo count for target person
       const { count } = await supabase
         .from("detected_faces")
         .select("*", { count: "exact", head: true })
         .eq("person_id", targetPersonId);
 
-      await supabase
-        .from("people")
-        .update({ photo_count: count || 0 })
-        .eq("id", targetPersonId);
-
-      // Delete source person
-      await supabase
-        .from("people")
-        .delete()
-        .eq("id", personId);
+      await supabase.from("people").update({ photo_count: count || 0 }).eq("id", targetPersonId);
+      await supabase.from("people").delete().eq("id", personId);
 
       return new Response(JSON.stringify({ success: true }), {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     return new Response(JSON.stringify({ error: "Invalid action" }), {
-      status: 400,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
 
   } catch (error: unknown) {
     console.error("Error in face-detection function:", error);
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     return new Response(JSON.stringify({ error: errorMessage }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 };

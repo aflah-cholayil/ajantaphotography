@@ -12,7 +12,6 @@ serve(async (req: Request) => {
   }
 
   try {
-    // Verify admin auth
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
@@ -37,7 +36,6 @@ serve(async (req: Request) => {
       });
     }
 
-    // Check admin role via service client
     const serviceClient = createClient(supabaseUrl, serviceRoleKey);
 
     const { data: roleData } = await serviceClient
@@ -53,7 +51,7 @@ serve(async (req: Request) => {
       });
     }
 
-    const { albumId, s3Key, fileName, mimeType, size, type, width, height, duration } = await req.json();
+    const { albumId, s3Key, fileName, mimeType, size, type, width, height, duration, storageProvider } = await req.json();
 
     if (!albumId || !s3Key || !fileName || !mimeType || size === undefined) {
       return new Response(JSON.stringify({ error: "Missing required fields: albumId, s3Key, fileName, mimeType, size" }), {
@@ -62,7 +60,6 @@ serve(async (req: Request) => {
       });
     }
 
-    // Insert using service role to bypass RLS
     const { data, error } = await serviceClient
       .from("media")
       .insert({
@@ -75,6 +72,7 @@ serve(async (req: Request) => {
         width: width || null,
         height: height || null,
         duration: duration || null,
+        storage_provider: storageProvider || "r2",
       })
       .select("id, s3_key")
       .single();
@@ -87,7 +85,7 @@ serve(async (req: Request) => {
       });
     }
 
-    console.log(`Media record saved: ${data.id} for ${s3Key}`);
+    console.log(`Media record saved: ${data.id} for ${s3Key} (provider: ${storageProvider || "r2"})`);
 
     return new Response(JSON.stringify({ id: data.id, s3_key: data.s3_key }), {
       status: 200,

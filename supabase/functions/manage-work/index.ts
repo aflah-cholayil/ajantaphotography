@@ -7,15 +7,35 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, action',
 };
 
+// AWS (legacy)
 const awsRegion = Deno.env.get('AWS_REGION') || 'ap-south-1';
-const bucketName = Deno.env.get('AWS_BUCKET_NAME') || '';
-
-const aws = new AwsClient({
+const awsBucket = Deno.env.get('AWS_BUCKET_NAME') || '';
+const awsClient = new AwsClient({
   accessKeyId: Deno.env.get('AWS_ACCESS_KEY_ID')!,
   secretAccessKey: Deno.env.get('AWS_SECRET_ACCESS_KEY')!,
   region: awsRegion,
   service: 's3',
 });
+
+// R2 (new uploads)
+const r2Endpoint = Deno.env.get('R2_ENDPOINT')!;
+const r2Bucket = Deno.env.get('R2_BUCKET_NAME')!;
+const r2Client = new AwsClient({
+  accessKeyId: Deno.env.get('R2_ACCESS_KEY_ID')!,
+  secretAccessKey: Deno.env.get('R2_SECRET_ACCESS_KEY')!,
+  region: 'auto',
+  service: 's3',
+});
+
+function getStorageClient(provider: string) {
+  return provider === 'r2' ? r2Client : awsClient;
+}
+
+function getBaseUrl(provider: string) {
+  return provider === 'r2'
+    ? `${r2Endpoint}/${r2Bucket}`
+    : `https://${awsBucket}.s3.${awsRegion}.amazonaws.com`;
+}
 
 interface UploadRequest {
   fileName: string;
@@ -37,24 +57,19 @@ interface WorkData {
   show_on_home?: boolean;
   show_on_gallery?: boolean;
   status?: string;
+  storage_provider?: string;
 }
 
 async function handler(req: Request): Promise<Response> {
-  console.log('manage-work function called:', req.method);
-
-  // Handle CORS preflight
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    // Verify auth
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
-      console.error('No authorization header');
       return new Response(JSON.stringify({ error: 'No authorization header' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
@@ -62,92 +77,70 @@ async function handler(req: Request): Promise<Response> {
     const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
-    // Create client with user token
     const supabase = createClient(supabaseUrl, supabaseAnonKey, {
       global: { headers: { Authorization: authHeader } },
     });
 
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
-      console.error('User auth error:', userError);
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // Check if user is admin
     const serviceClient = createClient(supabaseUrl, supabaseServiceKey);
     const { data: isAdmin } = await serviceClient.rpc('is_admin_user', { _user_id: user.id });
 
     if (!isAdmin) {
-      console.error('User is not admin:', user.id);
       return new Response(JSON.stringify({ error: 'Forbidden - admin access required' }), {
-        status: 403,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
     const url = new URL(req.url);
-    // Get action from query param or header
     const action = url.searchParams.get('action') || req.headers.get('action');
-    console.log('Action:', action);
 
-    // Handle different actions
     if (action === 'upload-url') {
-      // Generate presigned URL for upload using aws4fetch
       const { fileName, contentType, fileSize } = await req.json() as UploadRequest;
-      console.log('Upload request:', { fileName, contentType, fileSize });
       
       const timestamp = Date.now();
       const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
       const s3Key = `works/${timestamp}_${sanitizedFileName}`;
       const previewKey = `works/previews/${timestamp}_${sanitizedFileName}`;
 
-      // Generate presigned PUT URL for main file
-      const objectUrl = `https://${bucketName}.s3.${awsRegion}.amazonaws.com/${s3Key}`;
-      const signedReq = await aws.sign(objectUrl, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': contentType,
-        },
-        aws: {
-          signQuery: true,
-        },
-      });
-      const uploadUrl = signedReq.url;
+      // Use R2 for new uploads
+      const baseUrl = getBaseUrl('r2');
+      const client = getStorageClient('r2');
 
-      // Generate presigned PUT URL for preview
-      const previewObjectUrl = `https://${bucketName}.s3.${awsRegion}.amazonaws.com/${previewKey}`;
-      const previewSignedReq = await aws.sign(previewObjectUrl, {
+      const objectUrl = `${baseUrl}/${s3Key}`;
+      const signedReq = await client.sign(objectUrl, {
         method: 'PUT',
-        headers: {
-          'Content-Type': contentType,
-        },
-        aws: {
-          signQuery: true,
-        },
+        headers: { 'Content-Type': contentType },
+        aws: { signQuery: true },
       });
-      const previewUploadUrl = previewSignedReq.url;
 
-      console.log('Generated upload URLs for work:', s3Key);
+      const previewObjectUrl = `${baseUrl}/${previewKey}`;
+      const previewSignedReq = await client.sign(previewObjectUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': contentType },
+        aws: { signQuery: true },
+      });
 
       return new Response(JSON.stringify({
-        uploadUrl,
-        previewUploadUrl,
+        uploadUrl: signedReq.url,
+        previewUploadUrl: previewSignedReq.url,
         s3Key,
         previewKey,
-        bucket: bucketName,
-        region: awsRegion,
+        bucket: r2Bucket,
+        region: 'auto',
+        storageProvider: 'r2',
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
     if (action === 'create') {
-      // Create work record
       const workData = await req.json() as WorkData;
-      console.log('Creating work:', workData.title);
       
       const { data, error } = await serviceClient
         .from('works')
@@ -165,19 +158,17 @@ async function handler(req: Request): Promise<Response> {
           show_on_home: workData.show_on_home ?? false,
           show_on_gallery: workData.show_on_gallery ?? true,
           status: workData.status ?? 'active',
+          storage_provider: workData.storage_provider ?? 'r2',
         })
         .select()
         .single();
 
       if (error) {
-        console.error('Error creating work:', error);
         return new Response(JSON.stringify({ error: error.message }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
 
-      console.log('Work created:', data.id);
       return new Response(JSON.stringify({ work: data }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -187,13 +178,11 @@ async function handler(req: Request): Promise<Response> {
       const workId = url.searchParams.get('id');
       if (!workId) {
         return new Response(JSON.stringify({ error: 'Work ID required' }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
 
       const updates = await req.json();
-      console.log('Updating work:', workId, updates);
       
       const { data, error } = await serviceClient
         .from('works')
@@ -203,14 +192,11 @@ async function handler(req: Request): Promise<Response> {
         .single();
 
       if (error) {
-        console.error('Error updating work:', error);
         return new Response(JSON.stringify({ error: error.message }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
 
-      console.log('Work updated:', workId);
       return new Response(JSON.stringify({ work: data }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -220,100 +206,96 @@ async function handler(req: Request): Promise<Response> {
       const workId = url.searchParams.get('id');
       if (!workId) {
         return new Response(JSON.stringify({ error: 'Work ID required' }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
 
-      // Get work to get S3 keys
       const { data: work, error: fetchError } = await serviceClient
         .from('works')
-        .select('s3_key, s3_preview_key')
+        .select('s3_key, s3_preview_key, storage_provider')
         .eq('id', workId)
         .single();
 
       if (fetchError || !work) {
-        console.error('Work not found:', workId);
         return new Response(JSON.stringify({ error: 'Work not found' }), {
-          status: 404,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
 
-      // Delete from S3 using aws4fetch
+      const provider = work.storage_provider || 'aws';
+      const client = getStorageClient(provider);
+      const baseUrl = getBaseUrl(provider);
+
       try {
-        const deleteUrl = `https://${bucketName}.s3.${awsRegion}.amazonaws.com/${work.s3_key}`;
-        const deleteReq = await aws.sign(deleteUrl, { method: 'DELETE' });
+        const deleteUrl = `${baseUrl}/${work.s3_key}`;
+        const deleteReq = await client.sign(deleteUrl, { method: 'DELETE' });
         await fetch(deleteReq.url, { method: 'DELETE', headers: deleteReq.headers });
-        console.log('Deleted S3 object:', work.s3_key);
 
         if (work.s3_preview_key) {
-          const previewDeleteUrl = `https://${bucketName}.s3.${awsRegion}.amazonaws.com/${work.s3_preview_key}`;
-          const previewDeleteReq = await aws.sign(previewDeleteUrl, { method: 'DELETE' });
+          const previewDeleteUrl = `${baseUrl}/${work.s3_preview_key}`;
+          const previewDeleteReq = await client.sign(previewDeleteUrl, { method: 'DELETE' });
           await fetch(previewDeleteReq.url, { method: 'DELETE', headers: previewDeleteReq.headers });
-          console.log('Deleted S3 preview:', work.s3_preview_key);
         }
       } catch (s3Error) {
-        console.error('S3 delete error:', s3Error);
-        // Continue with DB delete even if S3 fails
+        console.error('Storage delete error:', s3Error);
       }
 
-      // Delete from database
       const { error: deleteError } = await serviceClient
         .from('works')
         .delete()
         .eq('id', workId);
 
       if (deleteError) {
-        console.error('Error deleting work:', deleteError);
         return new Response(JSON.stringify({ error: deleteError.message }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
 
-      console.log('Work deleted:', workId);
       return new Response(JSON.stringify({ success: true }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
     if (action === 'signed-url') {
-      // Generate signed URL for viewing
       const s3Key = url.searchParams.get('key');
       if (!s3Key) {
         return new Response(JSON.stringify({ error: 'S3 key required' }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
 
-      const objectUrl = `https://${bucketName}.s3.${awsRegion}.amazonaws.com/${s3Key}`;
-      const signedReq = await aws.sign(objectUrl, {
+      // Look up provider
+      const { data: work } = await serviceClient
+        .from('works')
+        .select('storage_provider')
+        .or(`s3_key.eq.${s3Key},s3_preview_key.eq.${s3Key}`)
+        .limit(1)
+        .maybeSingle();
+
+      const provider = work?.storage_provider || 'aws';
+      const client = getStorageClient(provider);
+      const baseUrl = getBaseUrl(provider);
+
+      const objectUrl = `${baseUrl}/${s3Key}`;
+      const signedReq = await client.sign(objectUrl, {
         method: 'GET',
-        aws: {
-          signQuery: true,
-        },
+        aws: { signQuery: true },
       });
 
-      console.log('Generated signed URL for:', s3Key);
       return new Response(JSON.stringify({ url: signedReq.url }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    console.error('Invalid action:', action);
     return new Response(JSON.stringify({ error: 'Invalid action' }), {
-      status: 400,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
 
   } catch (error) {
     console.error('Error in manage-work:', error);
     const message = error instanceof Error ? error.message : 'Unknown error';
     return new Response(JSON.stringify({ error: message }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
 }

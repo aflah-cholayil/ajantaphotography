@@ -7,7 +7,74 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const CACHE_TTL_MS = 10 * 60 * 1000;
+
+async function listBucketObjects(client: AwsClient, baseListUrl: string) {
+  let totalBytes = 0;
+  let totalObjects = 0;
+  let continuationToken: string | undefined;
+  const prefixSizes: Record<string, number> = {};
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+  let thisMonthBytes = 0;
+
+  const monthlyData: Record<string, number> = {};
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date();
+    d.setMonth(d.getMonth() - i);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    monthlyData[key] = 0;
+  }
+
+  do {
+    let listUrl = `${baseListUrl}?list-type=2&max-keys=1000`;
+    if (continuationToken) {
+      listUrl += `&continuation-token=${encodeURIComponent(continuationToken)}`;
+    }
+
+    const listRes = await client.fetch(listUrl);
+    const xml = await listRes.text();
+
+    const contents = xml.match(/<Contents>([\s\S]*?)<\/Contents>/g) || [];
+    for (const item of contents) {
+      const sizeMatch = item.match(/<Size>(\d+)<\/Size>/);
+      const keyMatch = item.match(/<Key>(.*?)<\/Key>/);
+      const dateMatch = item.match(/<LastModified>(.*?)<\/LastModified>/);
+
+      if (sizeMatch && keyMatch) {
+        const size = parseInt(sizeMatch[1]);
+        const key = keyMatch[1];
+        totalBytes += size;
+        totalObjects++;
+
+        const parts = key.split("/");
+        if (parts.length >= 2) {
+          const prefix = parts[0];
+          prefixSizes[prefix] = (prefixSizes[prefix] || 0) + size;
+        }
+
+        if (dateMatch) {
+          const objDate = new Date(dateMatch[1]);
+          if (objDate >= monthStart) {
+            thisMonthBytes += size;
+          }
+          const mKey = `${objDate.getFullYear()}-${String(objDate.getMonth() + 1).padStart(2, "0")}`;
+          if (monthlyData[mKey] !== undefined) {
+            monthlyData[mKey] += size;
+          }
+        }
+      }
+    }
+
+    const truncMatch = xml.match(/<IsTruncated>(.*?)<\/IsTruncated>/);
+    const isTruncated = truncMatch?.[1] === "true";
+    const tokenMatch = xml.match(/<NextContinuationToken>(.*?)<\/NextContinuationToken>/);
+    continuationToken = isTruncated ? tokenMatch?.[1] : undefined;
+  } while (continuationToken);
+
+  return { totalBytes, totalObjects, prefixSizes, thisMonthBytes, monthlyData };
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -15,12 +82,10 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // Auth check
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
@@ -33,18 +98,14 @@ Deno.serve(async (req) => {
     });
 
     const token = authHeader.replace("Bearer ", "");
-    const { data: claimsData, error: claimsError } =
-      await userClient.auth.getClaims(token);
+    const { data: claimsData, error: claimsError } = await userClient.auth.getClaims(token);
     if (claimsError || !claimsData?.claims) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     const userId = claimsData.claims.sub;
-
-    // Check admin role using service role client
     const adminClient = createClient(supabaseUrl, serviceRoleKey);
     const { data: roleData } = await adminClient
       .from("user_roles")
@@ -54,16 +115,13 @@ Deno.serve(async (req) => {
 
     if (!roleData || !["owner", "admin"].includes(roleData.role)) {
       return new Response(JSON.stringify({ error: "Forbidden" }), {
-        status: 403,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Check force param
     const url = new URL(req.url);
     const force = url.searchParams.get("force") === "true";
 
-    // Check cache
     if (!force) {
       const { data: cacheTimeRow } = await adminClient
         .from("studio_settings")
@@ -89,122 +147,67 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Fetch S3 data
-    const accessKeyId = Deno.env.get("AWS_ACCESS_KEY_ID")!;
-    const secretAccessKey = Deno.env.get("AWS_SECRET_ACCESS_KEY")!;
-    const region = Deno.env.get("AWS_REGION")!;
-    const bucket = Deno.env.get("AWS_BUCKET_NAME")!;
-
-    const aws = new AwsClient({
-      accessKeyId,
-      secretAccessKey,
-      region,
+    // AWS client
+    const awsRegion = Deno.env.get("AWS_REGION")!;
+    const awsBucket = Deno.env.get("AWS_BUCKET_NAME")!;
+    const awsClientInstance = new AwsClient({
+      accessKeyId: Deno.env.get("AWS_ACCESS_KEY_ID")!,
+      secretAccessKey: Deno.env.get("AWS_SECRET_ACCESS_KEY")!,
+      region: awsRegion,
       service: "s3",
     });
 
-    // List all objects with pagination
-    let totalBytes = 0;
-    let totalObjects = 0;
-    let continuationToken: string | undefined;
-    const prefixSizes: Record<string, number> = {};
-    const monthStart = new Date();
-    monthStart.setDate(1);
-    monthStart.setHours(0, 0, 0, 0);
-    let thisMonthBytes = 0;
+    // R2 client
+    const r2Endpoint = Deno.env.get("R2_ENDPOINT")!;
+    const r2Bucket = Deno.env.get("R2_BUCKET_NAME")!;
+    const r2ClientInstance = new AwsClient({
+      accessKeyId: Deno.env.get("R2_ACCESS_KEY_ID")!,
+      secretAccessKey: Deno.env.get("R2_SECRET_ACCESS_KEY")!,
+      region: "auto",
+      service: "s3",
+    });
 
-    // Monthly buckets for last 6 months
+    // List both buckets
+    const [awsStats, r2Stats] = await Promise.all([
+      listBucketObjects(awsClientInstance, `https://${awsBucket}.s3.${awsRegion}.amazonaws.com/`),
+      listBucketObjects(r2ClientInstance, `${r2Endpoint}/${r2Bucket}/`).catch((e) => {
+        console.warn("R2 listing failed:", e.message);
+        return { totalBytes: 0, totalObjects: 0, prefixSizes: {}, thisMonthBytes: 0, monthlyData: {} };
+      }),
+    ]);
+
+    const totalBytes = awsStats.totalBytes + r2Stats.totalBytes;
+    const totalObjects = awsStats.totalObjects + r2Stats.totalObjects;
+    const thisMonthBytes = awsStats.thisMonthBytes + r2Stats.thisMonthBytes;
+
+    // Merge prefix sizes
+    const prefixSizes: Record<string, number> = { ...awsStats.prefixSizes };
+    for (const [k, v] of Object.entries(r2Stats.prefixSizes)) {
+      prefixSizes[k] = (prefixSizes[k] || 0) + v;
+    }
+
+    // Merge monthly data
     const monthlyData: Record<string, number> = {};
     for (let i = 5; i >= 0; i--) {
       const d = new Date();
       d.setMonth(d.getMonth() - i);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      monthlyData[key] = 0;
+      monthlyData[key] = (awsStats.monthlyData[key] || 0) + (r2Stats.monthlyData[key] || 0);
     }
 
-    do {
-      let listUrl = `https://${bucket}.s3.${region}.amazonaws.com/?list-type=2&max-keys=1000`;
-      if (continuationToken) {
-        listUrl += `&continuation-token=${encodeURIComponent(continuationToken)}`;
-      }
+    // Fetch DB data for per-client breakdown
+    const { data: mediaData } = await adminClient.from("media").select("album_id, size, created_at");
+    const { data: albumsData } = await adminClient.from("albums").select("id, client_id, title").eq("is_deleted", false);
+    const { data: clientsData } = await adminClient.from("clients").select("id, user_id, event_name").eq("is_deleted", false);
+    const { data: profilesData } = await adminClient.from("profiles").select("user_id, name");
+    const { data: shareLinksData } = await adminClient.from("share_links").select("album_id, view_count, download_count");
 
-      const listRes = await aws.fetch(listUrl);
-      const xml = await listRes.text();
-
-      // Parse XML
-      const contents = xml.match(/<Contents>([\s\S]*?)<\/Contents>/g) || [];
-      for (const item of contents) {
-        const sizeMatch = item.match(/<Size>(\d+)<\/Size>/);
-        const keyMatch = item.match(/<Key>(.*?)<\/Key>/);
-        const dateMatch = item.match(/<LastModified>(.*?)<\/LastModified>/);
-
-        if (sizeMatch && keyMatch) {
-          const size = parseInt(sizeMatch[1]);
-          const key = keyMatch[1];
-          totalBytes += size;
-          totalObjects++;
-
-          // Group by first path segment (albums/clientId/albumId or works/)
-          const parts = key.split("/");
-          if (parts.length >= 2) {
-            const prefix = parts[0]; // e.g., "albums" or "works"
-            prefixSizes[prefix] = (prefixSizes[prefix] || 0) + size;
-          }
-
-          // This month uploads
-          if (dateMatch) {
-            const objDate = new Date(dateMatch[1]);
-            if (objDate >= monthStart) {
-              thisMonthBytes += size;
-            }
-            // Monthly growth
-            const mKey = `${objDate.getFullYear()}-${String(objDate.getMonth() + 1).padStart(2, "0")}`;
-            if (monthlyData[mKey] !== undefined) {
-              monthlyData[mKey] += size;
-            }
-          }
-        }
-      }
-
-      const truncMatch = xml.match(/<IsTruncated>(.*?)<\/IsTruncated>/);
-      const isTruncated = truncMatch?.[1] === "true";
-      const tokenMatch = xml.match(
-        /<NextContinuationToken>(.*?)<\/NextContinuationToken>/
-      );
-      continuationToken = isTruncated ? tokenMatch?.[1] : undefined;
-    } while (continuationToken);
-
-    // Fetch per-client data from DB
-    const { data: mediaData } = await adminClient
-      .from("media")
-      .select("album_id, size, created_at");
-
-    const { data: albumsData } = await adminClient
-      .from("albums")
-      .select("id, client_id, title")
-      .eq("is_deleted", false);
-
-    const { data: clientsData } = await adminClient
-      .from("clients")
-      .select("id, user_id, event_name")
-      .eq("is_deleted", false);
-
-    const { data: profilesData } = await adminClient
-      .from("profiles")
-      .select("user_id, name");
-
-    const { data: shareLinksData } = await adminClient
-      .from("share_links")
-      .select("album_id, view_count, download_count");
-
-    // Build client map
     const albumToClient: Record<string, string> = {};
     const clientNames: Record<string, string> = {};
     const clientAlbumCount: Record<string, number> = {};
 
     const profileMap: Record<string, string> = {};
-    for (const p of profilesData || []) {
-      profileMap[p.user_id] = p.name;
-    }
+    for (const p of profilesData || []) profileMap[p.user_id] = p.name;
 
     for (const c of clientsData || []) {
       clientNames[c.id] = profileMap[c.user_id] || c.event_name;
@@ -213,51 +216,43 @@ Deno.serve(async (req) => {
 
     for (const a of albumsData || []) {
       albumToClient[a.id] = a.client_id;
-      clientAlbumCount[a.client_id] =
-        (clientAlbumCount[a.client_id] || 0) + 1;
+      clientAlbumCount[a.client_id] = (clientAlbumCount[a.client_id] || 0) + 1;
     }
 
-    // Per-client storage + downloads
     const clientStorage: Record<string, number> = {};
     const clientDownloads: Record<string, number> = {};
 
     for (const m of mediaData || []) {
       const clientId = albumToClient[m.album_id];
-      if (clientId) {
-        clientStorage[clientId] = (clientStorage[clientId] || 0) + (m.size || 0);
-      }
+      if (clientId) clientStorage[clientId] = (clientStorage[clientId] || 0) + (m.size || 0);
     }
 
-    // Aggregate share link downloads per client
     let totalDownloadCount = 0;
     for (const sl of shareLinksData || []) {
       const clientId = albumToClient[sl.album_id];
       totalDownloadCount += sl.download_count || 0;
-      if (clientId) {
-        clientDownloads[clientId] =
-          (clientDownloads[clientId] || 0) + (sl.download_count || 0);
-      }
+      if (clientId) clientDownloads[clientId] = (clientDownloads[clientId] || 0) + (sl.download_count || 0);
     }
 
-    // Estimate download bandwidth: avg file size * total downloads
-    const avgFileSize =
-      mediaData && mediaData.length > 0
-        ? (mediaData.reduce((sum, m) => sum + (m.size || 0), 0) /
-            mediaData.length)
-        : 5 * 1024 * 1024; // default 5MB
+    const avgFileSize = mediaData && mediaData.length > 0
+      ? mediaData.reduce((sum, m) => sum + (m.size || 0), 0) / mediaData.length
+      : 5 * 1024 * 1024;
 
     const estimatedDownloadBytes = totalDownloadCount * avgFileSize;
 
-    // Cost calculations (INR)
     const totalGB = totalBytes / (1024 * 1024 * 1024);
     const thisMonthGB = thisMonthBytes / (1024 * 1024 * 1024);
     const downloadGB = estimatedDownloadBytes / (1024 * 1024 * 1024);
 
-    const storageCostINR = totalGB * 1.9;
-    const transferCostINR = Math.max(0, downloadGB - 100) * 7;
+    // R2 pricing: Storage free first 10GB then ₹1.2/GB, egress free
+    const awsGB = awsStats.totalBytes / (1024 * 1024 * 1024);
+    const r2GB = r2Stats.totalBytes / (1024 * 1024 * 1024);
+    const awsStorageCostINR = awsGB * 1.9;
+    const r2StorageCostINR = Math.max(0, r2GB - 10) * 1.2;
+    const storageCostINR = awsStorageCostINR + r2StorageCostINR;
+    const transferCostINR = Math.max(0, downloadGB - 100) * 7; // AWS transfer only
     const estimatedMonthlyCostINR = storageCostINR + transferCostINR;
 
-    // Build per-client breakdown
     const clientBreakdown = Object.keys(clientNames).map((cid) => {
       const storageBytes = clientStorage[cid] || 0;
       const downloads = clientDownloads[cid] || 0;
@@ -276,10 +271,8 @@ Deno.serve(async (req) => {
       };
     });
 
-    // Sort by storage desc
     clientBreakdown.sort((a, b) => b.storageBytes - a.storageBytes);
 
-    // Monthly growth for chart (cumulative)
     const monthlyGrowth = Object.entries(monthlyData).map(([month, bytes]) => ({
       month,
       sizeGB: parseFloat((bytes / (1024 * 1024 * 1024)).toFixed(3)),
@@ -295,6 +288,20 @@ Deno.serve(async (req) => {
         estimatedDownloadGB: parseFloat(downloadGB.toFixed(3)),
         totalDownloadCount,
       },
+      providerBreakdown: {
+        aws: {
+          totalBytes: awsStats.totalBytes,
+          totalGB: parseFloat(awsGB.toFixed(3)),
+          totalObjects: awsStats.totalObjects,
+          costINR: parseFloat(awsStorageCostINR.toFixed(2)),
+        },
+        r2: {
+          totalBytes: r2Stats.totalBytes,
+          totalGB: parseFloat(r2GB.toFixed(3)),
+          totalObjects: r2Stats.totalObjects,
+          costINR: parseFloat(r2StorageCostINR.toFixed(2)),
+        },
+      },
       costs: {
         storageCostINR: parseFloat(storageCostINR.toFixed(2)),
         transferCostINR: parseFloat(transferCostINR.toFixed(2)),
@@ -308,16 +315,12 @@ Deno.serve(async (req) => {
 
     const resultJson = JSON.stringify(result);
 
-    // Save to cache using upsert
     await adminClient.from("studio_settings").upsert(
       { setting_key: "storage_stats_cache", setting_value: resultJson },
       { onConflict: "setting_key" }
     );
     await adminClient.from("studio_settings").upsert(
-      {
-        setting_key: "storage_stats_cache_time",
-        setting_value: String(Date.now()),
-      },
+      { setting_key: "storage_stats_cache_time", setting_value: String(Date.now()) },
       { onConflict: "setting_key" }
     );
 
@@ -328,10 +331,7 @@ Deno.serve(async (req) => {
     console.error("storage-stats error:", error);
     return new Response(
       JSON.stringify({ error: error.message || "Internal server error" }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 });

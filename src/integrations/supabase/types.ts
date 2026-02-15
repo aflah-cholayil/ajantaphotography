@@ -463,6 +463,7 @@ export type Database = {
           s3_preview_key: string | null
           size: number
           sort_order: number | null
+          storage_provider: string
           type: Database["public"]["Enums"]["media_type"]
           width: number | null
         }
@@ -478,6 +479,7 @@ export type Database = {
           s3_preview_key?: string | null
           size: number
           sort_order?: number | null
+          storage_provider?: string
           type?: Database["public"]["Enums"]["media_type"]
           width?: number | null
         }
@@ -493,6 +495,7 @@ export type Database = {
           s3_preview_key?: string | null
           size?: number
           sort_order?: number | null
+          storage_provider?: string
           type?: Database["public"]["Enums"]["media_type"]
           width?: number | null
         }
@@ -750,6 +753,7 @@ export type Database = {
           size: number | null
           sort_order: number | null
           status: Database["public"]["Enums"]["work_status"]
+          storage_provider: string
           title: string
           type: Database["public"]["Enums"]["work_type"]
           updated_at: string
@@ -769,6 +773,7 @@ export type Database = {
           size?: number | null
           sort_order?: number | null
           status?: Database["public"]["Enums"]["work_status"]
+          storage_provider?: string
           title: string
           type?: Database["public"]["Enums"]["work_type"]
           updated_at?: string
@@ -788,6 +793,7 @@ export type Database = {
           size?: number | null
           sort_order?: number | null
           status?: Database["public"]["Enums"]["work_status"]
+          storage_provider?: string
           title?: string
           type?: Database["public"]["Enums"]["work_type"]
           updated_at?: string

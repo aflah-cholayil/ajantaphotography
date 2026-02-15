@@ -8,15 +8,58 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+// AWS (legacy)
 const awsRegion = Deno.env.get("AWS_REGION") || "us-east-1";
-const bucketName = Deno.env.get("AWS_BUCKET_NAME")!;
-
-const aws = new AwsClient({
+const awsBucket = Deno.env.get("AWS_BUCKET_NAME")!;
+const awsClient = new AwsClient({
   accessKeyId: Deno.env.get("AWS_ACCESS_KEY_ID")!,
   secretAccessKey: Deno.env.get("AWS_SECRET_ACCESS_KEY")!,
   region: awsRegion,
   service: "s3",
 });
+
+// R2
+const r2Endpoint = Deno.env.get("R2_ENDPOINT")!;
+const r2Bucket = Deno.env.get("R2_BUCKET_NAME")!;
+const r2Client = new AwsClient({
+  accessKeyId: Deno.env.get("R2_ACCESS_KEY_ID")!,
+  secretAccessKey: Deno.env.get("R2_SECRET_ACCESS_KEY")!,
+  region: "auto",
+  service: "s3",
+});
+
+function getSignedUrl(s3Key: string, provider: string) {
+  if (provider === "r2") {
+    const objectUrl = `${r2Endpoint}/${r2Bucket}/${s3Key}`;
+    return r2Client.sign(objectUrl, { method: "GET", aws: { signQuery: true } });
+  }
+  const objectUrl = `https://${awsBucket}.s3.${awsRegion}.amazonaws.com/${s3Key}`;
+  return awsClient.sign(objectUrl, { method: "GET", aws: { signQuery: true } });
+}
+
+// Try to determine provider from DB for a media item
+async function resolveProvider(supabase: any, s3Key: string, albumId?: string): Promise<string> {
+  // Check media table
+  const { data: media } = await supabase
+    .from("media")
+    .select("storage_provider")
+    .or(`s3_key.eq.${s3Key},s3_preview_key.eq.${s3Key}`)
+    .limit(1)
+    .maybeSingle();
+  if (media?.storage_provider) return media.storage_provider;
+
+  // Check works table
+  const { data: work } = await supabase
+    .from("works")
+    .select("storage_provider")
+    .or(`s3_key.eq.${s3Key},s3_preview_key.eq.${s3Key}`)
+    .limit(1)
+    .maybeSingle();
+  if (work?.storage_provider) return work.storage_provider;
+
+  // Default to aws for existing content
+  return "aws";
+}
 
 interface SignedUrlRequest {
   s3Key: string;
@@ -24,6 +67,7 @@ interface SignedUrlRequest {
   albumId?: string;
   shareToken?: string;
   sharePassword?: string;
+  storageProvider?: string;
 }
 
 const handler = async (req: Request): Promise<Response> => {
@@ -42,30 +86,28 @@ const handler = async (req: Request): Promise<Response> => {
     let albumId: string | undefined;
     let shareToken: string | undefined;
     let sharePassword: string | undefined;
+    let storageProvider: string | undefined;
     let isPublicAsset = false;
 
-    // Support both GET (for simple public assets) and POST (for authenticated access)
     if (req.method === "GET") {
       const url = new URL(req.url);
       s3Key = url.searchParams.get("key") || "";
+      storageProvider = url.searchParams.get("provider") || undefined;
       
-      // Check if this is a public showcase asset (no auth required)
       if (s3Key.startsWith("assets/showcase_video/") || s3Key.startsWith("assets/public/")) {
         isPublicAsset = true;
       }
       
-      // Check if this is a works asset - verify it's an active work in the database
       if (s3Key.startsWith("works/") || s3Key.startsWith("works/previews/")) {
-        // Check if this work exists and is active (publicly viewable)
         const { data: work } = await supabase
           .from("works")
-          .select("id, status, show_on_gallery")
+          .select("id, status, show_on_gallery, storage_provider")
           .or(`s3_key.eq.${s3Key},s3_preview_key.eq.${s3Key}`)
           .single();
         
         if (work && work.status === "active" && work.show_on_gallery) {
-          console.log("Public access granted for active work:", s3Key);
           isPublicAsset = true;
+          storageProvider = work.storage_provider;
         }
       }
     } else {
@@ -75,6 +117,7 @@ const handler = async (req: Request): Promise<Response> => {
       albumId = body.albumId;
       shareToken = body.shareToken;
       sharePassword = body.sharePassword;
+      storageProvider = body.storageProvider;
     }
 
     if (!s3Key) {
@@ -82,6 +125,11 @@ const handler = async (req: Request): Promise<Response> => {
         status: 400,
         headers: { "Content-Type": "application/json", ...corsHeaders },
       });
+    }
+
+    // Resolve provider if not provided
+    if (!storageProvider) {
+      storageProvider = await resolveProvider(supabase, s3Key, albumId);
     }
 
     let hasAccess = isPublicAsset;
@@ -92,15 +140,11 @@ const handler = async (req: Request): Promise<Response> => {
       
       if (authHeader?.startsWith("Bearer ")) {
         const token = authHeader.replace("Bearer ", "");
-        
-        // Use service role client to verify the token
         const { data: { user }, error: userError } = await supabase.auth.getUser(token);
         
         if (user) {
           const userId = user.id;
-          console.log("Authenticated user:", userId);
 
-          // Check if admin
           const { data: roleData } = await supabase
             .from("user_roles")
             .select("role")
@@ -109,18 +153,15 @@ const handler = async (req: Request): Promise<Response> => {
 
           const adminRoles = ["admin", "owner", "editor"];
           if (roleData?.role && adminRoles.includes(roleData.role)) {
-            console.log("Access granted: admin role");
             hasAccess = true;
           } else if (albumId) {
-            // Check if client owns this album
-            const { data: album, error: albumError } = await supabase
+            const { data: album } = await supabase
               .from("albums")
               .select("id, client_id, clients(user_id)")
               .eq("id", albumId)
               .single();
 
             if (album && (album as any).clients?.user_id === userId) {
-              // SECURITY: Validate that the s3Key actually belongs to this album
               const { data: mediaItem } = await supabase
                 .from("media")
                 .select("id")
@@ -128,7 +169,6 @@ const handler = async (req: Request): Promise<Response> => {
                 .or(`s3_key.eq.${s3Key},s3_preview_key.eq.${s3Key}`)
                 .single();
               
-              // Also check for face thumbnails (people table)
               const { data: personItem } = await supabase
                 .from("people")
                 .select("id")
@@ -136,7 +176,6 @@ const handler = async (req: Request): Promise<Response> => {
                 .eq("face_thumbnail_key", s3Key)
                 .single();
               
-              // Also check album cover
               const { data: coverCheck } = await supabase
                 .from("albums")
                 .select("id")
@@ -145,17 +184,10 @@ const handler = async (req: Request): Promise<Response> => {
                 .single();
 
               if (mediaItem || personItem || coverCheck) {
-                console.log("Access granted: client owns album and s3Key belongs to album");
                 hasAccess = true;
-              } else {
-                console.log("SECURITY: s3Key does not belong to album", albumId, s3Key);
               }
-            } else {
-              console.log("Client album check failed:", (album as any)?.clients?.user_id, "vs", userId);
             }
           }
-        } else {
-          console.log("Token verification failed:", userError?.message);
         }
       }
 
@@ -169,7 +201,6 @@ const handler = async (req: Request): Promise<Response> => {
           .single();
 
         if (shareLink) {
-          // Check expiry
           if (shareLink.expires_at && new Date(shareLink.expires_at) < new Date()) {
             return new Response(JSON.stringify({ error: "Link has expired" }), {
               status: 403,
@@ -177,7 +208,6 @@ const handler = async (req: Request): Promise<Response> => {
             });
           }
 
-          // Check password if required
           if (shareLink.password_hash) {
             if (!sharePassword) {
               return new Response(JSON.stringify({ error: "Password required" }), {
@@ -185,7 +215,6 @@ const handler = async (req: Request): Promise<Response> => {
                 headers: { "Content-Type": "application/json", ...corsHeaders },
               });
             }
-            // Verify password using bcrypt
             const isValidPassword = await bcrypt.compare(sharePassword, shareLink.password_hash);
             if (!isValidPassword) {
               return new Response(JSON.stringify({ error: "Invalid password" }), {
@@ -195,7 +224,6 @@ const handler = async (req: Request): Promise<Response> => {
             }
           }
 
-          // SECURITY: Validate that the s3Key belongs to this album
           const { data: mediaItem } = await supabase
             .from("media")
             .select("id")
@@ -203,7 +231,6 @@ const handler = async (req: Request): Promise<Response> => {
             .or(`s3_key.eq.${s3Key},s3_preview_key.eq.${s3Key}`)
             .single();
           
-          // Also check for face thumbnails (people table)
           const { data: personItem } = await supabase
             .from("people")
             .select("id")
@@ -211,7 +238,6 @@ const handler = async (req: Request): Promise<Response> => {
             .eq("face_thumbnail_key", s3Key)
             .single();
           
-          // Also check album cover
           const { data: coverCheck } = await supabase
             .from("albums")
             .select("id")
@@ -221,15 +247,10 @@ const handler = async (req: Request): Promise<Response> => {
 
           if (mediaItem || personItem || coverCheck) {
             hasAccess = true;
-            console.log("Share token access granted with s3Key validation");
-
-            // Increment view count
             await supabase
               .from("share_links")
               .update({ view_count: shareLink.view_count + 1 })
               .eq("id", shareLink.id);
-          } else {
-            console.log("SECURITY: Share token valid but s3Key does not belong to album", albumId, s3Key);
           }
         }
       }
@@ -242,16 +263,9 @@ const handler = async (req: Request): Promise<Response> => {
       });
     }
 
-    console.log(`Generating signed URL for: ${s3Key}`);
+    console.log(`Generating signed URL for: ${s3Key} (provider: ${storageProvider})`);
 
-    const objectUrl = `https://${bucketName}.s3.${awsRegion}.amazonaws.com/${s3Key}`;
-    const signedReq = await aws.sign(objectUrl, {
-      method: "GET",
-      aws: {
-        signQuery: true,
-      },
-    });
-
+    const signedReq = await getSignedUrl(s3Key, storageProvider);
     const presignedUrl = signedReq.url;
 
     return new Response(
