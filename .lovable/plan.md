@@ -1,111 +1,116 @@
 
 
-# Upload Reliability Audit & Fix
+# Complete AWS S3 Removal — R2 Only
 
-## Root Cause Analysis
+## Summary
+Remove all AWS S3 client initialization, dual-provider branching, and AWS environment variable usage from every edge function. Keep the `storage_provider` column in the database (it's harmless and avoids a migration) but default everything to `'r2'`. The `s3-signed-url` function needs special handling since existing DB records may still say `'aws'` — we'll update those records and then simplify the function.
 
-From the edge function logs, presigned URL generation succeeds every time (no errors logged). The same files appear 3 times in logs (~30s, ~34s, ~39s), confirming the retry logic fires but all attempts fail. The failure is happening during the **client-side PUT to R2** using the presigned URL.
+## Pre-requisite: Update existing DB records
 
-Likely causes:
-1. **No expiry on presigned URLs** -- `aws4fetch` `sign()` with `signQuery: true` does not set `X-Amz-Expires` by default. R2 may reject or the URL may be invalid without it.
-2. **XHR error messages are generic** -- the upload just says "Upload failed: {status}" with no R2 error body, making debugging impossible.
-3. **No Content-Length in signed headers** -- R2 can be strict about this.
-4. **8 concurrent files hitting edge functions simultaneously** causes cold-start storms (visible in logs: 6+ boots in 1 second).
-5. **No XHR timeout** -- hung requests never resolve.
+Before deploying the new code, update all existing `storage_provider = 'aws'` records to `'r2'` since all files now live in R2:
 
-## Changes
-
-### File 1: `supabase/functions/s3-upload/index.ts`
-
-**A. Add env var validation and logging at startup:**
-```text
-Log presence of R2_ENDPOINT, R2_BUCKET_NAME, R2_ACCESS_KEY_ID (exists: true/false)
-Log R2_ENDPOINT format to verify it matches https://<id>.r2.cloudflarestorage.com
+```sql
+UPDATE media SET storage_provider = 'r2' WHERE storage_provider = 'aws';
+UPDATE works SET storage_provider = 'r2' WHERE storage_provider = 'aws';
 ```
 
-**B. Add expiry to presigned URL** (critical fix):
-Set `X-Amz-Expires` header or add expires parameter in the `sign()` call so R2 accepts the URL.
+This is a data update (not schema change), so it will be done via the insert/update tool.
 
-**C. Add Content-Length to signed headers** so the presigned URL expects the correct file size.
+## Files to Modify (7 edge functions)
 
-**D. Add detailed error logging:**
-Log file name, size, generated key, and any signing errors with full details.
+### 1. `supabase/functions/s3-signed-url/index.ts`
+**Current**: Initializes both `awsClient` and `r2Client`, has `resolveProvider()` that checks DB and defaults to `'aws'`, and `getSignedUrl()` branches on provider.
 
-**E. Remove all AWS references** -- this function already only uses R2, just clean up comments.
+**Changes**:
+- Remove lines 11-19 (AWS client init)
+- Simplify `getSignedUrl()` to only use R2 (remove the provider parameter and AWS branch)
+- Remove `resolveProvider()` entirely — always use R2
+- Remove `storageProvider` resolution logic; just use R2 directly
+- Keep all access control logic (auth, share tokens, etc.) unchanged
 
-### File 2: `supabase/functions/s3-multipart-upload/index.ts`
+### 2. `supabase/functions/storage-cleanup/index.ts`
+**Current**: Initializes both `awsClient` and `r2Client` (lines 10-28), has `getStorageClient(provider)` and `getBaseUrl(provider)` helpers, and `deleteStorageObject()` branches on provider. Also deletes cover images and face thumbnails from "both providers."
 
-**A. Remove dual-provider AWS logic entirely:**
-- Remove `awsClient`, `awsRegion`, `awsBucket` initialization
-- Remove `getClient()` and `getBaseUrl()` helper functions
-- Hardcode R2 client for all operations
-- Keep `provider` parameter acceptance for backwards compatibility but ignore it
+**Changes**:
+- Remove lines 10-18 (AWS client init)
+- Remove `getStorageClient()` and `getBaseUrl()` helpers — not needed
+- Simplify `deleteStorageObject()` to only use R2 (remove provider parameter)
+- Remove `provider` variable usage everywhere in `deleteMediaFromStorage`, `deleteAlbumFromStorage`, `bulkDeleteMedia`
+- Remove the "try both providers" pattern for cover images and face thumbnails (lines 200-216) — just use R2
 
-**B. Add env var validation logging on boot.**
+### 3. `supabase/functions/manage-work/index.ts`
+**Current**: Initializes both clients (lines 10-28), has `getStorageClient(provider)` and `getBaseUrl(provider)`, delete action looks up `storage_provider` from DB, signed-url action looks up provider from DB.
 
-**C. Add detailed error logging** in `initiateMultipartUpload`, `completeMultipartUpload`:
-- Log the R2 XML error response body
-- Log file name, size, part number on failures
-- Return the actual R2 error message to the frontend
+**Changes**:
+- Remove lines 10-18 (AWS client init)
+- Remove `getStorageClient()` and `getBaseUrl()` helpers
+- Simplify delete action: just use R2 client directly, no provider lookup
+- Simplify signed-url action: just use R2 client directly
+- In create action: hardcode `storage_provider: 'r2'` (already mostly does this)
 
-**D. Add expiry to part presigned URLs** (same fix as s3-upload).
+### 4. `supabase/functions/face-detection/index.ts`
+**Current**: Initializes both `aws` and `r2Client` (lines 10-27). `detectFacesInImage()` downloads from R2 for `provider === "r2"`, uses S3Object reference for AWS. Uses AWS Rekognition (which requires AWS credentials for the Rekognition service itself).
 
-### File 3: `src/lib/uploadEngine.ts`
+**Changes**:
+- Remove AWS S3 client init (lines 10-17: `awsRegion`, `awsBucket`, `aws` client for S3)
+- **Keep** a separate AWS client for Rekognition only (needs AWS_ACCESS_KEY_ID and AWS_REGION for the Rekognition API) — this is not S3 storage, it's a separate AWS service
+- Simplify `detectFacesInImage()`: always download from R2 (remove the S3Object branch), always send bytes to Rekognition
+- Remove `provider` parameter from `detectFacesInImage()` signature
+- Remove `storage_provider` usage in `processAlbumFaces()`
 
-**A. Add XHR timeout** (60 seconds for small files, 5 minutes per part for multipart):
-```text
-xhr.timeout = 60000; // 60s for small files
-xhr.ontimeout = () => reject(new Error('Upload timed out'));
-```
+### 5. `supabase/functions/storage-stats/index.ts`
+**Current**: Lists both AWS and R2 buckets, merges stats, calculates costs for both.
 
-**B. Improve error messages from XHR:**
-Read the response body on failure to get the actual R2 error:
-```text
-xhr.addEventListener('load', () => {
-  if (xhr.status >= 200 && xhr.status < 300) resolve();
-  else reject(new Error(`Upload failed: ${xhr.status} - ${xhr.responseText}`));
-});
-```
+**Changes**:
+- Remove AWS client init (lines 151-158)
+- Remove AWS bucket listing (line 172)
+- Only list R2 bucket
+- Remove `providerBreakdown.aws` from response (set to zeros for backward compatibility with the StorageDashboard UI, or remove — the dashboard will be updated)
+- Simplify cost calculations to R2 only
 
-**C. Reduce concurrent files from 8 to 4:**
-Reduce `MAX_CONCURRENT_FILES` from 8 to 4 to avoid cold-start storms and R2 rate limits.
+### 6. `supabase/functions/migrate-to-r2/index.ts`
+**Current**: Contains the full AWS-to-R2 migration logic.
 
-**D. Add jitter to retry delays:**
-Prevent all retries from firing simultaneously:
-```text
-const jitter = Math.random() * 1000;
-await new Promise(r => setTimeout(r, delay + jitter));
-```
+**Changes**: This function is no longer needed since migration is complete. However, to avoid breaking the StorageDashboard UI that calls it, we'll simplify it to just return "migration complete" status:
+- Remove AWS client init
+- For `action: "status"`: return all zeros for AWS counts (everything is R2 now)
+- For `action: "start"`: return "No files remaining to migrate"
 
-**E. Remove `storageProvider` conditional -- always send `'r2'`** (already done, just verify).
+### 7. `supabase/functions/save-media-record/index.ts`
+**Current**: Already hardcodes `storage_provider: "r2"`. No changes needed.
 
-### File 4: `supabase/functions/s3-signed-url/index.ts`
+### 8. `supabase/functions/s3-upload/index.ts`
+**Current**: Already R2-only. No changes needed.
 
-**A. Keep dual-provider read logic** -- existing AWS-stored files still need to be readable. This is read-only, not upload-related, so dual-provider stays here.
+### 9. `supabase/functions/s3-multipart-upload/index.ts`
+**Current**: Already R2-only. No changes needed.
 
-### File 5: `supabase/functions/save-media-record/index.ts`
+### 10. `supabase/functions/upload-asset/index.ts`
+**Current**: Already R2-only. No changes needed.
 
-**A. Hardcode `storage_provider: 'r2'`** server-side instead of trusting client input:
-```text
-storage_provider: "r2",  // All new uploads go to R2
-```
+## Frontend Changes
 
-## Summary of Key Fixes
+### `src/pages/admin/StorageDashboard.tsx`
+- The dashboard references `providerBreakdown.aws` — update to handle the simplified response where AWS stats are zero or absent
+- The migration panel can show "Migration Complete" permanently
 
-| Issue | Fix | File |
-|-------|-----|------|
-| No URL expiry | Add `X-Amz-Expires` to presigned URL signing | s3-upload, s3-multipart-upload |
-| Generic error messages | Read XHR responseText on failure | uploadEngine.ts |
-| Cold-start storms | Reduce concurrency from 8 to 4 | uploadEngine.ts |
-| No XHR timeout | Add 60s/300s timeouts | uploadEngine.ts |
-| Retry stampede | Add random jitter to retry delays | uploadEngine.ts |
-| AWS code in upload path | Remove from s3-multipart-upload | s3-multipart-upload |
-| No env validation | Log env var presence on function boot | s3-upload, s3-multipart-upload |
-| Missing Content-Length | Include in presigned URL signing | s3-upload |
+## No Schema Changes
+The `storage_provider` column stays in both `media` and `works` tables. It will just always be `'r2'`. Removing it would require a migration and code changes to types — not worth the risk.
 
-## Files Modified
-1. `supabase/functions/s3-upload/index.ts` -- presigned URL expiry, Content-Length, env logging
-2. `supabase/functions/s3-multipart-upload/index.ts` -- remove AWS, add expiry, error details
-3. `src/lib/uploadEngine.ts` -- XHR timeout, better errors, reduce concurrency, retry jitter
-4. `supabase/functions/save-media-record/index.ts` -- hardcode r2 provider
+## AWS Secrets
+After deployment and verification, the following secrets can optionally be removed from the backend configuration:
+- `AWS_ACCESS_KEY_ID` — **KEEP** (still needed for AWS Rekognition in face-detection)
+- `AWS_SECRET_ACCESS_KEY` — **KEEP** (still needed for AWS Rekognition)
+- `AWS_BUCKET_NAME` — can be removed after deployment
+- `AWS_REGION` — **KEEP** (still needed for Rekognition endpoint)
+
+## Deployment Order
+1. Run the data update (media + works tables set to r2)
+2. Deploy all 7 modified edge functions
+3. Update StorageDashboard UI
+4. Test uploads, signed URLs, and deletions
+
+## Technical Notes
+- The `storage_provider` column default in DB is `'aws'` — this should be changed to `'r2'` via migration for any future inserts that don't explicitly set it
+- Face detection still needs AWS credentials for the Rekognition API (not S3), so AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_REGION must remain as secrets
 
