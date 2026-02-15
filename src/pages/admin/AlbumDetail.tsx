@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { 
   ArrowLeft, Image, Video, Trash2, Eye, Share2, CheckCircle, MoreVertical, 
-  Users, Loader2, ScanFace, RefreshCw, Heart, Download, CheckSquare, Square, X 
+  Users, Loader2, ScanFace, RefreshCw, Heart, Download, CheckSquare, Square, X, AlertCircle
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { supabase } from '@/integrations/supabase/client';
@@ -79,6 +79,8 @@ interface Person {
   is_hidden: boolean;
 }
 
+const PAGE_SIZE = 200;
+
 const AdminAlbumDetail = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -93,6 +95,13 @@ const AdminAlbumDetail = () => {
   const [isProcessingFaces, setIsProcessingFaces] = useState(false);
   const [faceProcessingStatus, setFaceProcessingStatus] = useState<string>('pending');
   const [isDownloadingSelections, setIsDownloadingSelections] = useState(false);
+
+  // Pagination state
+  const [totalCount, setTotalCount] = useState(0);
+  const [currentPage, setCurrentPage] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [showLargeAlbumWarning, setShowLargeAlbumWarning] = useState(true);
 
   // Selection mode state
   const [selectionMode, setSelectionMode] = useState(false);
@@ -148,19 +157,42 @@ const AdminAlbumDetail = () => {
     }
   };
 
-  const fetchMedia = async () => {
+  const fetchTotalCount = async () => {
     if (!id) return;
+    const { count, error } = await supabase
+      .from('media')
+      .select('id', { count: 'exact', head: true })
+      .eq('album_id', id);
+    if (!error && count !== null) {
+      setTotalCount(count);
+    }
+  };
+
+  const fetchMedia = async (page = 0, append = false) => {
+    if (!id) return;
+    const from = page * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
     try {
       const { data, error } = await supabase
         .from('media')
         .select('*')
         .eq('album_id', id)
         .order('sort_order', { ascending: true })
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .range(from, to);
       if (error) throw error;
-      setMedia((data as Media[]) || []);
+      const newMedia = (data as Media[]) || [];
+      if (append) {
+        setMedia(prev => [...prev, ...newMedia]);
+      } else {
+        setMedia(newMedia);
+      }
+      setHasMore(newMedia.length === PAGE_SIZE);
+      setCurrentPage(page);
+
+      // Fetch signed URLs for new items
       const urls: Record<string, string> = {};
-      for (const item of data || []) {
+      for (const item of newMedia) {
         try {
           const { data: urlData } = await supabase.functions.invoke('s3-signed-url', {
             body: { s3Key: item.s3_key },
@@ -170,12 +202,18 @@ const AdminAlbumDetail = () => {
           console.error('Error getting signed URL:', e);
         }
       }
-      setMediaUrls(urls);
+      setMediaUrls(prev => append ? { ...prev, ...urls } : urls);
     } catch (error) {
       console.error('Error fetching media:', error);
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleLoadMore = () => {
+    if (isLoadingMore || !hasMore) return;
+    setIsLoadingMore(true);
+    fetchMedia(currentPage + 1, true).finally(() => setIsLoadingMore(false));
   };
 
   const fetchPeople = async () => {
@@ -195,6 +233,7 @@ const AdminAlbumDetail = () => {
   useEffect(() => {
     fetchAlbum();
     fetchMedia();
+    fetchTotalCount();
     fetchPeople();
   }, [id]);
 
@@ -483,8 +522,8 @@ const AdminAlbumDetail = () => {
             <CardContent className="p-4">
               <div className="flex items-center gap-3">
                 <Image className="h-8 w-8 text-primary opacity-80" />
-                <div>
-                  <p className="text-2xl font-light">{media.filter(m => m.type === 'photo').length}</p>
+              <div>
+                  <p className="text-2xl font-light">{totalCount || media.filter(m => m.type === 'photo').length}</p>
                   <p className="text-sm text-muted-foreground">Photos</p>
                 </div>
               </div>
@@ -628,6 +667,21 @@ const AdminAlbumDetail = () => {
           </Card>
         )}
 
+        {/* Large Album Warning */}
+        {totalCount > 3000 && showLargeAlbumWarning && (
+          <div className="flex items-center justify-between p-4 rounded-lg bg-accent/50 border border-border">
+            <div className="flex items-center gap-2">
+              <AlertCircle size={16} className="text-muted-foreground" />
+              <span className="text-sm text-muted-foreground">
+                Large album detected ({totalCount.toLocaleString()} items). Performance may be reduced for very large albums.
+              </span>
+            </div>
+            <Button variant="ghost" size="sm" onClick={() => setShowLargeAlbumWarning(false)}>
+              <X size={14} />
+            </Button>
+          </div>
+        )}
+
         {/* Upload Section */}
         <Card className="bg-card border-border">
           <CardHeader>
@@ -637,7 +691,7 @@ const AdminAlbumDetail = () => {
             {id && (
               <MediaUploader 
                 albumId={id} 
-                onUploadComplete={() => { uploadCountRef.current = 0; fetchMedia(); }}
+                onUploadComplete={() => { uploadCountRef.current = 0; fetchMedia(); fetchTotalCount(); }}
                 onTriggerFaceDetection={() => {
                   if (album?.status === 'ready') {
                     supabase.functions.invoke('face-detection', {
@@ -656,7 +710,7 @@ const AdminAlbumDetail = () => {
           <CardHeader>
             <div className="flex items-center justify-between flex-wrap gap-3">
               <CardTitle className="font-serif text-xl font-light">
-                Gallery ({media.length} items)
+                Gallery ({totalCount || media.length} items)
               </CardTitle>
 
               {media.length > 0 && (
@@ -726,6 +780,7 @@ const AdminAlbumDetail = () => {
                 <p className="text-sm mt-1">Drag and drop files above to get started</p>
               </div>
             ) : (
+              <>
               <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
                 {media.map((item, index) => {
                   const isSelected = selectedIds.has(item.id);
@@ -804,6 +859,23 @@ const AdminAlbumDetail = () => {
                   );
                 })}
               </div>
+              {/* Load More button */}
+              {hasMore && (
+                <div className="flex justify-center pt-6">
+                  <Button
+                    variant="outline"
+                    onClick={handleLoadMore}
+                    disabled={isLoadingMore}
+                    className="gap-2"
+                  >
+                    {isLoadingMore ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : null}
+                    {isLoadingMore ? 'Loading...' : `Load More (${media.length} of ${totalCount})`}
+                  </Button>
+                </div>
+              )}
+              </>
             )}
           </CardContent>
         </Card>

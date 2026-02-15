@@ -66,6 +66,8 @@ async function getSignedUrl(s3Key: string, albumId: string): Promise<string | nu
   return null;
 }
 
+const PAGE_SIZE = 200;
+
 const ClientAlbumView = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -83,11 +85,61 @@ const ClientAlbumView = () => {
   const [isVideoPlaying, setIsVideoPlaying] = useState(false);
   const [activeTab, setActiveTab] = useState('photos');
 
+  // Pagination state
+  const [totalCount, setTotalCount] = useState(0);
+  const [currentPage, setCurrentPage] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+
   // Favorites hook
   const { favorites, toggleFavorite, favoritesCount } = useMediaFavorites(id || '');
 
   const photos = media.filter(m => m.type === 'photo');
   const videos = media.filter(m => m.type === 'video');
+
+  const fetchMediaPage = useCallback(async (page: number, append: boolean = false) => {
+    if (!id) return;
+    const from = page * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
+
+    try {
+      const { data: mediaData, error: mediaError } = await supabase
+        .from('media')
+        .select('id, file_name, s3_key, s3_preview_key, type, width, height')
+        .eq('album_id', id)
+        .order('sort_order', { ascending: true })
+        .range(from, to);
+
+      if (mediaError) {
+        console.error('Error fetching media:', mediaError);
+        return;
+      }
+
+      if (mediaData) {
+        if (append) {
+          setMedia(prev => [...prev, ...mediaData]);
+        } else {
+          setMedia(mediaData);
+        }
+        setHasMore(mediaData.length === PAGE_SIZE);
+        setCurrentPage(page);
+      }
+    } catch (error) {
+      console.error('Error fetching media page:', error);
+    }
+  }, [id]);
+
+  const fetchTotalCount = useCallback(async () => {
+    if (!id) return;
+    const { count, error } = await supabase
+      .from('media')
+      .select('id', { count: 'exact', head: true })
+      .eq('album_id', id);
+
+    if (!error && count !== null) {
+      setTotalCount(count);
+    }
+  }, [id]);
 
   const fetchAlbumData = useCallback(async () => {
     if (!id || !user) return;
@@ -114,24 +166,20 @@ const ClientAlbumView = () => {
 
       setAlbum(albumData);
 
-      // Fetch media
-      const { data: mediaData, error: mediaError } = await supabase
-        .from('media')
-        .select('id, file_name, s3_key, s3_preview_key, type, width, height')
-        .eq('album_id', id)
-        .order('sort_order', { ascending: true });
-
-      if (mediaError) {
-        console.error('Error fetching media:', mediaError);
-      } else if (mediaData) {
-        setMedia(mediaData);
-      }
+      // Fetch first page + total count
+      await Promise.all([fetchMediaPage(0), fetchTotalCount()]);
     } catch (error) {
       console.error('Error in fetchAlbumData:', error);
     } finally {
       setIsLoading(false);
     }
-  }, [id, user, navigate]);
+  }, [id, user, navigate, fetchMediaPage, fetchTotalCount]);
+
+  const handleLoadMore = useCallback(() => {
+    if (isLoadingMore || !hasMore) return;
+    setIsLoadingMore(true);
+    fetchMediaPage(currentPage + 1, true).finally(() => setIsLoadingMore(false));
+  }, [isLoadingMore, hasMore, currentPage, fetchMediaPage]);
 
   useEffect(() => {
     if (!authLoading) {
@@ -438,7 +486,7 @@ const ClientAlbumView = () => {
           <TabsList className="mb-4 sm:mb-6 bg-card border border-border w-full sm:w-auto overflow-x-auto flex-nowrap">
             <TabsTrigger value="photos" className="gap-1 sm:gap-2 text-xs sm:text-sm flex-1 sm:flex-none data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
               <Image size={14} className="sm:w-4 sm:h-4" />
-              <span className="hidden xs:inline">Photos</span> ({photos.length})
+              <span className="hidden xs:inline">Photos</span> ({totalCount > 0 ? media.filter(m => m.type === 'photo').length + (hasMore ? '+' : '') : photos.length})
             </TabsTrigger>
             <TabsTrigger value="favorites" className="gap-1 sm:gap-2 text-xs sm:text-sm flex-1 sm:flex-none data-[state=active]:bg-primary data-[state=active]:text-primary-foreground relative">
               <Heart size={14} className={`sm:w-4 sm:h-4 ${favoritesCount > 0 ? 'fill-current' : ''}`} />
@@ -483,6 +531,9 @@ const ClientAlbumView = () => {
               type="photo"
               favorites={favorites}
               onToggleFavorite={toggleFavorite}
+              hasMore={hasMore}
+              isLoadingMore={isLoadingMore}
+              onLoadMore={handleLoadMore}
             />
           </TabsContent>
 
@@ -514,6 +565,9 @@ const ClientAlbumView = () => {
               onMediaClick={setSelectedMedia}
               onDownload={handleDownload}
               type="video"
+              hasMore={hasMore}
+              isLoadingMore={isLoadingMore}
+              onLoadMore={handleLoadMore}
             />
           </TabsContent>
 

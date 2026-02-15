@@ -44,6 +44,8 @@ interface RequestBody {
   password?: string;
   action: "verify" | "load" | "get-signed-url";
   s3Key?: string;
+  page?: number;
+  pageSize?: number;
 }
 
 const handler = async (req: Request): Promise<Response> => {
@@ -53,7 +55,7 @@ const handler = async (req: Request): Promise<Response> => {
 
   try {
     const body: RequestBody = await req.json();
-    const { token, password, action, s3Key } = body;
+    const { token, password, action, s3Key, page = 0, pageSize = 200 } = body;
 
     if (!token || typeof token !== "string") {
       return new Response(
@@ -143,12 +145,23 @@ const handler = async (req: Request): Promise<Response> => {
         );
       }
 
-      // Fetch media with storage_provider
+      // Get total count
+      const { count: totalCount } = await supabase
+        .from("media")
+        .select("id", { count: "exact", head: true })
+        .eq("album_id", shareLink.album_id);
+
+      // Fetch media with pagination
+      const clampedPageSize = Math.min(Math.max(pageSize, 1), 500);
+      const from = page * clampedPageSize;
+      const to = from + clampedPageSize - 1;
+
       const { data: media, error: mediaError } = await supabase
         .from("media")
         .select("id, file_name, s3_key, s3_preview_key, type, width, height, storage_provider")
         .eq("album_id", shareLink.album_id)
-        .order("sort_order", { ascending: true });
+        .order("sort_order", { ascending: true })
+        .range(from, to);
 
       if (mediaError) {
         console.error("Error fetching media:", mediaError);
@@ -169,19 +182,28 @@ const handler = async (req: Request): Promise<Response> => {
         })
       );
 
-      await supabase
-        .from("share_links")
-        .update({ view_count: (shareLink.view_count || 0) + 1 })
-        .eq("id", shareLink.id);
+      // Only increment view count on first page load
+      if (page === 0) {
+        await supabase
+          .from("share_links")
+          .update({ view_count: (shareLink.view_count || 0) + 1 })
+          .eq("id", shareLink.id);
+      }
+
+      const mediaCount = (media || []).length;
+      const actualTotalCount = totalCount ?? 0;
 
       return new Response(
         JSON.stringify({
           album,
           media: mediaWithUrls,
+          totalCount: actualTotalCount,
+          page,
+          hasMore: mediaCount === clampedPageSize && (from + mediaCount) < actualTotalCount,
           shareLink: {
             id: shareLink.id,
             allowDownload: shareLink.allow_download,
-            viewCount: shareLink.view_count + 1,
+            viewCount: (shareLink.view_count || 0) + (page === 0 ? 1 : 0),
             downloadCount: shareLink.download_count,
           },
         }),
