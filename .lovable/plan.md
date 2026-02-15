@@ -1,117 +1,128 @@
 
 
-# Storage Dashboard - Implementation Plan
+# Fix Upload Counter Accuracy + Proper Cancel Behavior
 
-## Overview
-Add a new "Storage Dashboard" page to the admin panel that displays real-time AWS S3 usage analytics, bandwidth estimates, and cost projections. Data is fetched securely via a backend function using existing AWS credentials.
-
-## Architecture
-
-### Backend: New Edge Function `storage-stats`
-A single edge function that queries AWS S3 (using `aws4fetch`, already used in other functions) and the local database to compile storage statistics. Admin-only access enforced via JWT validation.
-
-**Data Sources:**
-- **S3 ListObjectsV2** - List all objects to calculate total bucket size, group by prefix (album/client)
-- **Database queries** - Join `media`, `albums`, `clients`, `profiles` tables to map storage per client
-- **Database aggregation** - Calculate monthly uploads from `media.created_at` timestamps
-- **Share links** - Use `view_count` and `download_count` from `share_links` for bandwidth estimates
-
-**Why not CloudWatch/Cost Explorer?**
-- CloudWatch `GetMetricStatistics` and Cost Explorer APIs require additional IAM permissions (`cloudwatch:GetMetricData`, `ce:GetCostAndUsage`) that may not be configured
-- Instead, we calculate estimates from actual S3 object data and database records, which is more reliable and doesn't require extra permissions
-
-**Caching:**
-- Results cached in `studio_settings` table with a 10-minute TTL key (`storage_stats_cache` + `storage_stats_cache_time`)
-- On each request, check if cache is fresh; if so, return cached data without calling AWS
-
-### Frontend: New Admin Page
-A dashboard page at `/admin/storage` with summary cards, charts, and per-client table.
+## Summary
+Refactor the upload engine and progress panel to fix inaccurate counters, implement proper cancel with abort + summary, and add a "cancelled" status for files.
 
 ---
 
-## Step-by-Step Implementation
+## Current Issues Identified
 
-### Step 1: Create the `storage-stats` Edge Function
+1. **Cancel marks files as `error` with message "Cancelled"** instead of a dedicated `cancelled` status -- this mixes cancelled files with genuinely failed files in counts
+2. **Pending files are not marked cancelled on cancel** -- only actively uploading files get stopped; queued files remain as `pending`
+3. **No upload summary shown after cancel or completion** -- panel just stays with raw counts
+4. **Progress is already byte-based** (this is correctly implemented via `totalBytesUploaded / totalBytes`)
+5. **Counts are already filter-based** (using `.filter(f => f.status === ...)`) -- they work correctly but the `cancelled` state is missing
+6. **dbSaved is already tracked separately** and only set after successful DB insert
 
-File: `supabase/functions/storage-stats/index.ts`
+## What Actually Needs to Change
 
-- CORS headers (matching existing pattern)
-- JWT auth validation (admin-only via `getClaims` + role check)
-- S3 ListObjectsV2 pagination to enumerate all objects
-- Group objects by prefix to map to albums
-- Query `media` + `albums` + `clients` + `profiles` to build per-client breakdown
-- Calculate:
-  - Total storage (sum of all object sizes)
-  - This month's uploads (filter `media` by `created_at` in current month)
-  - Per-client storage usage
-  - Estimated downloads from `share_links.download_count` and average file sizes
-  - Cost projections using provided INR rates (1.9/GB storage, 7/GB transfer after 100GB free)
-- Cache results in `studio_settings` for 10 minutes
-- Return JSON response
+The core engine architecture is solid. The main fixes are:
 
-### Step 2: Add Route Config
+1. Add a `cancelled` status to the file state type
+2. Cancel logic: mark queued files as `cancelled`, mark uploading files as `cancelled` (not `error`)
+3. Add a summary view that appears after cancel or completion
+4. Auto-clear behavior when all files are processed
 
-Update `supabase/config.toml` to add:
-```toml
-[functions.storage-stats]
-verify_jwt = false
+---
+
+## Implementation Steps
+
+### Step 1: Update `src/lib/uploadEngine.ts`
+
+**Add `cancelled` to FileUploadStatus:**
+```
+export type FileUploadStatus = 'pending' | 'uploading' | 'success' | 'error' | 'cancelled';
 ```
 
-### Step 3: Create the Dashboard Page
+**Fix `cancel()` method:**
+- Mark all `uploading` files as `cancelled` (not `error`)
+- Mark all `pending` files as `cancelled`
+- Abort multipart uploads for in-progress files
+- Set `isCancelled = true` and `isUploading = false`
 
-File: `src/pages/admin/StorageDashboard.tsx`
+**Fix `retryFailed()` method:**
+- Only retry files with status `error` (exclude `cancelled`)
+- This is already mostly correct since cancelled files won't match `error`
 
-**Summary Cards (top row):**
-- Total Storage Used (GB) with HardDrive icon
-- This Month Uploads (GB) with Upload icon
-- Estimated Downloads (GB) with Download icon
-- Estimated Monthly Cost (INR) with IndianRupee icon
+### Step 2: Refactor `src/components/admin/UploadProgressPanel.tsx`
 
-**Charts (middle section):**
-- Storage growth line chart (last 6 months) using Recharts
-- Cost breakdown pie chart (Storage vs Transfer vs Requests)
+**Add cancelled count to summary stats:**
+- Show `cancelledCount` alongside existing done/uploading/failed/queued counts
 
-**Per-Client Table (bottom section):**
-- Client Name, Albums, Storage Used, Downloads, Estimated Cost
-- Sortable columns
+**Add Upload Summary view:**
+- When `allDone` is true (no uploading, no pending), show a summary block:
+  - Completed count (green checkmark)
+  - Failed count (red X)
+  - Cancelled count (grey stop icon)
+  - Total attempted
+- Show "Retry Failed" button if any failed
+- Show "Close" button that calls `onClear`
 
-**Warning Alerts:**
-- Banner if storage exceeds 80% of a configurable threshold
-- Banner if monthly cost exceeds 5000 INR
+**File list: show cancelled status:**
+- Add a stop-circle icon for cancelled files
+- Show "Cancelled" text in the status column
 
-### Step 4: Add Navigation and Route
+### Step 3: Update `src/components/admin/MediaUploader.tsx`
 
-- Update `AdminLayout.tsx` nav items to include Storage Dashboard with `HardDrive` icon
-- Update `App.tsx` to add route `/admin/storage` pointing to `StorageDashboard`
+**Auto-clear after completion:**
+- When upload finishes with zero failures, auto-dismiss after a short delay (3 seconds)
+- If there are failures, keep the panel visible with the summary
 
 ---
 
 ## Technical Details
 
-### Cost Calculation Formula
+### Updated cancel() logic in uploadEngine.ts
+```text
+cancel() {
+  this.state.isCancelled = true;
+  
+  // Abort all active XHR requests
+  this.abortControllers.forEach(ctrl => ctrl.abort());
+  this.abortControllers.clear();
+
+  for (const file of this.state.files) {
+    if (file.status === 'uploading') {
+      // Abort multipart if in progress
+      if (file.uploadId && file.s3Key) {
+        supabase.functions.invoke('s3-multipart-upload', {
+          body: { action: 'abort', s3Key: file.s3Key, uploadId: file.uploadId },
+        }).catch(() => {});
+      }
+      file.status = 'cancelled';
+      file.error = 'Cancelled';
+    } else if (file.status === 'pending') {
+      file.status = 'cancelled';
+    }
+  }
+  
+  this.state.isUploading = false;
+  this.notify();
+}
 ```
-Storage Cost = totalGB * 1.9 INR
-Transfer Cost = max(0, downloadGB - 100) * 7 INR
-Total = Storage Cost + Transfer Cost
+
+### Updated UploadProgressPanel counts
+```text
+const cancelledCount = files.filter(f => f.status === 'cancelled').length;
+// allDone includes cancelled files
+const allDone = !isUploading && pendingCount === 0 && uploadingCount === 0;
 ```
 
-### Caching Strategy
-- Store serialized JSON in `studio_settings` with key `storage_stats_cache`
-- Store timestamp in `storage_stats_cache_time`
-- Edge function checks: if `now - cache_time < 10 minutes`, return cached data
-- Frontend shows "Last updated X minutes ago" indicator
-- Manual refresh button bypasses cache (passes `force=true` param)
+### Summary view (shown when allDone and has results)
+```text
+Upload Summary:
+  [checkmark] Completed: {successCount}
+  [x] Failed: {errorCount}  
+  [stop] Cancelled: {cancelledCount}
+  Total: {files.length}
 
-### Security
-- Edge function validates JWT and checks user role is owner/admin via database query
-- Only users with `owner` or `admin` role can access
-- AWS credentials never exposed to frontend
-- All data flows through the edge function
+[Retry Failed] [Close]
+```
 
-### Files to Create/Modify
-1. **Create** `supabase/functions/storage-stats/index.ts` - Backend edge function
-2. **Create** `src/pages/admin/StorageDashboard.tsx` - Dashboard UI page
-3. **Modify** `supabase/config.toml` - Add function config
-4. **Modify** `src/components/admin/AdminLayout.tsx` - Add nav item
-5. **Modify** `src/App.tsx` - Add route
+### Files to Modify
+1. `src/lib/uploadEngine.ts` -- Add `cancelled` status, fix cancel logic
+2. `src/components/admin/UploadProgressPanel.tsx` -- Add cancelled display, summary view
+3. `src/components/admin/MediaUploader.tsx` -- Minor: auto-clear logic after success
 
