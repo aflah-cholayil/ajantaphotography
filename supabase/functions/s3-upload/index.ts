@@ -7,16 +7,11 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-// R2 config — validate env vars
+// R2 config
 const r2Endpoint = Deno.env.get("R2_ENDPOINT") || "";
 const r2BucketName = Deno.env.get("R2_BUCKET_NAME") || "";
 const r2AccessKeyId = Deno.env.get("R2_ACCESS_KEY_ID") || "";
 const r2SecretAccessKey = Deno.env.get("R2_SECRET_ACCESS_KEY") || "";
-
-console.log(`[s3-upload] R2 env check: ENDPOINT=${!!r2Endpoint}, BUCKET=${!!r2BucketName}, ACCESS_KEY=${!!r2AccessKeyId}, SECRET_KEY=${!!r2SecretAccessKey}`);
-if (r2Endpoint) {
-  console.log(`[s3-upload] R2_ENDPOINT format: ${r2Endpoint.replace(/\/\/.*@/, "//***@").substring(0, 60)}...`);
-}
 
 const r2 = new AwsClient({
   accessKeyId: r2AccessKeyId,
@@ -26,11 +21,12 @@ const r2 = new AwsClient({
 });
 
 interface UploadRequest {
-  albumId: string;
-  fileName: string;
-  fileType: string;
-  fileSize: number;
+  albumId?: string;
+  fileName?: string;
+  fileType?: string;
+  fileSize?: number;
   isPreview?: boolean;
+  action?: string;
 }
 
 const handler = async (req: Request): Promise<Response> => {
@@ -79,7 +75,99 @@ const handler = async (req: Request): Promise<Response> => {
       });
     }
 
-    const { albumId, fileName, fileType, fileSize, isPreview }: UploadRequest = await req.json();
+    const body: UploadRequest = await req.json();
+
+    // ===== TEST MODE: server-side PUT to verify R2 credentials =====
+    if (body.action === "test") {
+      console.log("[s3-upload] TEST MODE: verifying R2 connectivity");
+
+      if (!r2Endpoint || !r2BucketName || !r2AccessKeyId || !r2SecretAccessKey) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: "Missing R2 environment variables",
+          details: {
+            hasEndpoint: !!r2Endpoint,
+            hasBucket: !!r2BucketName,
+            hasAccessKey: !!r2AccessKeyId,
+            hasSecretKey: !!r2SecretAccessKey,
+          },
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const testKey = `test/connectivity-test-${Date.now()}.txt`;
+      const testUrl = `${r2Endpoint}/${r2BucketName}/${testKey}`;
+      const testBody = "R2 connectivity test";
+
+      try {
+        // PUT test file
+        const putReq = await r2.sign(testUrl, {
+          method: "PUT",
+          headers: { "Content-Type": "text/plain" },
+          body: testBody,
+        });
+
+        const putResponse = await fetch(putReq.url, {
+          method: "PUT",
+          headers: putReq.headers,
+          body: testBody,
+        });
+
+        const putStatus = putResponse.status;
+        const putResponseText = await putResponse.text();
+
+        console.log(`[s3-upload] TEST PUT status: ${putStatus}`);
+
+        if (putStatus < 200 || putStatus >= 300) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: `R2 PUT failed with status ${putStatus}`,
+            r2Status: putStatus,
+            r2Response: putResponseText.substring(0, 500),
+            endpoint: r2Endpoint.substring(0, 50) + "...",
+            bucket: r2BucketName,
+          }), {
+            status: 200,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          });
+        }
+
+        // DELETE test file
+        try {
+          const delReq = await r2.sign(testUrl, { method: "DELETE" });
+          await fetch(delReq.url, { method: "DELETE", headers: delReq.headers });
+        } catch (e) {
+          console.warn("[s3-upload] Test file cleanup failed:", e);
+        }
+
+        return new Response(JSON.stringify({
+          success: true,
+          message: "R2 connectivity verified. Server-side PUT succeeded.",
+          r2Status: putStatus,
+          endpoint: r2Endpoint.substring(0, 50) + "...",
+          bucket: r2BucketName,
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      } catch (testError) {
+        console.error("[s3-upload] TEST error:", testError);
+        return new Response(JSON.stringify({
+          success: false,
+          error: testError instanceof Error ? testError.message : "Unknown test error",
+          endpoint: r2Endpoint.substring(0, 50) + "...",
+          bucket: r2BucketName,
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+    }
+
+    // ===== NORMAL MODE: generate presigned URL =====
+    const { albumId, fileName, fileType, fileSize, isPreview } = body;
 
     if (!albumId || !fileName || !fileType || !fileSize) {
       return new Response(JSON.stringify({ error: "Missing required fields: albumId, fileName, fileType, fileSize" }), {
@@ -96,7 +184,6 @@ const handler = async (req: Request): Promise<Response> => {
     console.log(`[s3-upload] Generating R2 presigned URL: file=${fileName}, size=${fileSize}, key=${s3Key}`);
 
     if (!r2Endpoint || !r2BucketName) {
-      console.error("[s3-upload] Missing R2_ENDPOINT or R2_BUCKET_NAME");
       return new Response(JSON.stringify({ error: "Storage configuration error" }), {
         status: 500,
         headers: { "Content-Type": "application/json", ...corsHeaders },

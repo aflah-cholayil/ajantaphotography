@@ -306,9 +306,17 @@ export class UploadEngine {
 
       xhr.addEventListener('load', () => {
         if (xhr.status >= 200 && xhr.status < 300) resolve();
-        else reject(new Error(`Upload failed: ${xhr.status} - ${xhr.responseText?.substring(0, 200) || 'No response body'}`));
+        else {
+          const body = xhr.responseText?.substring(0, 300) || 'No response body';
+          console.error(`[UploadEngine] R2 PUT returned ${xhr.status} for ${fileState.file.name}: ${body}`);
+          reject(new Error(`R2 upload failed (HTTP ${xhr.status}): ${body}`));
+        }
       });
-      xhr.addEventListener('error', () => reject(new Error(`Upload network error for ${fileState.file.name}`)));
+      xhr.addEventListener('error', () => {
+        const domain = new URL(urlData.presignedUrl).hostname;
+        console.error(`[UploadEngine] Network error uploading to ${domain} for ${fileState.file.name}. This is usually a CORS issue — ensure R2 bucket CORS allows your origin.`);
+        reject(new Error(`Upload blocked (CORS). Configure R2 bucket CORS to allow your domain. Target: ${domain}`));
+      });
       xhr.addEventListener('abort', () => reject(new Error('Cancelled')));
       xhr.addEventListener('timeout', () => reject(new Error(`Upload timed out after ${SMALL_FILE_TIMEOUT / 1000}s`)));
 
@@ -381,12 +389,21 @@ export class UploadEngine {
 
             xhr.addEventListener('load', () => {
               if (xhr.status >= 200 && xhr.status < 300) {
-                resolve(xhr.getResponseHeader('ETag') || '');
+                const etag = xhr.getResponseHeader('ETag') || '';
+                if (!etag) {
+                  console.warn(`[UploadEngine] Part ${partNumber} succeeded but ETag is empty. Check R2 CORS ExposeHeaders includes "ETag".`);
+                }
+                resolve(etag);
               } else {
-                reject(new Error(`Part ${partNumber} failed: ${xhr.status} - ${xhr.responseText?.substring(0, 200) || 'No body'}`));
+                const body = xhr.responseText?.substring(0, 300) || 'No body';
+                console.error(`[UploadEngine] Part ${partNumber} R2 PUT returned ${xhr.status}: ${body}`);
+                reject(new Error(`Part ${partNumber} failed (HTTP ${xhr.status}): ${body}`));
               }
             });
-            xhr.addEventListener('error', () => reject(new Error(`Part ${partNumber} network error`)));
+            xhr.addEventListener('error', () => {
+              console.error(`[UploadEngine] Part ${partNumber} network error (likely CORS). Ensure R2 bucket CORS allows your origin.`);
+              reject(new Error(`Part ${partNumber} blocked (CORS). Configure R2 bucket CORS.`));
+            });
             xhr.addEventListener('timeout', () => reject(new Error(`Part ${partNumber} timed out after ${MULTIPART_TIMEOUT / 1000}s`)));
 
             xhr.open('PUT', partData.url);

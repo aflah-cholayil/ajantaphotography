@@ -1,6 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { Upload, FolderUp } from 'lucide-react';
+import { Upload, FolderUp, Wifi, Loader2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
@@ -33,6 +33,8 @@ const isMediaFile = (file: File) => {
 
 export const MediaUploader = ({ albumId, onUploadComplete, onTriggerFaceDetection, onFileUploaded }: MediaUploaderProps) => {
   const [uploadState, setUploadState] = useState<UploadEngineState | null>(null);
+  const [isTestingR2, setIsTestingR2] = useState(false);
+  const [r2TestResult, setR2TestResult] = useState<{ success: boolean; message: string } | null>(null);
   const engineRef = useRef<UploadEngine | null>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const autoClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -152,7 +154,7 @@ export const MediaUploader = ({ albumId, onUploadComplete, onTriggerFaceDetectio
         )}
       </div>
 
-      <div className="flex gap-2">
+      <div className="flex gap-2 flex-wrap">
         <input
           ref={folderInputRef}
           type="file"
@@ -172,7 +174,45 @@ export const MediaUploader = ({ albumId, onUploadComplete, onTriggerFaceDetectio
           <FolderUp size={16} />
           Upload Folder
         </Button>
+        <Button
+          variant="outline"
+          onClick={async () => {
+            setIsTestingR2(true);
+            setR2TestResult(null);
+            try {
+              const { data, error } = await supabase.functions.invoke('s3-upload', {
+                body: { action: 'test' },
+              });
+              if (error) {
+                setR2TestResult({ success: false, message: error.message || 'Edge function error' });
+              } else if (data?.success) {
+                setR2TestResult({ success: true, message: data.message });
+                toast({ title: '✅ R2 Connection OK', description: data.message });
+              } else {
+                setR2TestResult({ success: false, message: data?.error || 'Unknown error' });
+                toast({ title: '❌ R2 Connection Failed', description: data?.error || 'Check R2 credentials', variant: 'destructive' });
+              }
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : 'Test failed';
+              setR2TestResult({ success: false, message: msg });
+              toast({ title: '❌ R2 Test Error', description: msg, variant: 'destructive' });
+            } finally {
+              setIsTestingR2(false);
+            }
+          }}
+          disabled={isTestingR2 || isUploading}
+          className="gap-2"
+        >
+          {isTestingR2 ? <Loader2 size={16} className="animate-spin" /> : <Wifi size={16} />}
+          Test R2 Connection
+        </Button>
       </div>
+
+      {r2TestResult && (
+        <div className={`text-sm p-3 rounded-md ${r2TestResult.success ? 'bg-green-500/10 text-green-700 dark:text-green-400' : 'bg-destructive/10 text-destructive'}`}>
+          {r2TestResult.success ? '✅' : '❌'} {r2TestResult.message}
+        </div>
+      )}
 
       {uploadState && uploadState.files.length > 0 && (
         <UploadProgressPanel
