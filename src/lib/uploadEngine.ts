@@ -1,7 +1,8 @@
 import { supabase } from '@/integrations/supabase/client';
 
 const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB
-const MAX_CONCURRENT_FILES = 4; // Reduced from 8 to avoid cold-start storms
+const MAX_CONCURRENT_FILES = 8; // Dynamic ceiling
+const MIN_CONCURRENT_FILES = 4; // Dynamic floor for slow networks
 const MAX_CONCURRENT_PARTS = 5;
 const MAX_RETRIES = 3;
 const RETRY_DELAYS = [1000, 3000, 5000];
@@ -11,6 +12,9 @@ const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024; // 2GB
 const MAX_BATCH_SIZE = 50 * 1024 * 1024 * 1024; // 50GB
 const SMALL_FILE_TIMEOUT = 60000; // 60s
 const MULTIPART_TIMEOUT = 300000; // 5min per part
+const SPEED_CHECK_INTERVAL = 5000; // 5s
+const THROTTLE_DOWN_SPEED = 1 * 1024 * 1024; // 1MB/s
+const THROTTLE_UP_SPEED = 5 * 1024 * 1024; // 5MB/s
 
 export type FileUploadStatus = 'pending' | 'uploading' | 'success' | 'error' | 'cancelled';
 
@@ -34,6 +38,7 @@ export interface UploadEngineState {
   startTime: number;
   isUploading: boolean;
   isCancelled: boolean;
+  activeConcurrency: number;
 }
 
 export interface BatchValidation {
@@ -66,6 +71,10 @@ export class UploadEngine {
   private albumId: string;
   private abortControllers: Map<string, AbortController> = new Map();
   private lastSessionRefresh: number = 0;
+  private currentConcurrency: number = MAX_CONCURRENT_FILES;
+  private speedSamples: number[] = [];
+  private lastSpeedCheck: number = 0;
+  private lastSpeedBytes: number = 0;
 
   constructor(
     albumId: string,
@@ -94,12 +103,39 @@ export class UploadEngine {
       startTime: Date.now(),
       isUploading: false,
       isCancelled: false,
+      activeConcurrency: this.currentConcurrency,
     };
   }
 
   private notify() {
     this.state.totalBytesUploaded = this.state.files.reduce((sum, f) => sum + f.bytesUploaded, 0);
+    this.state.activeConcurrency = this.currentConcurrency;
     this.onProgress({ ...this.state, files: [...this.state.files] });
+  }
+
+  private adjustConcurrency() {
+    const now = Date.now();
+    if (now - this.lastSpeedCheck < SPEED_CHECK_INTERVAL) return;
+
+    const currentBytes = this.state.files.reduce((sum, f) => sum + f.bytesUploaded, 0);
+    const elapsed = (now - this.lastSpeedCheck) / 1000;
+    const speed = elapsed > 0 ? (currentBytes - this.lastSpeedBytes) / elapsed : 0;
+
+    this.lastSpeedCheck = now;
+    this.lastSpeedBytes = currentBytes;
+
+    // Rolling average of last 3 samples (15s of data)
+    this.speedSamples.push(speed);
+    if (this.speedSamples.length > 3) this.speedSamples.shift();
+
+    const avgSpeed = this.speedSamples.reduce((a, b) => a + b, 0) / this.speedSamples.length;
+
+    if (avgSpeed < THROTTLE_DOWN_SPEED) {
+      this.currentConcurrency = MIN_CONCURRENT_FILES;
+    } else if (avgSpeed > THROTTLE_UP_SPEED) {
+      this.currentConcurrency = MAX_CONCURRENT_FILES;
+    }
+    // Otherwise keep current value
   }
 
   private updateFile(id: string, updates: Partial<FileUploadState>) {
@@ -128,6 +164,10 @@ export class UploadEngine {
 
     this.state.isUploading = true;
     this.state.startTime = Date.now();
+    this.lastSpeedCheck = Date.now();
+    this.lastSpeedBytes = 0;
+    this.speedSamples = [];
+    this.currentConcurrency = MAX_CONCURRENT_FILES;
     this.notify();
 
     const pending = this.state.files.filter(f => f.status === 'pending');
@@ -136,13 +176,15 @@ export class UploadEngine {
 
     const runNext = async (): Promise<void> => {
       while (nextIndex < pending.length && !this.state.isCancelled) {
-        if (active.size >= MAX_CONCURRENT_FILES) {
+        if (active.size >= this.currentConcurrency) {
           await Promise.race(active);
         }
         if (this.state.isCancelled) break;
 
         const fileState = pending[nextIndex++];
-        const p = this.uploadFileWithRetry(fileState).finally(() => active.delete(p));
+        const p = this.uploadFileWithRetry(fileState).then(() => {
+          this.adjustConcurrency();
+        }).finally(() => active.delete(p));
         active.add(p);
       }
       while (active.size > 0) {
@@ -187,6 +229,10 @@ export class UploadEngine {
     this.state.isCancelled = false;
     this.state.isUploading = true;
     this.state.startTime = Date.now();
+    this.lastSpeedCheck = Date.now();
+    this.lastSpeedBytes = 0;
+    this.speedSamples = [];
+    this.currentConcurrency = MAX_CONCURRENT_FILES;
     this.notify();
 
     await supabase.auth.refreshSession();
@@ -197,14 +243,16 @@ export class UploadEngine {
 
     const runNext = async (): Promise<void> => {
       while (nextIndex < failed.length && !this.state.isCancelled) {
-        if (active.size >= MAX_CONCURRENT_FILES) {
+        if (active.size >= this.currentConcurrency) {
           await Promise.race(active);
         }
         if (this.state.isCancelled) break;
 
         const fileState = this.state.files.find(f => f.id === failed[nextIndex++]?.id);
         if (!fileState) continue;
-        const p = this.uploadFileWithRetry(fileState).finally(() => active.delete(p));
+        const p = this.uploadFileWithRetry(fileState).then(() => {
+          this.adjustConcurrency();
+        }).finally(() => active.delete(p));
         active.add(p);
       }
       while (active.size > 0) {
