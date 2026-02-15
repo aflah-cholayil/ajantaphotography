@@ -50,3 +50,6 @@ verify_jwt = false
 
 [functions.save-media-record]
 verify_jwt = false
+
+[functions.storage-stats]
+verify_jwt = false
