@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { 
   ArrowLeft, Image, Video, Trash2, Eye, Share2, CheckCircle, MoreVertical, 
-  Users, Loader2, ScanFace, RefreshCw, Heart, Download 
+  Users, Loader2, ScanFace, RefreshCw, Heart, Download, CheckSquare, Square, X 
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { supabase } from '@/integrations/supabase/client';
@@ -13,14 +13,16 @@ import { AdminLayout } from '@/components/admin/AdminLayout';
 import { MediaUploader } from '@/components/admin/MediaUploader';
 import { AlbumStatusBadge } from '@/components/admin/AlbumStatusBadge';
 import { ShareLinkDialog } from '@/components/admin/ShareLinkDialog';
+import { DeleteConfirmDialog } from '@/components/admin/DeleteConfirmDialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Progress } from '@/components/ui/progress';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -91,6 +93,14 @@ const AdminAlbumDetail = () => {
   const [isProcessingFaces, setIsProcessingFaces] = useState(false);
   const [faceProcessingStatus, setFaceProcessingStatus] = useState<string>('pending');
   const [isDownloadingSelections, setIsDownloadingSelections] = useState(false);
+
+  // Selection mode state
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null);
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [bulkDeleteProgress, setBulkDeleteProgress] = useState<{ current: number; total: number } | null>(null);
   
   // Admin favorites hook
   const { favorites, favoritesCount, isFavorited, favoritesByClient } = useAdminFavorites(id || '');
@@ -101,7 +111,6 @@ const AdminAlbumDetail = () => {
 
   const handleFileUploaded = useCallback(() => {
     uploadCountRef.current += 1;
-    // Refresh gallery every 10 successful uploads (debounced)
     if (uploadCountRef.current % 10 === 0) {
       if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
       refreshTimerRef.current = setTimeout(() => {
@@ -112,31 +121,16 @@ const AdminAlbumDetail = () => {
 
   const fetchAlbum = async () => {
     if (!id) return;
-
     try {
       const { data: albumData, error: albumError } = await supabase
         .from('albums')
         .select(`
-          id,
-          title,
-          description,
-          status,
-          created_at,
-          ready_at,
-          client_id,
-          face_processing_status,
-          clients!inner(
-            id,
-            event_name,
-            event_date,
-            user_id
-          )
+          id, title, description, status, created_at, ready_at, client_id, face_processing_status,
+          clients!inner(id, event_name, event_date, user_id)
         `)
         .eq('id', id)
         .single();
-
       if (albumError) throw albumError;
-
       let clientProfile = { name: 'Unknown', email: '' };
       if (albumData?.clients?.user_id) {
         const { data: profileData } = await supabase
@@ -144,31 +138,18 @@ const AdminAlbumDetail = () => {
           .select('name, email')
           .eq('user_id', albumData.clients.user_id)
           .single();
-        
-        if (profileData) {
-          clientProfile = profileData;
-        }
+        if (profileData) clientProfile = profileData;
       }
-
-      setAlbum({
-        ...albumData,
-        clientProfile,
-      } as unknown as Album);
-      
+      setAlbum({ ...albumData, clientProfile } as unknown as Album);
       setFaceProcessingStatus(albumData?.face_processing_status || 'pending');
     } catch (error) {
       console.error('Error fetching album:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to load album',
-        variant: 'destructive',
-      });
+      toast({ title: 'Error', description: 'Failed to load album', variant: 'destructive' });
     }
   };
 
   const fetchMedia = async () => {
     if (!id) return;
-
     try {
       const { data, error } = await supabase
         .from('media')
@@ -176,19 +157,15 @@ const AdminAlbumDetail = () => {
         .eq('album_id', id)
         .order('sort_order', { ascending: true })
         .order('created_at', { ascending: false });
-
       if (error) throw error;
       setMedia((data as Media[]) || []);
-      
       const urls: Record<string, string> = {};
       for (const item of data || []) {
         try {
           const { data: urlData } = await supabase.functions.invoke('s3-signed-url', {
             body: { s3Key: item.s3_key },
           });
-          if (urlData?.url) {
-            urls[item.id] = urlData.url;
-          }
+          if (urlData?.url) urls[item.id] = urlData.url;
         } catch (e) {
           console.error('Error getting signed URL:', e);
         }
@@ -203,12 +180,10 @@ const AdminAlbumDetail = () => {
 
   const fetchPeople = async () => {
     if (!id) return;
-
     try {
       const { data, error } = await supabase.functions.invoke('face-detection', {
         body: { action: 'get_people', albumId: id },
       });
-
       if (error) throw error;
       setPeople(data?.people || []);
       setFaceProcessingStatus(data?.processingStatus || 'pending');
@@ -223,82 +198,43 @@ const AdminAlbumDetail = () => {
     fetchPeople();
   }, [id]);
 
-  // Poll for processing status while processing
   useEffect(() => {
     if (faceProcessingStatus === 'processing') {
-      const interval = setInterval(() => {
-        fetchPeople();
-      }, 5000);
+      const interval = setInterval(() => { fetchPeople(); }, 5000);
       return () => clearInterval(interval);
     }
   }, [faceProcessingStatus, id]);
 
   const handleUpdateStatus = async (newStatus: AlbumStatus) => {
     if (!id) return;
-
     try {
-      const { error } = await supabase
-        .from('albums')
-        .update({ status: newStatus })
-        .eq('id', id);
-
+      const { error } = await supabase.from('albums').update({ status: newStatus }).eq('id', id);
       if (error) throw error;
-
-      toast({
-        title: 'Status updated',
-        description: `Album marked as ${newStatus}`,
-      });
-
-      // Auto-trigger face detection when marked as ready
+      toast({ title: 'Status updated', description: `Album marked as ${newStatus}` });
       if (newStatus === 'ready') {
-        toast({
-          title: 'Starting face detection',
-          description: 'Analyzing photos for faces in the background...',
-        });
-        
-        // Trigger face detection in background
+        toast({ title: 'Starting face detection', description: 'Analyzing photos for faces in the background...' });
         supabase.functions.invoke('face-detection', {
           body: { action: 'process_album', albumId: id },
-        }).then(() => {
-          setFaceProcessingStatus('processing');
-        }).catch((err) => {
-          console.error('Error starting face detection:', err);
-        });
+        }).then(() => setFaceProcessingStatus('processing')).catch((err) => console.error('Error starting face detection:', err));
       }
-
       fetchAlbum();
     } catch (error: unknown) {
-      toast({
-        title: 'Error',
-        description: error instanceof Error ? error.message : 'Failed to update status',
-        variant: 'destructive',
-      });
+      toast({ title: 'Error', description: error instanceof Error ? error.message : 'Failed to update status', variant: 'destructive' });
     }
   };
 
   const handleScanFaces = async () => {
     if (!id) return;
-
     setIsProcessingFaces(true);
     try {
-      const { data, error } = await supabase.functions.invoke('face-detection', {
+      const { error } = await supabase.functions.invoke('face-detection', {
         body: { action: 'process_album', albumId: id },
       });
-
       if (error) throw error;
-
-      toast({
-        title: 'Face detection started',
-        description: 'Analyzing photos for faces in the background...',
-      });
-      
+      toast({ title: 'Face detection started', description: 'Analyzing photos for faces in the background...' });
       setFaceProcessingStatus('processing');
     } catch (error: unknown) {
-      toast({
-        title: 'Error',
-        description: error instanceof Error ? error.message : 'Failed to start face detection',
-        variant: 'destructive',
-      });
+      toast({ title: 'Error', description: error instanceof Error ? error.message : 'Failed to start face detection', variant: 'destructive' });
     } finally {
       setIsProcessingFaces(false);
     }
@@ -306,31 +242,16 @@ const AdminAlbumDetail = () => {
 
   const handleDeleteMedia = async () => {
     if (!deleteMediaId) return;
-
     try {
-      // Use storage-cleanup to delete from S3 and database
       const { error } = await supabase.functions.invoke('storage-cleanup', {
-        body: {
-          action: 'delete_media',
-          mediaId: deleteMediaId,
-        },
+        body: { action: 'delete_media', mediaId: deleteMediaId },
       });
-
       if (error) throw error;
-
-      toast({
-        title: 'Media deleted',
-        description: 'The file has been removed from the album and S3 storage',
-      });
-
+      toast({ title: 'Media deleted', description: 'The file has been removed from the album and S3 storage' });
       setDeleteMediaId(null);
       fetchMedia();
     } catch (error: unknown) {
-      toast({
-        title: 'Error',
-        description: error instanceof Error ? error.message : 'Failed to delete media',
-        variant: 'destructive',
-      });
+      toast({ title: 'Error', description: error instanceof Error ? error.message : 'Failed to delete media', variant: 'destructive' });
     }
   };
 
@@ -342,25 +263,15 @@ const AdminAlbumDetail = () => {
 
   const handleDownloadSelections = async () => {
     if (favorites.length === 0) return;
-
     setIsDownloadingSelections(true);
-    
     try {
       const zip = new JSZip();
       const uniqueMediaIds = [...new Set(favorites.map(f => f.media_id))];
-      
-      // Find media items for the favorited IDs
       const selectedMedia = media.filter(m => uniqueMediaIds.includes(m.id));
-      
       let downloadedCount = 0;
-      
       for (const item of selectedMedia) {
         try {
-          // Get signed URL for original file
-          const { data: urlData } = await supabase.functions.invoke('s3-signed-url', {
-            body: { s3Key: item.s3_key },
-          });
-          
+          const { data: urlData } = await supabase.functions.invoke('s3-signed-url', { body: { s3Key: item.s3_key } });
           if (urlData?.url) {
             const response = await fetch(urlData.url);
             const blob = await response.blob();
@@ -371,7 +282,6 @@ const AdminAlbumDetail = () => {
           console.error(`Error downloading ${item.file_name}:`, err);
         }
       }
-      
       if (downloadedCount > 0) {
         const content = await zip.generateAsync({ type: 'blob' });
         const url = URL.createObjectURL(content);
@@ -382,25 +292,13 @@ const AdminAlbumDetail = () => {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        
-        toast({
-          title: 'Download complete',
-          description: `Downloaded ${downloadedCount} selected photos`,
-        });
+        toast({ title: 'Download complete', description: `Downloaded ${downloadedCount} selected photos` });
       } else {
-        toast({
-          title: 'No files downloaded',
-          description: 'Could not download any of the selected files',
-          variant: 'destructive',
-        });
+        toast({ title: 'No files downloaded', description: 'Could not download any of the selected files', variant: 'destructive' });
       }
     } catch (error) {
       console.error('Error creating ZIP:', error);
-      toast({
-        title: 'Download failed',
-        description: 'Failed to create ZIP file',
-        variant: 'destructive',
-      });
+      toast({ title: 'Download failed', description: 'Failed to create ZIP file', variant: 'destructive' });
     } finally {
       setIsDownloadingSelections(false);
     }
@@ -409,31 +307,85 @@ const AdminAlbumDetail = () => {
   const getFaceStatusBadge = () => {
     switch (faceProcessingStatus) {
       case 'processing':
-        return (
-          <Badge variant="secondary" className="gap-1">
-            <Loader2 size={12} className="animate-spin" />
-            Scanning Faces...
-          </Badge>
-        );
+        return (<Badge variant="secondary" className="gap-1"><Loader2 size={12} className="animate-spin" />Scanning Faces...</Badge>);
       case 'completed':
-        return (
-          <Badge variant="default" className="gap-1 bg-green-600">
-            <Users size={12} />
-            {people.length} People Found
-          </Badge>
-        );
+        return (<Badge variant="default" className="gap-1 bg-green-600"><Users size={12} />{people.length} People Found</Badge>);
       case 'failed':
-        return (
-          <Badge variant="destructive" className="gap-1">
-            Failed
-          </Badge>
-        );
+        return (<Badge variant="destructive" className="gap-1">Failed</Badge>);
       default:
-        return (
-          <Badge variant="outline" className="gap-1">
-            Not Scanned
-          </Badge>
-        );
+        return (<Badge variant="outline" className="gap-1">Not Scanned</Badge>);
+    }
+  };
+
+  // Selection handlers
+  const toggleSelection = (mediaId: string, index: number, shiftKey: boolean) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (shiftKey && lastClickedIndex !== null) {
+        const start = Math.min(lastClickedIndex, index);
+        const end = Math.max(lastClickedIndex, index);
+        for (let i = start; i <= end; i++) {
+          next.add(media[i].id);
+        }
+      } else {
+        if (next.has(mediaId)) {
+          next.delete(mediaId);
+        } else {
+          next.add(mediaId);
+        }
+      }
+      return next;
+    });
+    setLastClickedIndex(index);
+  };
+
+  const selectAll = () => {
+    setSelectedIds(new Set(media.map(m => m.id)));
+  };
+
+  const clearSelection = () => {
+    setSelectedIds(new Set());
+    setLastClickedIndex(null);
+  };
+
+  const exitSelectionMode = () => {
+    setSelectionMode(false);
+    clearSelection();
+  };
+
+  const handleBulkDelete = async () => {
+    if (!id || selectedIds.size === 0) return;
+    setIsBulkDeleting(true);
+    setBulkDeleteProgress({ current: 0, total: selectedIds.size });
+
+    try {
+      const ids = Array.from(selectedIds);
+      const { data, error } = await supabase.functions.invoke('storage-cleanup', {
+        body: { action: 'bulk_delete_media', mediaIds: ids, albumId: id },
+      });
+
+      if (error) throw error;
+
+      setBulkDeleteProgress({ current: selectedIds.size, total: selectedIds.size });
+
+      toast({
+        title: `${data.deletedCount} files deleted`,
+        description: `Removed ${formatFileSize(data.totalSize)} from storage${data.peopleRemoved > 0 ? `. ${data.peopleRemoved} empty person groups removed.` : ''}`,
+      });
+
+      exitSelectionMode();
+      setShowBulkDeleteConfirm(false);
+      fetchMedia();
+      fetchPeople();
+    } catch (error: unknown) {
+      toast({
+        title: 'Bulk delete failed',
+        description: error instanceof Error ? error.message : 'Failed to delete selected files',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsBulkDeleting(false);
+      setBulkDeleteProgress(null);
     }
   };
 
@@ -450,17 +402,15 @@ const AdminAlbumDetail = () => {
     );
   }
 
+  const selectedSize = media.filter(m => selectedIds.has(m.id)).reduce((sum, m) => sum + m.size, 0);
+
   return (
     <AdminLayout>
       <div className="space-y-6">
         {/* Header */}
         <div className="flex items-start justify-between flex-wrap gap-4">
           <div className="flex items-start gap-4">
-            <Button 
-              variant="ghost" 
-              size="icon"
-              onClick={() => navigate('/admin/albums')}
-            >
+            <Button variant="ghost" size="icon" onClick={() => navigate('/admin/albums')}>
               <ArrowLeft size={20} />
             </Button>
             <div>
@@ -487,7 +437,6 @@ const AdminAlbumDetail = () => {
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Face Scan Button */}
             <Button
               variant="outline"
               onClick={handleScanFaces}
@@ -502,10 +451,7 @@ const AdminAlbumDetail = () => {
               )}
               {faceProcessingStatus === 'completed' ? 'Rescan Faces' : 'Scan for Faces'}
             </Button>
-
-            {album && (
-              <ShareLinkDialog albumId={album.id} albumTitle={album.title} />
-            )}
+            {album && <ShareLinkDialog albumId={album.id} albumTitle={album.title} />}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline">
@@ -538,9 +484,7 @@ const AdminAlbumDetail = () => {
               <div className="flex items-center gap-3">
                 <Image className="h-8 w-8 text-primary opacity-80" />
                 <div>
-                  <p className="text-2xl font-light">
-                    {media.filter(m => m.type === 'photo').length}
-                  </p>
+                  <p className="text-2xl font-light">{media.filter(m => m.type === 'photo').length}</p>
                   <p className="text-sm text-muted-foreground">Photos</p>
                 </div>
               </div>
@@ -551,9 +495,7 @@ const AdminAlbumDetail = () => {
               <div className="flex items-center gap-3">
                 <Video className="h-8 w-8 text-blue-500 opacity-80" />
                 <div>
-                  <p className="text-2xl font-light">
-                    {media.filter(m => m.type === 'video').length}
-                  </p>
+                  <p className="text-2xl font-light">{media.filter(m => m.type === 'video').length}</p>
                   <p className="text-sm text-muted-foreground">Videos</p>
                 </div>
               </div>
@@ -613,16 +555,8 @@ const AdminAlbumDetail = () => {
                 <Heart size={20} className="text-rose-500" />
                 Client Selections ({favoritesCount} photos)
               </CardTitle>
-              <Button 
-                onClick={handleDownloadSelections} 
-                disabled={isDownloadingSelections}
-                className="gap-2"
-              >
-                {isDownloadingSelections ? (
-                  <Loader2 size={16} className="animate-spin" />
-                ) : (
-                  <Download size={16} />
-                )}
+              <Button onClick={handleDownloadSelections} disabled={isDownloadingSelections} className="gap-2">
+                {isDownloadingSelections ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
                 Download All
               </Button>
             </CardHeader>
@@ -638,22 +572,13 @@ const AdminAlbumDetail = () => {
                         <p className="font-medium">{profile?.name || 'Unknown Client'}</p>
                         <p className="text-xs text-muted-foreground">{profile?.email}</p>
                       </div>
-                      <Badge variant="secondary" className="ml-auto">
-                        {mediaIds.length} selections
-                      </Badge>
+                      <Badge variant="secondary" className="ml-auto">{mediaIds.length} selections</Badge>
                     </div>
                     <div className="grid grid-cols-6 md:grid-cols-10 gap-2">
                       {mediaIds.slice(0, 10).map((mediaId) => (
-                        <div 
-                          key={mediaId} 
-                          className="aspect-square rounded-md overflow-hidden bg-muted relative"
-                        >
+                        <div key={mediaId} className="aspect-square rounded-md overflow-hidden bg-muted relative">
                           {mediaUrls[mediaId] ? (
-                            <img 
-                              src={mediaUrls[mediaId]} 
-                              alt="Selected"
-                              className="w-full h-full object-cover"
-                            />
+                            <img src={mediaUrls[mediaId]} alt="Selected" className="w-full h-full object-cover" />
                           ) : (
                             <div className="w-full h-full flex items-center justify-center">
                               <Image size={14} className="text-muted-foreground" />
@@ -677,7 +602,7 @@ const AdminAlbumDetail = () => {
           </Card>
         )}
 
-        {/* People Section (if any detected) */}
+        {/* People Section */}
         {people.length > 0 && (
           <Card className="bg-card border-border">
             <CardHeader>
@@ -689,18 +614,13 @@ const AdminAlbumDetail = () => {
             <CardContent>
               <div className="flex flex-wrap gap-4">
                 {people.map((person) => (
-                  <div 
-                    key={person.id} 
-                    className="flex flex-col items-center gap-2 p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
-                  >
+                  <div key={person.id} className="flex flex-col items-center gap-2 p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors">
                     <div className="w-14 h-14 rounded-full bg-gradient-to-br from-primary/20 to-primary/40 flex items-center justify-center">
                       <Users size={24} className="text-primary" />
                     </div>
                     <span className="text-sm font-medium">{person.name}</span>
                     <span className="text-xs text-muted-foreground">{person.photo_count} photos</span>
-                    {person.is_hidden && (
-                      <Badge variant="secondary" className="text-xs">Hidden</Badge>
-                    )}
+                    {person.is_hidden && <Badge variant="secondary" className="text-xs">Hidden</Badge>}
                   </div>
                 ))}
               </div>
@@ -717,19 +637,12 @@ const AdminAlbumDetail = () => {
             {id && (
               <MediaUploader 
                 albumId={id} 
-                onUploadComplete={() => {
-                  uploadCountRef.current = 0;
-                  fetchMedia();
-                }}
+                onUploadComplete={() => { uploadCountRef.current = 0; fetchMedia(); }}
                 onTriggerFaceDetection={() => {
                   if (album?.status === 'ready') {
                     supabase.functions.invoke('face-detection', {
                       body: { action: 'process_album', albumId: id },
-                    }).then(() => {
-                      setFaceProcessingStatus('processing');
-                    }).catch((err) => {
-                      console.error('Error starting face detection:', err);
-                    });
+                    }).then(() => setFaceProcessingStatus('processing')).catch((err) => console.error('Error starting face detection:', err));
                   }
                 }}
                 onFileUploaded={handleFileUploaded}
@@ -741,9 +654,69 @@ const AdminAlbumDetail = () => {
         {/* Media Grid */}
         <Card className="bg-card border-border">
           <CardHeader>
-            <CardTitle className="font-serif text-xl font-light">
-              Gallery ({media.length} items)
-            </CardTitle>
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <CardTitle className="font-serif text-xl font-light">
+                Gallery ({media.length} items)
+              </CardTitle>
+
+              {media.length > 0 && (
+                <div className="flex items-center gap-2">
+                  {selectionMode ? (
+                    <>
+                      <span className="text-sm font-medium text-amber-600">
+                        {selectedIds.size} selected
+                        {selectedIds.size > 0 && (
+                          <span className="text-muted-foreground font-normal ml-1">
+                            ({formatFileSize(selectedSize)})
+                          </span>
+                        )}
+                      </span>
+                      <Button variant="outline" size="sm" onClick={selectAll}>
+                        <CheckSquare size={14} className="mr-1" />
+                        Select All
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={clearSelection} disabled={selectedIds.size === 0}>
+                        Clear
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => setShowBulkDeleteConfirm(true)}
+                        disabled={selectedIds.size === 0}
+                      >
+                        <Trash2 size={14} className="mr-1" />
+                        Delete Selected
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={exitSelectionMode}>
+                        <X size={14} className="mr-1" />
+                        Cancel
+                      </Button>
+                    </>
+                  ) : (
+                    <Button variant="outline" size="sm" onClick={() => setSelectionMode(true)}>
+                      <CheckSquare size={14} className="mr-1" />
+                      Select
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Bulk delete progress */}
+            {isBulkDeleting && bulkDeleteProgress && (
+              <div className="mt-4 space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground flex items-center gap-2">
+                    <Loader2 size={14} className="animate-spin" />
+                    Deleting {bulkDeleteProgress.total} files...
+                  </span>
+                  <span className="text-muted-foreground">
+                    {Math.round((bulkDeleteProgress.current / bulkDeleteProgress.total) * 100)}%
+                  </span>
+                </div>
+                <Progress value={(bulkDeleteProgress.current / bulkDeleteProgress.total) * 100} />
+              </div>
+            )}
           </CardHeader>
           <CardContent>
             {media.length === 0 ? (
@@ -754,64 +727,89 @@ const AdminAlbumDetail = () => {
               </div>
             ) : (
               <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                {media.map((item) => (
-                  <div 
-                    key={item.id} 
-                    className="group relative aspect-square bg-muted rounded-lg overflow-hidden"
-                  >
-                    {item.type === 'photo' ? (
-                      mediaUrls[item.id] ? (
-                        <img 
-                          src={mediaUrls[item.id]} 
-                          alt={item.file_name}
-                          className="w-full h-full object-cover"
-                        />
+                {media.map((item, index) => {
+                  const isSelected = selectedIds.has(item.id);
+                  return (
+                    <div 
+                      key={item.id} 
+                      className={`group relative aspect-square bg-muted rounded-lg overflow-hidden cursor-pointer transition-all duration-150 ${
+                        isSelected ? 'ring-2 ring-amber-500 ring-offset-2 ring-offset-background' : ''
+                      }`}
+                      onClick={(e) => {
+                        if (selectionMode) {
+                          toggleSelection(item.id, index, e.shiftKey);
+                        }
+                      }}
+                    >
+                      {item.type === 'photo' ? (
+                        mediaUrls[item.id] ? (
+                          <img 
+                            src={mediaUrls[item.id]} 
+                            alt={item.file_name}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center">
+                            <Image size={24} className="text-muted-foreground" />
+                          </div>
+                        )
                       ) : (
-                        <div className="w-full h-full flex items-center justify-center">
-                          <Image size={24} className="text-muted-foreground" />
+                        <div className="w-full h-full flex items-center justify-center bg-muted">
+                          <Video size={24} className="text-muted-foreground" />
                         </div>
-                      )
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <Video size={24} className="text-muted-foreground" />
-                      </div>
-                    )}
-                    
-                    {/* Client Selection Indicator */}
-                    {isFavorited(item.id) && (
-                      <div className="absolute top-2 left-2 z-10">
-                        <div className="bg-rose-500 text-white p-1 rounded-full shadow-lg">
-                          <Heart size={12} className="fill-white" />
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* Overlay */}
-                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="text-white hover:text-destructive hover:bg-destructive/20"
-                        onClick={() => setDeleteMediaId(item.id)}
-                      >
-                        <Trash2 size={18} />
-                      </Button>
-                    </div>
+                      )}
 
-                    {/* Info */}
-                    <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
-                      <p className="text-white text-xs truncate">{item.file_name}</p>
-                      <p className="text-white/70 text-xs">{formatFileSize(item.size)}</p>
+                      {/* Selection checkbox */}
+                      {selectionMode && (
+                        <div className="absolute top-2 left-2 z-20">
+                          <div className={`w-6 h-6 rounded border-2 flex items-center justify-center transition-colors ${
+                            isSelected 
+                              ? 'bg-amber-500 border-amber-500' 
+                              : 'bg-black/40 border-white/80 hover:border-white'
+                          }`}>
+                            {isSelected && <CheckCircle size={16} className="text-white" />}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Client Selection Indicator */}
+                      {isFavorited(item.id) && (
+                        <div className={`absolute ${selectionMode ? 'top-2 left-10' : 'top-2 left-2'} z-10`}>
+                          <div className="bg-rose-500 text-white p-1 rounded-full shadow-lg">
+                            <Heart size={12} className="fill-white" />
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Hover overlay (only when NOT in selection mode) */}
+                      {!selectionMode && (
+                        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-white hover:text-destructive hover:bg-destructive/20"
+                            onClick={(e) => { e.stopPropagation(); setDeleteMediaId(item.id); }}
+                          >
+                            <Trash2 size={18} />
+                          </Button>
+                        </div>
+                      )}
+
+                      {/* Info */}
+                      <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
+                        <p className="text-white text-xs truncate">{item.file_name}</p>
+                        <p className="text-white/70 text-xs">{formatFileSize(item.size)}</p>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </CardContent>
         </Card>
       </div>
 
-      {/* Delete Confirmation */}
+      {/* Single Delete Confirmation */}
       <AlertDialog open={!!deleteMediaId} onOpenChange={() => setDeleteMediaId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -828,6 +826,23 @@ const AdminAlbumDetail = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Bulk Delete Confirmation */}
+      <DeleteConfirmDialog
+        open={showBulkDeleteConfirm}
+        onOpenChange={setShowBulkDeleteConfirm}
+        title={`Delete ${selectedIds.size} Files`}
+        description={`You are about to permanently delete ${selectedIds.size} files (${formatFileSize(selectedSize)}) from this album.`}
+        warningItems={[
+          'All original files from AWS S3 storage',
+          'All preview/thumbnail versions',
+          'Face detection data for these files',
+          'Client selections (favorites) for these files',
+        ]}
+        confirmText="DELETE"
+        isDeleting={isBulkDeleting}
+        onConfirm={handleBulkDelete}
+      />
     </AdminLayout>
   );
 };
