@@ -1,146 +1,100 @@
 
 
-# Production-Grade Upload System Rebuild
+# Bulk Select and Delete System (Admin Album Gallery)
 
-A complete overhaul of the upload engine, edge functions, and UI to handle 5GB-40GB folders with 2000-6000 files reliably.
-
----
-
-## Problem Analysis
-
-After reviewing the current code, these specific bugs and gaps cause failures:
-
-1. **Queue race condition** in `uploadEngine.ts`: The `enqueue()` function calls itself recursively while also being called in a loop, causing duplicate file processing and memory spikes
-2. **No exponential backoff** on file-level retries -- only chunk-level retries exist (with linear delay)
-3. **No session refresh** before starting uploads -- JWT expires mid-upload for large batches
-4. **Incomplete CORS headers** in `s3-upload` function (missing `x-supabase-client-platform` headers) causing random failures
-5. **No server-side media save** -- DB insert runs client-side and silently fails, leaving orphan S3 files
-6. **No batch size validation** -- browser can freeze when 6000 files are queued at once
-7. **Gallery doesn't auto-refresh** after uploads complete
+Add a professional bulk selection and deletion system to the Admin Album Detail page, with full S3 cleanup, progress tracking, and automatic stat updates.
 
 ---
 
-## Phase 1: Fix the Upload Engine Core
+## 1. Add a New `bulk_delete_media` Action to `storage-cleanup` Edge Function
 
-**File: `src/lib/uploadEngine.ts`** -- Complete rewrite of queue and retry logic
+**File: `supabase/functions/storage-cleanup/index.ts`**
 
-Changes:
-- Replace recursive `enqueue()` with a proper semaphore-based queue (simple loop with `Promise.race`)
-- Add file-level auto-retry with exponential backoff (1s, 3s, 5s) before marking as failed
-- Add session refresh (`supabase.auth.refreshSession()`) before starting and every 30 minutes during upload
-- Add batch validation: warn if total size exceeds 50GB, reject files over 2GB each
-- Increase parallel files to 8, parts per file to 5
-- Add `dbSaved` status field to track if media record was saved
-- Move media record save into a retry loop (3 attempts)
+Add a new action `bulk_delete_media` that accepts an array of `mediaIds` and processes them server-side in a single request:
 
----
+- Fetch all media records for the given IDs
+- Delete S3 objects (original + preview) for each
+- Delete associated `detected_faces` and `media_favorites` rows
+- Delete `media` records
+- Log the bulk deletion in `deletion_logs` as a single audit entry with total count and size
+- Clean up orphan `people` records (where `photo_count` drops to 0) by recounting faces per person and deleting empty ones
+- Return `{ success, deletedCount, totalSize, peopleRemoved }`
 
-## Phase 2: Harden the Edge Functions
-
-**File: `supabase/functions/s3-upload/index.ts`** -- Fix CORS headers
-
-- Update CORS headers to match the complete set used by `s3-multipart-upload`
-
-**File: `supabase/functions/s3-multipart-upload/index.ts`** -- Minor hardening
-
-- Add request timeout handling
-- Log upload initiation for debugging
-
-**New File: `supabase/functions/save-media-record/index.ts`** -- Server-side media save
-
-- Accepts: `albumId`, `s3Key`, `fileName`, `mimeType`, `size`, `type`, `width`, `height`, `duration`
-- Uses service role to insert into `media` table
-- Returns the created media record ID
-- This ensures DB records are created even if client state is lost
+This avoids making hundreds of individual API calls from the frontend.
 
 ---
 
-## Phase 3: Upgrade MediaUploader and Progress UI
-
-**File: `src/components/admin/MediaUploader.tsx`**
-
-- Add session refresh before starting upload
-- Add batch validation with warning toast (file count, total size limits)
-- Call `onUploadComplete` after each successful file (not just at end) for incremental gallery refresh
-- Increase max file size to 2GB
-
-**File: `src/components/admin/UploadProgressPanel.tsx`**
-
-- Add "Saved to gallery" status indicator (checkmark + "saved" label)
-- Show retry attempt count on failing files
-- Add file count summary in header: "2,435 files (32.4 GB) -- 1,200 uploaded, 8 uploading, 3 failed, 1,224 queued"
-
----
-
-## Phase 4: Auto-Refresh Gallery
+## 2. Add Selection State and Logic to `AlbumDetail.tsx`
 
 **File: `src/pages/admin/AlbumDetail.tsx`**
 
-- Pass an `onFileUploaded` callback to `MediaUploader` that calls `fetchMedia()` after every batch of 10 successful uploads (debounced)
-- This makes new files appear in the gallery without manual refresh
+Add the following state and behavior:
+
+- `selectionMode: boolean` -- toggled by a "Select" button in the gallery header
+- `selectedIds: Set<string>` -- tracks selected media IDs
+- `lastClickedIndex: number | null` -- for Shift+Click range selection
+- `isBulkDeleting: boolean` and `bulkDeleteProgress: { current, total }` -- for progress tracking
+- `showBulkDeleteConfirm: boolean` -- for confirmation dialog
+
+**Selection Mode UI (gallery header bar):**
+- "Select" / "Cancel" toggle button
+- When in selection mode, show: "X Selected" count, "Select All", "Clear Selection", "Delete Selected" (red)
+
+**Gallery grid changes (when in selection mode):**
+- Each media item shows a checkbox in the top-left corner
+- Clicking an item toggles its selection (instead of showing delete overlay)
+- Selected items get a gold/amber ring border (`ring-2 ring-amber-500`)
+- Shift+Click selects the range between `lastClickedIndex` and clicked index
+
+**Bulk delete flow:**
+1. Click "Delete Selected" -- opens `DeleteConfirmDialog` with warning about permanent S3 deletion
+2. On confirm -- call `storage-cleanup` with `action: 'bulk_delete_media'` and the array of IDs
+3. Show a progress toast or inline progress bar
+4. On completion -- clear selection, refresh media list and people list, show success toast
+5. Exit selection mode
 
 ---
 
-## Phase 5: Background Cleanup
+## 3. Update `DeleteConfirmDialog` for Bulk Context
 
-**File: `supabase/functions/storage-cleanup/index.ts`** -- Add orphan cleanup action
+**File: `src/components/admin/DeleteConfirmDialog.tsx`**
 
-- Add `action: 'cleanup_orphans'` that:
-  - Lists S3 objects in `albums/` prefix
-  - Checks each against `media` table
-  - Deletes S3 objects without DB records older than 24 hours
-- Add `action: 'abort_stale_multiparts'` that:
-  - Lists incomplete multipart uploads via S3 API
-  - Aborts any older than 24 hours
+No structural changes needed. The existing component already supports custom `title`, `description`, `warningItems`, and `entityName` props. We will pass bulk-specific text like:
+
+- Title: "Delete 12 Files"
+- Description: "You are about to permanently delete 12 files from this album."
+- Warning items: "All original files from AWS S3", "All preview/thumbnail versions", "Face detection data for these files", "Client selections (favorites) for these files"
 
 ---
 
 ## Technical Details
 
-### Queue Architecture (Phase 1)
+### Bulk Delete Edge Function Action
 
-The new queue replaces the recursive pattern with:
+The new `bulk_delete_media` action in `storage-cleanup`:
+- Accepts `{ action: "bulk_delete_media", mediaIds: string[], albumId: string }`
+- Fetches all media records in one query: `.in("id", mediaIds)`
+- Deletes S3 objects sequentially (to avoid rate limiting)
+- Batch-deletes DB records: `detected_faces`, `media_favorites`, `media` using `.in("media_id", mediaIds)` / `.in("id", mediaIds)`
+- Recounts people: queries remaining `detected_faces` grouped by `person_id`, deletes people with 0 remaining faces
+- Single `deletion_logs` entry for the batch
 
-```text
-┌─────────────┐
-│ File Queue   │  All files start here
-│ (pending)    │
-└──────┬──────┘
-       │ Dequeue up to 8 files
-       v
-┌─────────────┐
-│ Active Pool  │  Max 8 concurrent uploads
-│ (uploading)  │  Each file: 5 concurrent parts
-└──────┬──────┘
-       │
-  ┌────┴────┐
-  │         │
-  v         v
-┌─────┐  ┌─────┐
-│Done │  │Retry│── up to 3 retries with backoff
-│     │  │Queue│   then moves to Failed
-└─────┘  └─────┘
-```
+### Shift+Click Range Selection
 
-### New Edge Function: `save-media-record`
+Track `lastClickedIndex` (index in the `media` array). On click:
+- If Shift held and `lastClickedIndex` is set: select all items between `lastClickedIndex` and current index
+- Otherwise: toggle the single item and set `lastClickedIndex`
 
-- Authenticated endpoint (admin only)
-- Inserts into `media` table using service role
-- Returns `{ id, s3_key }` on success
-- Called by upload engine after S3 upload completes
-- Registered in `supabase/config.toml` with `verify_jwt = false`
+### Performance
+
+- All S3 deletions happen server-side in the edge function (no browser overhead)
+- Single API call regardless of selection size
+- Gallery refresh happens once after the entire batch completes
 
 ### Files Summary
 
-| File | Action |
+| File | Change |
 |---|---|
-| `src/lib/uploadEngine.ts` | Rewrite queue, add retries, session refresh, server-side save |
-| `supabase/functions/s3-upload/index.ts` | Fix CORS headers |
-| `supabase/functions/s3-multipart-upload/index.ts` | Minor hardening |
-| `supabase/functions/save-media-record/index.ts` | NEW: server-side media record creation |
-| `supabase/functions/storage-cleanup/index.ts` | Add orphan cleanup actions |
-| `src/components/admin/MediaUploader.tsx` | Session refresh, batch validation, incremental refresh |
-| `src/components/admin/UploadProgressPanel.tsx` | Enhanced status display |
-| `src/pages/admin/AlbumDetail.tsx` | Auto-refresh gallery on uploads |
-| `supabase/config.toml` | Register `save-media-record` |
+| `supabase/functions/storage-cleanup/index.ts` | Add `bulk_delete_media` action |
+| `src/pages/admin/AlbumDetail.tsx` | Add selection mode, Shift+Click, bulk delete flow |
 
