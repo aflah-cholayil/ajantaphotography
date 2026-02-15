@@ -147,17 +147,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // AWS client
-    const awsRegion = Deno.env.get("AWS_REGION")!;
-    const awsBucket = Deno.env.get("AWS_BUCKET_NAME")!;
-    const awsClientInstance = new AwsClient({
-      accessKeyId: Deno.env.get("AWS_ACCESS_KEY_ID")!,
-      secretAccessKey: Deno.env.get("AWS_SECRET_ACCESS_KEY")!,
-      region: awsRegion,
-      service: "s3",
-    });
-
-    // R2 client
+    // R2 only
     const r2Endpoint = Deno.env.get("R2_ENDPOINT")!;
     const r2Bucket = Deno.env.get("R2_BUCKET_NAME")!;
     const r2ClientInstance = new AwsClient({
@@ -167,33 +157,13 @@ Deno.serve(async (req) => {
       service: "s3",
     });
 
-    // List both buckets
-    const [awsStats, r2Stats] = await Promise.all([
-      listBucketObjects(awsClientInstance, `https://${awsBucket}.s3.${awsRegion}.amazonaws.com/`),
-      listBucketObjects(r2ClientInstance, `${r2Endpoint}/${r2Bucket}/`).catch((e) => {
-        console.warn("R2 listing failed:", e.message);
-        return { totalBytes: 0, totalObjects: 0, prefixSizes: {}, thisMonthBytes: 0, monthlyData: {} };
-      }),
-    ]);
+    const r2Stats = await listBucketObjects(r2ClientInstance, `${r2Endpoint}/${r2Bucket}/`);
 
-    const totalBytes = awsStats.totalBytes + r2Stats.totalBytes;
-    const totalObjects = awsStats.totalObjects + r2Stats.totalObjects;
-    const thisMonthBytes = awsStats.thisMonthBytes + r2Stats.thisMonthBytes;
-
-    // Merge prefix sizes
-    const prefixSizes: Record<string, number> = { ...awsStats.prefixSizes };
-    for (const [k, v] of Object.entries(r2Stats.prefixSizes)) {
-      prefixSizes[k] = (prefixSizes[k] || 0) + v;
-    }
-
-    // Merge monthly data
-    const monthlyData: Record<string, number> = {};
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date();
-      d.setMonth(d.getMonth() - i);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      monthlyData[key] = (awsStats.monthlyData[key] || 0) + (r2Stats.monthlyData[key] || 0);
-    }
+    const totalBytes = r2Stats.totalBytes;
+    const totalObjects = r2Stats.totalObjects;
+    const thisMonthBytes = r2Stats.thisMonthBytes;
+    const prefixSizes = r2Stats.prefixSizes;
+    const monthlyData = r2Stats.monthlyData;
 
     // Fetch DB data for per-client breakdown
     const { data: mediaData } = await adminClient.from("media").select("album_id, size, created_at");
@@ -245,20 +215,17 @@ Deno.serve(async (req) => {
     const downloadGB = estimatedDownloadBytes / (1024 * 1024 * 1024);
 
     // R2 pricing: Storage free first 10GB then ₹1.2/GB, egress free
-    const awsGB = awsStats.totalBytes / (1024 * 1024 * 1024);
     const r2GB = r2Stats.totalBytes / (1024 * 1024 * 1024);
-    const awsStorageCostINR = awsGB * 1.9;
     const r2StorageCostINR = Math.max(0, r2GB - 10) * 1.2;
-    const storageCostINR = awsStorageCostINR + r2StorageCostINR;
-    const transferCostINR = Math.max(0, downloadGB - 100) * 7; // AWS transfer only
-    const estimatedMonthlyCostINR = storageCostINR + transferCostINR;
+    const storageCostINR = r2StorageCostINR;
+    const transferCostINR = 0; // R2 egress is free
+    const estimatedMonthlyCostINR = storageCostINR;
 
     const clientBreakdown = Object.keys(clientNames).map((cid) => {
       const storageBytes = clientStorage[cid] || 0;
       const downloads = clientDownloads[cid] || 0;
       const clientGB = storageBytes / (1024 * 1024 * 1024);
-      const clientDlGB = (downloads * avgFileSize) / (1024 * 1024 * 1024);
-      const clientCost = clientGB * 1.9 + Math.max(0, clientDlGB - 100) * 7;
+      const clientCost = Math.max(0, clientGB - 10) * 1.2;
 
       return {
         clientId: cid,
@@ -289,12 +256,6 @@ Deno.serve(async (req) => {
         totalDownloadCount,
       },
       providerBreakdown: {
-        aws: {
-          totalBytes: awsStats.totalBytes,
-          totalGB: parseFloat(awsGB.toFixed(3)),
-          totalObjects: awsStats.totalObjects,
-          costINR: parseFloat(awsStorageCostINR.toFixed(2)),
-        },
         r2: {
           totalBytes: r2Stats.totalBytes,
           totalGB: parseFloat(r2GB.toFixed(3)),

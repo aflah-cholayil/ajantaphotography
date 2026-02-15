@@ -7,17 +7,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, action',
 };
 
-// AWS (legacy)
-const awsRegion = Deno.env.get('AWS_REGION') || 'ap-south-1';
-const awsBucket = Deno.env.get('AWS_BUCKET_NAME') || '';
-const awsClient = new AwsClient({
-  accessKeyId: Deno.env.get('AWS_ACCESS_KEY_ID')!,
-  secretAccessKey: Deno.env.get('AWS_SECRET_ACCESS_KEY')!,
-  region: awsRegion,
-  service: 's3',
-});
-
-// R2 (new uploads)
+// R2 only
 const r2Endpoint = Deno.env.get('R2_ENDPOINT')!;
 const r2Bucket = Deno.env.get('R2_BUCKET_NAME')!;
 const r2Client = new AwsClient({
@@ -27,15 +17,7 @@ const r2Client = new AwsClient({
   service: 's3',
 });
 
-function getStorageClient(provider: string) {
-  return provider === 'r2' ? r2Client : awsClient;
-}
-
-function getBaseUrl(provider: string) {
-  return provider === 'r2'
-    ? `${r2Endpoint}/${r2Bucket}`
-    : `https://${awsBucket}.s3.${awsRegion}.amazonaws.com`;
-}
+const baseUrl = `${r2Endpoint}/${r2Bucket}`;
 
 interface UploadRequest {
   fileName: string;
@@ -57,7 +39,6 @@ interface WorkData {
   show_on_home?: boolean;
   show_on_gallery?: boolean;
   status?: string;
-  storage_provider?: string;
 }
 
 async function handler(req: Request): Promise<Response> {
@@ -101,26 +82,22 @@ async function handler(req: Request): Promise<Response> {
     const action = url.searchParams.get('action') || req.headers.get('action');
 
     if (action === 'upload-url') {
-      const { fileName, contentType, fileSize } = await req.json() as UploadRequest;
+      const { fileName, contentType } = await req.json() as UploadRequest;
       
       const timestamp = Date.now();
       const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
       const s3Key = `works/${timestamp}_${sanitizedFileName}`;
       const previewKey = `works/previews/${timestamp}_${sanitizedFileName}`;
 
-      // Use R2 for new uploads
-      const baseUrl = getBaseUrl('r2');
-      const client = getStorageClient('r2');
-
       const objectUrl = `${baseUrl}/${s3Key}`;
-      const signedReq = await client.sign(objectUrl, {
+      const signedReq = await r2Client.sign(objectUrl, {
         method: 'PUT',
         headers: { 'Content-Type': contentType },
         aws: { signQuery: true },
       });
 
       const previewObjectUrl = `${baseUrl}/${previewKey}`;
-      const previewSignedReq = await client.sign(previewObjectUrl, {
+      const previewSignedReq = await r2Client.sign(previewObjectUrl, {
         method: 'PUT',
         headers: { 'Content-Type': contentType },
         aws: { signQuery: true },
@@ -158,7 +135,7 @@ async function handler(req: Request): Promise<Response> {
           show_on_home: workData.show_on_home ?? false,
           show_on_gallery: workData.show_on_gallery ?? true,
           status: workData.status ?? 'active',
-          storage_provider: workData.storage_provider ?? 'r2',
+          storage_provider: 'r2',
         })
         .select()
         .single();
@@ -212,7 +189,7 @@ async function handler(req: Request): Promise<Response> {
 
       const { data: work, error: fetchError } = await serviceClient
         .from('works')
-        .select('s3_key, s3_preview_key, storage_provider')
+        .select('s3_key, s3_preview_key')
         .eq('id', workId)
         .single();
 
@@ -222,18 +199,14 @@ async function handler(req: Request): Promise<Response> {
         });
       }
 
-      const provider = work.storage_provider || 'aws';
-      const client = getStorageClient(provider);
-      const baseUrl = getBaseUrl(provider);
-
       try {
         const deleteUrl = `${baseUrl}/${work.s3_key}`;
-        const deleteReq = await client.sign(deleteUrl, { method: 'DELETE' });
+        const deleteReq = await r2Client.sign(deleteUrl, { method: 'DELETE' });
         await fetch(deleteReq.url, { method: 'DELETE', headers: deleteReq.headers });
 
         if (work.s3_preview_key) {
           const previewDeleteUrl = `${baseUrl}/${work.s3_preview_key}`;
-          const previewDeleteReq = await client.sign(previewDeleteUrl, { method: 'DELETE' });
+          const previewDeleteReq = await r2Client.sign(previewDeleteUrl, { method: 'DELETE' });
           await fetch(previewDeleteReq.url, { method: 'DELETE', headers: previewDeleteReq.headers });
         }
       } catch (s3Error) {
@@ -264,20 +237,8 @@ async function handler(req: Request): Promise<Response> {
         });
       }
 
-      // Look up provider
-      const { data: work } = await serviceClient
-        .from('works')
-        .select('storage_provider')
-        .or(`s3_key.eq.${s3Key},s3_preview_key.eq.${s3Key}`)
-        .limit(1)
-        .maybeSingle();
-
-      const provider = work?.storage_provider || 'aws';
-      const client = getStorageClient(provider);
-      const baseUrl = getBaseUrl(provider);
-
       const objectUrl = `${baseUrl}/${s3Key}`;
-      const signedReq = await client.sign(objectUrl, {
+      const signedReq = await r2Client.sign(objectUrl, {
         method: 'GET',
         aws: { signQuery: true },
       });
