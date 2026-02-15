@@ -344,14 +344,26 @@ async function bulkDeleteMedia(
 ): Promise<{ success: boolean; deletedCount: number; totalSize: number; peopleRemoved: number }> {
   console.log(`Bulk deleting ${mediaIds.length} media from album ${albumId}`);
 
-  // Fetch all media records
-  const { data: mediaData, error: mediaError } = await supabase
-    .from("media")
-    .select("id, s3_key, s3_preview_key, size, file_name")
-    .in("id", mediaIds);
+  // Fetch media in batches of 100 to avoid PostgREST URL length limits
+  const BATCH_SIZE = 100;
+  const allMedia: Array<{ id: string; s3_key: string; s3_preview_key: string | null; size: number; file_name: string }> = [];
 
-  if (mediaError || !mediaData) {
-    console.error("Error fetching media for bulk delete:", mediaError);
+  for (let i = 0; i < mediaIds.length; i += BATCH_SIZE) {
+    const batch = mediaIds.slice(i, i + BATCH_SIZE);
+    const { data, error } = await supabase
+      .from("media")
+      .select("id, s3_key, s3_preview_key, size, file_name")
+      .in("id", batch);
+
+    if (error) {
+      console.error(`Error fetching media batch ${i}-${i + batch.length}:`, error);
+      continue;
+    }
+    if (data) allMedia.push(...data);
+  }
+
+  if (allMedia.length === 0) {
+    console.error("No media found for bulk delete");
     return { success: false, deletedCount: 0, totalSize: 0, peopleRemoved: 0 };
   }
 
@@ -359,7 +371,7 @@ async function bulkDeleteMedia(
   let totalSize = 0;
 
   // Delete S3 objects
-  for (const item of mediaData) {
+  for (const item of allMedia) {
     if (item.s3_key) {
       await deleteS3Object(item.s3_key);
       allS3Keys.push(item.s3_key);
@@ -371,10 +383,13 @@ async function bulkDeleteMedia(
     totalSize += item.size || 0;
   }
 
-  // Batch delete DB records
-  await supabase.from("detected_faces").delete().in("media_id", mediaIds);
-  await supabase.from("media_favorites").delete().in("media_id", mediaIds);
-  await supabase.from("media").delete().in("id", mediaIds);
+  // Batch delete DB records in chunks
+  for (let i = 0; i < mediaIds.length; i += BATCH_SIZE) {
+    const batch = mediaIds.slice(i, i + BATCH_SIZE);
+    await supabase.from("detected_faces").delete().in("media_id", batch);
+    await supabase.from("media_favorites").delete().in("media_id", batch);
+    await supabase.from("media").delete().in("id", batch);
+  }
 
   // Cleanup orphan people records
   let peopleRemoved = 0;
@@ -391,7 +406,6 @@ async function bulkDeleteMedia(
         .eq("person_id", person.id);
 
       if (count === 0) {
-        // Delete face thumbnail from S3
         const { data: personDetail } = await supabase
           .from("people")
           .select("face_thumbnail_key")
@@ -405,27 +419,26 @@ async function bulkDeleteMedia(
         await supabase.from("people").delete().eq("id", person.id);
         peopleRemoved++;
       } else {
-        // Update photo_count
         await supabase.from("people").update({ photo_count: count }).eq("id", person.id);
       }
     }
   }
 
-  // Log the bulk deletion
+  // Log the bulk deletion (trim s3_keys if too many)
   await supabase.from("deletion_logs").insert({
     deleted_by: userId,
     entity_type: "bulk_media",
     entity_id: albumId,
-    entity_name: `${mediaData.length} files`,
+    entity_name: `${allMedia.length} files`,
     parent_entity_id: albumId,
-    s3_keys_deleted: allS3Keys,
-    files_count: mediaData.length,
+    s3_keys_deleted: allS3Keys.slice(0, 500),
+    files_count: allMedia.length,
     total_size_bytes: totalSize,
-    metadata: { media_ids: mediaIds, people_removed: peopleRemoved },
+    metadata: { people_removed: peopleRemoved },
   });
 
-  console.log(`Bulk deleted ${mediaData.length} media, ${allS3Keys.length} S3 objects, ${peopleRemoved} orphan people`);
-  return { success: true, deletedCount: mediaData.length, totalSize, peopleRemoved };
+  console.log(`Bulk deleted ${allMedia.length} media, ${allS3Keys.length} S3 objects, ${peopleRemoved} orphan people`);
+  return { success: true, deletedCount: allMedia.length, totalSize, peopleRemoved };
 }
 
 async function handler(req: Request): Promise<Response> {
