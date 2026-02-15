@@ -94,14 +94,22 @@ const handler = async (req: Request): Promise<Response> => {
         const token = authHeader.replace("Bearer ", "");
         const { data: { user }, error: userError } = await supabase.auth.getUser(token);
         
+        if (userError) {
+          console.warn(`[s3-signed-url] getUser failed for key=${s3Key}: ${userError.message}`);
+        }
+        
         if (user) {
           const userId = user.id;
 
-          const { data: roleData } = await supabase
+          const { data: roleData, error: roleError } = await supabase
             .from("user_roles")
             .select("role")
             .eq("user_id", userId)
             .single();
+
+          if (roleError) {
+            console.warn(`[s3-signed-url] role lookup failed for user=${userId}: ${roleError.message}`);
+          }
 
           const adminRoles = ["admin", "owner", "editor"];
           if (roleData?.role && adminRoles.includes(roleData.role)) {
@@ -140,7 +148,11 @@ const handler = async (req: Request): Promise<Response> => {
               }
             }
           }
+        } else {
+          console.warn(`[s3-signed-url] No user found from token for key=${s3Key}, albumId=${albumId}`);
         }
+      } else {
+        console.warn(`[s3-signed-url] No auth header for non-public key=${s3Key}`);
       }
 
       // Check share token access
@@ -209,6 +221,7 @@ const handler = async (req: Request): Promise<Response> => {
     }
 
     if (!hasAccess) {
+      console.warn(`[s3-signed-url] Access denied for key=${s3Key}, albumId=${albumId}, shareToken=${shareToken ? 'yes' : 'no'}`);
       return new Response(JSON.stringify({ error: "Access denied" }), {
         status: 403,
         headers: { "Content-Type": "application/json", ...corsHeaders },
