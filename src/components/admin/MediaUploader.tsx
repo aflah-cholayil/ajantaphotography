@@ -35,7 +35,27 @@ export const MediaUploader = ({ albumId, onUploadComplete, onTriggerFaceDetectio
   const [uploadState, setUploadState] = useState<UploadEngineState | null>(null);
   const engineRef = useRef<UploadEngine | null>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+  const autoClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { toast } = useToast();
+
+  // Auto-clear after successful completion (no errors, no cancelled)
+  const handleStateUpdate = useCallback((state: UploadEngineState) => {
+    setUploadState({ ...state });
+
+    // Check if all done with zero failures
+    const pending = state.files.filter(f => f.status === 'pending').length;
+    const uploading = state.files.filter(f => f.status === 'uploading').length;
+    const errors = state.files.filter(f => f.status === 'error').length;
+    const cancelled = state.files.filter(f => f.status === 'cancelled').length;
+    const allDone = !state.isUploading && pending === 0 && uploading === 0;
+
+    if (allDone && errors === 0 && cancelled === 0 && state.files.length > 0) {
+      if (autoClearTimerRef.current) clearTimeout(autoClearTimerRef.current);
+      autoClearTimerRef.current = setTimeout(() => {
+        setUploadState(null);
+      }, 5000);
+    }
+  }, []);
 
   const startUpload = useCallback(async (files: File[]) => {
     const mediaFiles = files.filter(isMediaFile);
@@ -72,10 +92,11 @@ export const MediaUploader = ({ albumId, onUploadComplete, onTriggerFaceDetectio
 
     const validFiles = mediaFiles.filter(f => f.size <= MAX_FILE_SIZE);
 
+    if (autoClearTimerRef.current) clearTimeout(autoClearTimerRef.current);
     const engine = new UploadEngine(
       albumId,
       validFiles,
-      (state) => setUploadState({ ...state }),
+      handleStateUpdate,
       onFileUploaded ? () => onFileUploaded() : undefined
     );
     engineRef.current = engine;
@@ -84,7 +105,7 @@ export const MediaUploader = ({ albumId, onUploadComplete, onTriggerFaceDetectio
       onUploadComplete?.();
       onTriggerFaceDetection?.();
     });
-  }, [albumId, onUploadComplete, onTriggerFaceDetection, onFileUploaded, toast]);
+  }, [albumId, onUploadComplete, onTriggerFaceDetection, onFileUploaded, handleStateUpdate, toast]);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     startUpload(acceptedFiles);
