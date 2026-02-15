@@ -108,14 +108,7 @@ const handler = async (req: Request): Promise<Response> => {
     try {
       const signedReq = await r2.sign(objectUrl, {
         method: "PUT",
-        headers: {
-          "Content-Type": fileType,
-          "Content-Length": String(fileSize),
-          "X-Amz-Expires": "3600",
-        },
-        aws: {
-          signQuery: true,
-        },
+        aws: { signQuery: true },
       });
 
       const presignedUrl = signedReq.url;
