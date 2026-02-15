@@ -12,7 +12,7 @@ interface UploadProgressPanelProps {
 }
 
 export const UploadProgressPanel = ({ state, onCancel, onRetryFailed, onClear }: UploadProgressPanelProps) => {
-  const { files, totalBytes, totalBytesUploaded, startTime, isUploading } = state;
+  const { files, totalBytes, totalBytesUploaded, startTime, isUploading, activeConcurrency } = state;
 
   const overallProgress = totalBytes > 0 ? Math.round((totalBytesUploaded / totalBytes) * 100) : 0;
   const elapsedSeconds = (Date.now() - startTime) / 1000;
@@ -112,7 +112,7 @@ export const UploadProgressPanel = ({ state, onCancel, onRetryFailed, onClear }:
             )}
             {uploadingCount > 0 && (
               <span className="flex items-center gap-1 text-primary">
-                <Loader2 size={12} className="animate-spin" /> {uploadingCount} uploading
+                <Loader2 size={12} className="animate-spin" /> {uploadingCount} uploading (×{activeConcurrency} slots)
               </span>
             )}
             {pendingCount > 0 && (
