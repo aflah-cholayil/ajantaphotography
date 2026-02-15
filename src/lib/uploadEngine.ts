@@ -10,7 +10,7 @@ const SESSION_REFRESH_INTERVAL = 30 * 60 * 1000; // 30 minutes
 const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024; // 2GB
 const MAX_BATCH_SIZE = 50 * 1024 * 1024 * 1024; // 50GB
 
-export type FileUploadStatus = 'pending' | 'uploading' | 'success' | 'error';
+export type FileUploadStatus = 'pending' | 'uploading' | 'success' | 'error' | 'cancelled';
 
 export interface FileUploadState {
   id: string;
@@ -163,11 +163,16 @@ export class UploadEngine {
     this.abortControllers.clear();
 
     for (const file of this.state.files) {
-      if (file.status === 'uploading' && file.uploadId && file.s3Key) {
-        supabase.functions.invoke('s3-multipart-upload', {
-          body: { action: 'abort', s3Key: file.s3Key, uploadId: file.uploadId },
-        }).catch(() => {});
-        this.updateFile(file.id, { status: 'error', error: 'Cancelled' });
+      if (file.status === 'uploading') {
+        // Abort multipart if in progress
+        if (file.uploadId && file.s3Key) {
+          supabase.functions.invoke('s3-multipart-upload', {
+            body: { action: 'abort', s3Key: file.s3Key, uploadId: file.uploadId },
+          }).catch(() => {});
+        }
+        this.updateFile(file.id, { status: 'cancelled', error: 'Cancelled' });
+      } else if (file.status === 'pending') {
+        this.updateFile(file.id, { status: 'cancelled' });
       }
     }
     this.state.isUploading = false;
@@ -175,7 +180,7 @@ export class UploadEngine {
   }
 
   async retryFailed() {
-    const failed = this.state.files.filter(f => f.status === 'error' && f.error !== 'Cancelled');
+    const failed = this.state.files.filter(f => f.status === 'error');
     if (failed.length === 0) return;
 
     for (const f of failed) {
