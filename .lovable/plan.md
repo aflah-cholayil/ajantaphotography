@@ -1,55 +1,94 @@
 
-# Increase Upload Concurrency + Dynamic Throttle
 
-## Overview
+# Make Uploads Persistent Across Navigation
 
-Upgrade the upload engine from a fixed 4-concurrent-file limit to a dynamic 4-8 range based on real-time network speed measurement, while maintaining stability and correct UI reporting.
+## Problem
+
+The `UploadEngine` instance and its UI state live inside `MediaUploader` component (via `useRef` and `useState`), which is rendered inside `AlbumDetail`. When navigating away, React unmounts the component, the state is lost, and there's no way to see or control ongoing uploads.
+
+## Architecture
+
+Create a global singleton `UploadManager` + React Context that lives at the App level, completely decoupled from any page component.
+
+```text
+App.tsx
+  +-- UploadManagerProvider (context + singleton)
+  |     +-- GlobalUploadBar (floating UI, visible on all admin pages)
+  +-- Routes
+        +-- AlbumDetail
+              +-- MediaUploader (triggers uploads via context, no longer owns engine)
+```
 
 ## Changes
 
-### File: `src/lib/uploadEngine.ts`
+### 1. New file: `src/lib/uploadManager.ts` -- Global Singleton
 
-**1. Constants Update**
-- Change `MAX_CONCURRENT_FILES` from 4 to 8 (new max ceiling)
-- Add `MIN_CONCURRENT_FILES = 4` (floor for slow networks)
-- Add `SPEED_CHECK_INTERVAL = 5000` (measure speed every 5s)
-- Add speed thresholds: `THROTTLE_DOWN_SPEED = 1 * 1024 * 1024` (1MB/s) and `THROTTLE_UP_SPEED = 5 * 1024 * 1024` (5MB/s)
+A singleton class that owns all `UploadEngine` instances:
 
-**2. Dynamic Concurrency in `UploadEngine` class**
-- Add private fields: `currentConcurrency = 8`, `speedSamples: number[]`, `lastSpeedCheck: number`
-- Add a `measureSpeed()` method that calculates bytes/sec from `totalBytesUploaded` delta over the last interval
-- In the `start()` and `retryFailed()` upload loops, replace the fixed `MAX_CONCURRENT_FILES` check with `this.currentConcurrency`
-- After each file completes, call `adjustConcurrency()`:
-  - If average speed < 1MB/s, reduce to 4
-  - If average speed > 5MB/s, allow up to 8
-  - Otherwise keep current value
-- This is a simple approach -- no complex promise pool library needed, just adjusting the gate in the existing `while` loop
+- `activeUploads: Map<string, UploadEngine>` keyed by albumId
+- `state: Map<string, UploadEngineState>` -- current state per album
+- `listeners: Set<callback>` -- notify React of state changes
+- `startUpload(albumId, files, onFileUploaded?)` -- creates/reuses engine
+- `cancel(albumId)` / `cancelAll()`
+- `retryFailed(albumId)`
+- `getState()` -- returns combined state across all albums
+- `subscribe(listener)` / `unsubscribe(listener)`
+- Registers `beforeunload` event to warn user when uploads are active
+- Lives outside React -- survives navigation
 
-**3. Expose concurrency in state (for UI)**
-- Add `activeConcurrency: number` to `UploadEngineState` interface
-- Set it in `notify()` from `this.currentConcurrency`
+### 2. New file: `src/contexts/UploadManagerContext.tsx` -- React Bridge
 
-**4. No changes to:**
-- Retry limit (stays at 3)
-- AbortController logic (already per-upload)
-- File size validation (already done in `validateBatch`)
-- R2 direct upload logic
-- CORS configuration
-- Progress calculation (already uses `bytesUploaded / totalBytes`)
+- Creates React context wrapping the singleton
+- `UploadManagerProvider` component that subscribes to the singleton and exposes state via `useSyncExternalStore` or simple `useState` + listener pattern
+- `useUploadManager()` hook for components to access upload state and actions
 
-### File: `src/components/admin/UploadProgressPanel.tsx`
+### 3. New file: `src/components/admin/GlobalUploadBar.tsx` -- Floating UI
 
-- Display current concurrency next to the uploading count: e.g., "3 uploading (x8 slots)" so the user can see the dynamic throttle in action
+- Fixed-position bar at bottom-right of screen
+- Only renders when there are active/recent uploads
+- Shows per-album: progress %, active count, failed count, cancel button
+- Collapsible (minimize to just a progress indicator)
+- Visible on ALL admin pages (rendered inside AdminLayout)
+- Click expands to show full `UploadProgressPanel`
 
-### Technical Notes
+### 4. Modified: `src/components/admin/MediaUploader.tsx`
 
-```text
-Speed < 1MB/s:  concurrency = 4  (protect slow connections)
-Speed 1-5MB/s:  concurrency = unchanged (keep current)  
-Speed > 5MB/s:  concurrency = 8  (maximize throughput)
-```
+- Remove `engineRef`, `uploadState`, and `handleStateUpdate` local state
+- Import `useUploadManager()` instead
+- `startUpload` calls `uploadManager.startUpload(albumId, files, onFileUploaded)`
+- Cancel/retry/clear delegate to the manager
+- Still renders the dropzone and folder picker (file selection UI stays here)
+- No longer renders `UploadProgressPanel` inline (the global bar handles it)
 
-- Speed is measured as a rolling average of the last 3 samples (15 seconds of data) to avoid jitter
-- Concurrency adjustments only happen between file completions, not mid-upload
-- No memory leak risk: speed samples array is capped at 3 entries
-- No duplicate uploads: the existing `nextIndex` counter and `Promise.race` pattern prevents double-queuing
+### 5. Modified: `src/components/admin/AdminLayout.tsx`
+
+- Add `<GlobalUploadBar />` inside the layout, after the main content area
+- This ensures the bar is visible on every admin page
+
+### 6. Modified: `src/App.tsx`
+
+- Wrap admin routes (or the entire app) with `<UploadManagerProvider>`
+
+### 7. No changes to:
+
+- `src/lib/uploadEngine.ts` -- the engine class itself is unchanged
+- R2 upload logic, CORS config
+- Retry limit (3), concurrency (4-8 dynamic)
+- Edge functions
+
+## Key Behaviors
+
+- **Navigate away**: uploads continue, floating bar shows progress
+- **Come back to album**: MediaUploader reads state from context, shows current progress
+- **Browser close**: `beforeunload` warns if uploads are running
+- **Component unmount**: no cleanup cancels uploads (removed any cleanup effect)
+- **Multiple albums**: supports concurrent uploads to different albums
+- **Cancel**: only via explicit user action (cancel button in floating bar or MediaUploader)
+
+## Technical Notes
+
+- The singleton pattern avoids Zustand/Redux dependencies -- no new packages needed
+- `useSyncExternalStore` (React 18) provides the cleanest React integration with external stores
+- The `UploadEngine` class already handles its own `AbortController` per file, retry logic, and progress tracking -- the manager just orchestrates multiple engines
+- IndexedDB persistence for surviving page reloads is deferred (the user's primary concern is navigation, not full reload). The `beforeunload` warning covers the reload case
+
