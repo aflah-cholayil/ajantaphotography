@@ -19,14 +19,15 @@ export const AlbumCover = ({ albumId, coverImageKey, alt, className = "w-full h-
     
     const fetchUrl = async () => {
       try {
-        const { data } = await supabase.functions.invoke('s3-signed-url', {
+        const response = await supabase.functions.invoke('s3-signed-url', {
           body: { s3Key: coverImageKey, albumId },
         });
-        if (!cancelled && data?.url) {
-          setUrl(data.url);
+        if (!cancelled && response.data?.url) {
+          setUrl(response.data.url);
         }
       } catch (e) {
-        console.error('Failed to fetch album cover URL:', e);
+        // Silently handle errors - show placeholder instead
+        console.warn('Failed to fetch album cover URL:', e);
       }
     };
     
