@@ -47,3 +47,6 @@ verify_jwt = false
 
 [functions.s3-multipart-upload]
 verify_jwt = false
+
+[functions.save-media-record]
+verify_jwt = false

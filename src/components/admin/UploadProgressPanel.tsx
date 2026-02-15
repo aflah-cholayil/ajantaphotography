@@ -1,4 +1,4 @@
-import { CheckCircle, AlertCircle, Loader2, X, RefreshCw, XCircle } from 'lucide-react';
+import { CheckCircle, AlertCircle, Loader2, RefreshCw, XCircle, Database } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -23,6 +23,7 @@ export const UploadProgressPanel = ({ state, onCancel, onRetryFailed, onClear }:
   const errorCount = files.filter(f => f.status === 'error').length;
   const uploadingCount = files.filter(f => f.status === 'uploading').length;
   const pendingCount = files.filter(f => f.status === 'pending').length;
+  const dbSavedCount = files.filter(f => f.dbSaved).length;
 
   const allDone = !isUploading && pendingCount === 0 && uploadingCount === 0;
 
@@ -33,10 +34,10 @@ export const UploadProgressPanel = ({ state, onCancel, onRetryFailed, onClear }:
         <div>
           <p className="text-sm font-medium text-foreground">
             {isUploading
-              ? `Uploading ${files.length} files (${formatBytes(totalBytes)})`
+              ? `Uploading ${files.length.toLocaleString()} files (${formatBytes(totalBytes)})`
               : allDone
                 ? `Upload complete — ${successCount} of ${files.length} files`
-                : `${files.length} files queued`
+                : `${files.length.toLocaleString()} files queued`
             }
           </p>
           {isUploading && (
@@ -75,10 +76,15 @@ export const UploadProgressPanel = ({ state, onCancel, onRetryFailed, onClear }:
       </div>
 
       {/* Counts summary */}
-      <div className="flex gap-4 text-xs">
+      <div className="flex gap-4 text-xs flex-wrap">
         {successCount > 0 && (
           <span className="flex items-center gap-1 text-green-500">
-            <CheckCircle size={12} /> {successCount} done
+            <CheckCircle size={12} /> {successCount.toLocaleString()} done
+          </span>
+        )}
+        {dbSavedCount > 0 && (
+          <span className="flex items-center gap-1 text-emerald-500">
+            <Database size={12} /> {dbSavedCount.toLocaleString()} saved
           </span>
         )}
         {uploadingCount > 0 && (
@@ -87,7 +93,7 @@ export const UploadProgressPanel = ({ state, onCancel, onRetryFailed, onClear }:
           </span>
         )}
         {pendingCount > 0 && (
-          <span className="text-muted-foreground">{pendingCount} pending</span>
+          <span className="text-muted-foreground">{pendingCount.toLocaleString()} queued</span>
         )}
         {errorCount > 0 && (
           <span className="flex items-center gap-1 text-destructive">
@@ -101,22 +107,31 @@ export const UploadProgressPanel = ({ state, onCancel, onRetryFailed, onClear }:
         <div className="space-y-1">
           {files.map((file) => (
             <div key={file.id} className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-muted/30 text-sm">
-              {/* Status icon */}
               <div className="flex-shrink-0 w-5">
-                {file.status === 'success' && <CheckCircle size={14} className="text-green-500" />}
+                {file.status === 'success' && file.dbSaved && <CheckCircle size={14} className="text-green-500" />}
+                {file.status === 'success' && !file.dbSaved && <Database size={14} className="text-amber-500" />}
                 {file.status === 'uploading' && <Loader2 size={14} className="animate-spin text-primary" />}
                 {file.status === 'error' && <AlertCircle size={14} className="text-destructive" />}
                 {file.status === 'pending' && <div className="w-3.5 h-3.5 rounded-full border-2 border-muted-foreground/30" />}
               </div>
 
-              {/* File name */}
               <span className="flex-1 truncate text-foreground">{file.file.name}</span>
 
-              {/* Progress or size */}
+              {/* Retry count */}
+              {file.retryCount > 0 && file.status !== 'success' && (
+                <span className="flex-shrink-0 text-xs text-amber-500">
+                  retry {file.retryCount}/{3}
+                </span>
+              )}
+
               <span className="flex-shrink-0 text-xs text-muted-foreground w-16 text-right">
                 {file.status === 'uploading'
                   ? `${file.progress}%`
-                  : formatBytes(file.file.size)
+                  : file.status === 'error'
+                    ? 'Failed'
+                    : file.status === 'success' && file.dbSaved
+                      ? 'Saved'
+                      : formatBytes(file.file.size)
                 }
               </span>
             </div>
