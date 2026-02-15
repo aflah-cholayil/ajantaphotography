@@ -18,8 +18,9 @@ const aws = new AwsClient({
 });
 
 interface DeleteRequest {
-  action: "delete_media" | "delete_album" | "delete_client" | "cleanup_expired";
+  action: "delete_media" | "delete_album" | "delete_client" | "cleanup_expired" | "bulk_delete_media";
   mediaId?: string;
+  mediaIds?: string[];
   albumId?: string;
   clientId?: string;
   softDelete?: boolean;
@@ -334,6 +335,99 @@ async function cleanupExpiredAlbums(
   return { albumsDeleted: expiredAlbums.length, totalSize };
 }
 
+// deno-lint-ignore no-explicit-any
+async function bulkDeleteMedia(
+  supabase: SupabaseClient<any>,
+  mediaIds: string[],
+  albumId: string,
+  userId: string
+): Promise<{ success: boolean; deletedCount: number; totalSize: number; peopleRemoved: number }> {
+  console.log(`Bulk deleting ${mediaIds.length} media from album ${albumId}`);
+
+  // Fetch all media records
+  const { data: mediaData, error: mediaError } = await supabase
+    .from("media")
+    .select("id, s3_key, s3_preview_key, size, file_name")
+    .in("id", mediaIds);
+
+  if (mediaError || !mediaData) {
+    console.error("Error fetching media for bulk delete:", mediaError);
+    return { success: false, deletedCount: 0, totalSize: 0, peopleRemoved: 0 };
+  }
+
+  const allS3Keys: string[] = [];
+  let totalSize = 0;
+
+  // Delete S3 objects
+  for (const item of mediaData) {
+    if (item.s3_key) {
+      await deleteS3Object(item.s3_key);
+      allS3Keys.push(item.s3_key);
+    }
+    if (item.s3_preview_key) {
+      await deleteS3Object(item.s3_preview_key);
+      allS3Keys.push(item.s3_preview_key);
+    }
+    totalSize += item.size || 0;
+  }
+
+  // Batch delete DB records
+  await supabase.from("detected_faces").delete().in("media_id", mediaIds);
+  await supabase.from("media_favorites").delete().in("media_id", mediaIds);
+  await supabase.from("media").delete().in("id", mediaIds);
+
+  // Cleanup orphan people records
+  let peopleRemoved = 0;
+  const { data: peopleData } = await supabase
+    .from("people")
+    .select("id")
+    .eq("album_id", albumId);
+
+  if (peopleData) {
+    for (const person of peopleData) {
+      const { count } = await supabase
+        .from("detected_faces")
+        .select("id", { count: "exact", head: true })
+        .eq("person_id", person.id);
+
+      if (count === 0) {
+        // Delete face thumbnail from S3
+        const { data: personDetail } = await supabase
+          .from("people")
+          .select("face_thumbnail_key")
+          .eq("id", person.id)
+          .single();
+
+        if (personDetail?.face_thumbnail_key) {
+          await deleteS3Object(personDetail.face_thumbnail_key);
+        }
+
+        await supabase.from("people").delete().eq("id", person.id);
+        peopleRemoved++;
+      } else {
+        // Update photo_count
+        await supabase.from("people").update({ photo_count: count }).eq("id", person.id);
+      }
+    }
+  }
+
+  // Log the bulk deletion
+  await supabase.from("deletion_logs").insert({
+    deleted_by: userId,
+    entity_type: "bulk_media",
+    entity_id: albumId,
+    entity_name: `${mediaData.length} files`,
+    parent_entity_id: albumId,
+    s3_keys_deleted: allS3Keys,
+    files_count: mediaData.length,
+    total_size_bytes: totalSize,
+    metadata: { media_ids: mediaIds, people_removed: peopleRemoved },
+  });
+
+  console.log(`Bulk deleted ${mediaData.length} media, ${allS3Keys.length} S3 objects, ${peopleRemoved} orphan people`);
+  return { success: true, deletedCount: mediaData.length, totalSize, peopleRemoved };
+}
+
 async function handler(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -372,7 +466,7 @@ async function handler(req: Request): Promise<Response> {
       userId = "00000000-0000-0000-0000-000000000000";
     }
 
-    const { action, mediaId, albumId, clientId, softDelete = false }: DeleteRequest = await req.json();
+    const { action, mediaId, mediaIds, albumId, clientId, softDelete = false }: DeleteRequest = await req.json();
 
     console.log(`Storage cleanup action: ${action}`, { mediaId, albumId, clientId, softDelete });
 
@@ -425,6 +519,21 @@ async function handler(req: Request): Promise<Response> {
       case "cleanup_expired": {
         const result = await cleanupExpiredAlbums(serviceClient, userId);
         return new Response(JSON.stringify({ success: true, ...result }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      case "bulk_delete_media": {
+        if (!mediaIds || mediaIds.length === 0 || !albumId) {
+          return new Response(JSON.stringify({ error: "mediaIds and albumId required" }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        const result = await bulkDeleteMedia(serviceClient, mediaIds, albumId, userId);
+        return new Response(JSON.stringify(result), {
+          status: result.success ? 200 : 400,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
