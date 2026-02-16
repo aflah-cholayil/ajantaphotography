@@ -1,85 +1,85 @@
 
 
-# Phase 1: Edit Request System (Safe Foundation)
+# Phase 2: Admin Edit Upload + Download System
 
-This adds an edit request workflow where clients can request edits on specific photos, and admins can view those requests. No storage, upload, or existing gallery logic is touched.
+This phase extends the Phase 1 edit request system with admin upload of edited versions, client download, and status management. All changes are additive -- no existing upload, storage, or media table logic is modified.
+
+---
+
+## Design Decision: Keep Everything on `edit_requests` Table
+
+Rather than adding columns to the `media` table (which is critical and heavily used), all edited file references will be stored on the `edit_requests` table. This is safer, backward-compatible, and keeps concerns separated.
 
 ---
 
 ## Step 1: Database Migration
 
-Create a new `edit_requests` table (separate from `media` -- avoids altering the critical media table):
+Add columns to `edit_requests`:
 
 ```text
-edit_requests
-  id            UUID PRIMARY KEY DEFAULT gen_random_uuid()
-  media_id      UUID NOT NULL REFERENCES media(id) ON DELETE CASCADE
-  album_id      UUID NOT NULL REFERENCES albums(id) ON DELETE CASCADE
-  user_id       UUID NOT NULL (the client who requested)
-  status        TEXT NOT NULL DEFAULT 'pending'  -- 'pending' only for Phase 1
-  edit_notes    TEXT NULL
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
-  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
-  UNIQUE(media_id, user_id)  -- one request per photo per client
+ALTER TABLE edit_requests ADD COLUMN edited_s3_key TEXT NULL;
+ALTER TABLE edit_requests ADD COLUMN edited_at TIMESTAMPTZ NULL;
+ALTER TABLE edit_requests ADD COLUMN edited_by UUID NULL;
 ```
 
-RLS policies:
-- Clients can INSERT for their own albums (user_id = auth.uid() + album ownership check)
-- Clients can SELECT their own requests (user_id = auth.uid())
-- Staff can SELECT all requests (is_admin_user)
-- Staff can UPDATE/DELETE all requests
-
-This is safer than adding columns to `media` because it keeps the media table untouched.
+The existing `status` column already supports any text value. We will use:
+- `pending` (existing)
+- `completed` (new -- set when admin uploads edited version)
 
 ---
 
-## Step 2: Client Side -- "Request Edit" on Media Hover
+## Step 2: New Edge Function -- `upload-edited-media`
 
-In `src/components/client/OptimizedMediaGrid.tsx`:
+A new edge function at `supabase/functions/upload-edited-media/index.ts` that:
 
-- Accept a new prop `editRequests: Set<string>` (set of media IDs already requested)
-- On each media item hover overlay, add a pencil icon button "Request Edit"
-- If the media ID is in `editRequests`, show a "Requested" badge instead
-- Clicking "Request Edit" opens a small dialog/modal
+1. Authenticates admin user (staff role check)
+2. Accepts `{ editRequestId, fileName, fileType, fileSize }`
+3. Validates the edit request exists and belongs to a valid album
+4. Generates R2 presigned PUT URL with key: `albums/{albumId}/edited/{mediaId}-edited-{timestamp}.{ext}`
+5. Returns presigned URL + s3Key
+6. Does NOT touch existing upload logic or s3-upload function
 
----
-
-## Step 3: Client Side -- Edit Request Dialog
-
-Create `src/components/client/EditRequestDialog.tsx`:
-
-- Small modal with:
-  - Thumbnail of the selected photo
-  - Optional textarea for edit notes
-  - "Submit Request" button
-- On submit: INSERT into `edit_requests` table
-- On success: update local `editRequests` set, show toast
+This keeps the edited upload flow completely isolated from the original upload system.
 
 ---
 
-## Step 4: Client Side -- "Edit Requests" Tab
+## Step 3: Update `s3-signed-url` Edge Function
 
-In `src/pages/client/AlbumView.tsx`:
+Add a check so that authenticated users (admin or album owner) can access `edited/` keys by verifying them against the `edit_requests.edited_s3_key` column, similar to how `media.s3_key` is already checked.
 
-- Add a new tab "Edit Requests" (with a pencil icon) after the existing tabs
-- Create `src/components/client/EditRequestsTab.tsx`:
-  - Fetch `edit_requests` where `album_id = id` and `user_id = auth.uid()`
-  - Show grid of requested media thumbnails
-  - Each item shows: thumbnail, status badge ("Pending"), edit note (if any), requested date
-  - Uses the existing `getSignedUrl` pattern for thumbnails
+Small addition to the existing access validation logic -- approximately 10 lines of code added to the existing flow.
 
 ---
 
-## Step 5: Admin Side -- "Edit Requests" Tab
+## Step 4: Admin Side -- Enhanced Edit Requests List
 
-In `src/pages/admin/AlbumDetail.tsx`:
+Upgrade `src/components/admin/EditRequestsList.tsx` to add actions for each request:
 
-- Add a new tab "Edit Requests" in the admin album detail page
-- Create `src/components/admin/EditRequestsList.tsx`:
-  - Fetch `edit_requests` where `album_id = id`, joined with media for file_name
-  - Show: thumbnail (reuse existing `mediaUrls`), client name, requested date, edit note, status badge
-  - Read-only for Phase 1 (no actions)
-  - Show count badge on tab header
+- **Download Original** button: Uses existing signed URL for the original `media.s3_key`, blob-downloads it (no new tab)
+- **Upload Edited Version** button: Opens a file input, uploads to R2 via the new edge function, then updates the edit request record with `edited_s3_key`, `edited_at`, `edited_by`, and `status = 'completed'`
+- **Status badges**: Show "Pending" (amber) or "Completed" (green) based on `status`
+- Completed items show the edited thumbnail instead
+
+Each card will have these action buttons below the info section.
+
+---
+
+## Step 5: Client Side -- Show Completed Edits
+
+Upgrade `src/components/client/EditRequestsTab.tsx`:
+
+- Show status-aware badges: "Pending" or "Completed"
+- For completed items, show a **Download Edited** button that fetches the edited file via signed URL and blob-downloads it
+- Optionally show both original and edited thumbnails side by side for completed items
+
+---
+
+## Step 6: Client Gallery -- "Edited Available" Badge (Optional Enhancement)
+
+In `OptimizedMediaGrid.tsx`, for media items that have a completed edit request:
+- Show a small sparkle badge "Edited" at the bottom of the thumbnail
+- This requires passing a `completedEdits: Set<string>` prop (set of media IDs with completed edits)
+- Fetched alongside existing `editRequests` in `AlbumView.tsx`
 
 ---
 
@@ -87,19 +87,41 @@ In `src/pages/admin/AlbumDetail.tsx`:
 
 | File | Action |
 |------|--------|
-| Database migration | New `edit_requests` table + RLS |
-| `src/components/client/EditRequestDialog.tsx` | New -- modal for requesting edits |
-| `src/components/client/EditRequestsTab.tsx` | New -- client tab showing requests |
-| `src/components/client/OptimizedMediaGrid.tsx` | Add "Request Edit" button on hover |
-| `src/pages/client/AlbumView.tsx` | Add Edit Requests tab, fetch edit requests state |
-| `src/components/admin/EditRequestsList.tsx` | New -- admin view of edit requests |
-| `src/pages/admin/AlbumDetail.tsx` | Add Edit Requests tab |
+| Database migration | Add 3 columns to `edit_requests` |
+| `supabase/functions/upload-edited-media/index.ts` | New -- presigned URL for edited uploads |
+| `supabase/functions/s3-signed-url/index.ts` | Small addition -- allow access to `edited/` keys |
+| `supabase/config.toml` | Add entry for new edge function (verify_jwt = false) |
+| `src/components/admin/EditRequestsList.tsx` | Add download original, upload edited, status management |
+| `src/components/client/EditRequestsTab.tsx` | Add completed status display + download edited |
+| `src/components/client/OptimizedMediaGrid.tsx` | Add "Edited" badge for completed edits |
+| `src/pages/client/AlbumView.tsx` | Fetch completed edits set |
 
 ## What Is NOT Touched
 
-- Upload logic / R2 integration
-- Signed URL generation edge function
-- Existing gallery rendering (only adding overlay button)
-- Storage system
-- Media table schema
+- `s3-upload` edge function (original upload logic)
+- `s3-multipart-upload` edge function
+- `upload-asset` edge function
+- `save-media-record` edge function
+- `media` table schema
+- `uploadEngine.ts` / `uploadManager.ts`
+- R2 bucket structure for originals/previews
+- Existing gallery rendering logic
+- `storage-cleanup` edge function
+
+## Storage Structure
+
+```text
+albums/{albumId}/
+  originals/          -- existing, untouched
+  previews/           -- existing, untouched
+  edited/             -- NEW: edited versions only
+    {mediaId}-edited-{timestamp}.jpg
+```
+
+## Security
+
+- Only staff (owner/admin/editor) can upload edited versions
+- Only album owner (client) or staff can download edited versions
+- File type validation (images + videos only)
+- Signed URLs expire after 1 hour (existing behavior)
 
