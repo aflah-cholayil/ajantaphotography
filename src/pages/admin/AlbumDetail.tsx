@@ -190,19 +190,30 @@ const AdminAlbumDetail = () => {
       setHasMore(newMedia.length === PAGE_SIZE);
       setCurrentPage(page);
 
-      // Fetch signed URLs for new items
-      const urls: Record<string, string> = {};
-      for (const item of newMedia) {
-        try {
-          const { data: urlData } = await supabase.functions.invoke('s3-signed-url', {
-            body: { s3Key: item.s3_key },
-          });
-          if (urlData?.url) urls[item.id] = urlData.url;
-        } catch (e) {
-          console.error('Error getting signed URL:', e);
-        }
+      // Fetch signed URLs in parallel batches of 10
+      const BATCH_SIZE = 10;
+      const allUrls: Record<string, string> = {};
+      if (!append) setMediaUrls({});
+
+      for (let i = 0; i < newMedia.length; i += BATCH_SIZE) {
+        const batch = newMedia.slice(i, i + BATCH_SIZE);
+        const results = await Promise.all(
+          batch.map(async (item) => {
+            try {
+              const { data: urlData } = await supabase.functions.invoke('s3-signed-url', {
+                body: { s3Key: item.s3_key },
+              });
+              return { id: item.id, url: urlData?.url };
+            } catch (e) {
+              console.error('Error getting signed URL:', e);
+              return { id: item.id, url: null };
+            }
+          })
+        );
+        results.forEach(r => { if (r.url) allUrls[r.id] = r.url; });
+        // Progressive rendering: update UI after each batch
+        setMediaUrls(prev => ({ ...prev, ...allUrls }));
       }
-      setMediaUrls(prev => append ? { ...prev, ...urls } : urls);
     } catch (error) {
       console.error('Error fetching media:', error);
     } finally {
