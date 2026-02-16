@@ -293,6 +293,54 @@ export type Database = {
           },
         ]
       }
+      edit_requests: {
+        Row: {
+          album_id: string
+          created_at: string
+          edit_notes: string | null
+          id: string
+          media_id: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          album_id: string
+          created_at?: string
+          edit_notes?: string | null
+          id?: string
+          media_id: string
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          album_id?: string
+          created_at?: string
+          edit_notes?: string | null
+          id?: string
+          media_id?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "edit_requests_album_id_fkey"
+            columns: ["album_id"]
+            isOneToOne: false
+            referencedRelation: "albums"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "edit_requests_media_id_fkey"
+            columns: ["media_id"]
+            isOneToOne: false
+            referencedRelation: "media"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       email_logs: {
         Row: {
           client_id: string | null

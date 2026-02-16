@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import { 
   ArrowLeft, Image, Video, Trash2, Eye, Share2, CheckCircle, MoreVertical, 
-  Users, Loader2, ScanFace, RefreshCw, Heart, Download, CheckSquare, Square, X, AlertCircle
+  Users, Loader2, ScanFace, RefreshCw, Heart, Download, CheckSquare, Square, X, AlertCircle, Pencil
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { supabase } from '@/integrations/supabase/client';
@@ -13,6 +13,7 @@ import { AdminLayout } from '@/components/admin/AdminLayout';
 import { MediaUploader } from '@/components/admin/MediaUploader';
 import { AlbumStatusBadge } from '@/components/admin/AlbumStatusBadge';
 import { ShareLinkDialog } from '@/components/admin/ShareLinkDialog';
+import { EditRequestsList } from '@/components/admin/EditRequestsList';
 import { DeleteConfirmDialog } from '@/components/admin/DeleteConfirmDialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -95,6 +96,7 @@ const AdminAlbumDetail = () => {
   const [isProcessingFaces, setIsProcessingFaces] = useState(false);
   const [faceProcessingStatus, setFaceProcessingStatus] = useState<string>('pending');
   const [isDownloadingSelections, setIsDownloadingSelections] = useState(false);
+  const [editRequestCount, setEditRequestCount] = useState(0);
 
   // Pagination state
   const [totalCount, setTotalCount] = useState(0);
@@ -692,6 +694,28 @@ const AdminAlbumDetail = () => {
             </Button>
           </div>
         )}
+
+        {/* Edit Requests Section */}
+        <Card className="bg-card border-border">
+          <CardHeader>
+            <CardTitle className="font-serif text-xl font-light flex items-center gap-2">
+              <Pencil size={20} />
+              Edit Requests
+              {editRequestCount > 0 && (
+                <Badge variant="secondary">{editRequestCount}</Badge>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {id && (
+              <EditRequestsList
+                albumId={id}
+                mediaUrls={mediaUrls}
+                onCountChange={setEditRequestCount}
+              />
+            )}
+          </CardContent>
+        </Card>
 
         {/* Upload Section */}
         <Card className="bg-card border-border">

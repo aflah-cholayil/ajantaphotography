@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, memo } from 'react';
 import { motion } from 'framer-motion';
-import { Image, Video, Download, ZoomIn, Play, Loader2, AlertCircle, RefreshCw, Heart } from 'lucide-react';
+import { Image, Video, Download, ZoomIn, Play, Loader2, AlertCircle, RefreshCw, Heart, Pencil } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -30,6 +30,8 @@ interface OptimizedMediaGridProps {
   hasMore?: boolean;
   isLoadingMore?: boolean;
   onLoadMore?: () => void;
+  editRequests?: Set<string>;
+  onRequestEdit?: (item: Media) => void;
 }
 
 interface MediaItemProps {
@@ -43,6 +45,8 @@ interface MediaItemProps {
   onDownload: (item: Media) => void;
   isFavorited?: boolean;
   onToggleFavorite?: (id: string) => void;
+  isEditRequested?: boolean;
+  onRequestEdit?: (item: Media) => void;
 }
 
 // Cache for signed URLs with expiry tracking
@@ -106,7 +110,9 @@ const MediaItem = memo(({
   onMediaClick, 
   onDownload,
   isFavorited,
-  onToggleFavorite
+  onToggleFavorite,
+  isEditRequested,
+  onRequestEdit
 }: MediaItemProps) => {
   const [url, setUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -306,6 +312,16 @@ const MediaItem = memo(({
         </button>
       )}
 
+      {/* Edit requested badge */}
+      {isEditRequested && !isSelectionMode && (
+        <div className="absolute bottom-2 left-2 z-10">
+          <div className="bg-amber-500 text-white px-2 py-0.5 rounded-full text-[10px] font-medium flex items-center gap-1">
+            <Pencil size={10} />
+            Requested
+          </div>
+        </div>
+      )}
+
       {/* Hover overlay */}
       {url && !hasError && !isSelectionMode && (
         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-all duration-300 flex items-center justify-center opacity-0 group-hover:opacity-100">
@@ -332,6 +348,19 @@ const MediaItem = memo(({
             >
               <Download size={18} />
             </Button>
+            {item.type === 'photo' && onRequestEdit && !isEditRequested && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="text-white hover:bg-amber-500/80 backdrop-blur-sm h-8 w-8 sm:h-10 sm:w-10"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRequestEdit(item);
+                }}
+              >
+                <Pencil size={18} />
+              </Button>
+            )}
           </div>
         </div>
       )}
@@ -355,6 +384,8 @@ export function OptimizedMediaGrid({
   hasMore,
   isLoadingMore,
   onLoadMore,
+  editRequests,
+  onRequestEdit,
 }: OptimizedMediaGridProps) {
   const filteredMedia = media.filter(m => m.type === type);
   const isPhoto = type === 'photo';
@@ -414,6 +445,8 @@ export function OptimizedMediaGrid({
             onDownload={onDownload}
             isFavorited={favorites?.has(item.id)}
             onToggleFavorite={onToggleFavorite}
+            isEditRequested={editRequests?.has(item.id)}
+            onRequestEdit={onRequestEdit}
           />
         ))}
       </div>
