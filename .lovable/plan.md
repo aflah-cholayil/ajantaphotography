@@ -1,63 +1,47 @@
 
 
-# Fix: Admin Album Images Loading Too Slowly
+# Fix: Broken Images in Admin Album Gallery
 
-## Root Cause
+## Problem
 
-In `src/pages/admin/AlbumDetail.tsx`, the `fetchMedia` function fetches signed URLs **one at a time** in a `for` loop (lines 193-204):
-
-```typescript
-for (const item of newMedia) {
-  const { data: urlData } = await supabase.functions.invoke('s3-signed-url', { ... });
-  // Each call waits for the previous to finish
-}
-```
-
-With 53 items, this means 53 sequential network requests (~200-500ms each), totaling 10-25 seconds of wait time.
+Some images show a broken image icon (the browser's default) in the admin album detail page. This happens when:
+- A signed URL is successfully fetched but the actual image fails to load (e.g., file too large like the 10.4 MB DSC00078.JPG, network timeout, or corrupt file)
+- The `<img>` tag has no `onError` handler, so the browser shows its default broken image icon
 
 ## Fix
 
 ### File: `src/pages/admin/AlbumDetail.tsx`
 
-Replace the sequential loop with **parallel batch fetching**:
+Add an `onError` handler to all `<img>` tags that display media. When an image fails to load:
+1. Remove the broken URL from `mediaUrls` state so it falls back to the placeholder icon
+2. Optionally retry once after a short delay
 
-```typescript
-// Fetch signed URLs in parallel batches of 10
-const BATCH_SIZE = 10;
-const urls: Record<string, string> = {};
+There are two `<img>` locations to fix:
 
-for (let i = 0; i < newMedia.length; i += BATCH_SIZE) {
-  const batch = newMedia.slice(i, i + BATCH_SIZE);
-  const results = await Promise.all(
-    batch.map(async (item) => {
-      try {
-        const { data: urlData } = await supabase.functions.invoke('s3-signed-url', {
-          body: { s3Key: item.s3_key },
-        });
-        return { id: item.id, url: urlData?.url };
-      } catch {
-        return { id: item.id, url: null };
-      }
-    })
-  );
-  results.forEach(r => { if (r.url) urls[r.id] = r.url; });
-  // Update UI progressively after each batch
-  setMediaUrls(prev => ({ ...prev, ...urls }));
-}
+**Location 1 (~line 812):** Main gallery grid images
+```tsx
+<img 
+  src={mediaUrls[item.id]} 
+  alt={item.file_name}
+  className="w-full h-full object-cover"
+  onError={() => {
+    setMediaUrls(prev => {
+      const updated = { ...prev };
+      delete updated[item.id];
+      return updated;
+    });
+  }}
+/>
 ```
 
-This changes load time from ~53 sequential calls to ~6 batches of 10 parallel calls. Images will also appear progressively as each batch completes.
+**Location 2 (~line 631):** Selection preview thumbnails -- same pattern
+
+This ensures broken images gracefully show the placeholder icon instead of the browser's broken image indicator.
 
 ## What Changes
-- `src/pages/admin/AlbumDetail.tsx` -- parallel URL fetching with progressive rendering
+- `src/pages/admin/AlbumDetail.tsx` -- add `onError` handlers to `<img>` tags
 
 ## What Stays the Same
-- Edge function `s3-signed-url` (no backend changes)
-- Media query logic
-- Everything else on the page
-
-## Expected Result
-- Images load ~5-8x faster
-- Images appear progressively (first 10, then next 10, etc.)
-- No more blank placeholder grid while waiting
-
+- Signed URL fetching logic (already parallel batched)
+- Edge function
+- Everything else
