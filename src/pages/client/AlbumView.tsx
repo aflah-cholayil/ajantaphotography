@@ -107,6 +107,7 @@ const ClientAlbumView = () => {
 
   // Edit requests state
   const [editRequests, setEditRequests] = useState<Set<string>>(new Set());
+  const [completedEdits, setCompletedEdits] = useState<Set<string>>(new Set());
   const [editDialogMedia, setEditDialogMedia] = useState<{ id: string; file_name: string } | null>(null);
   const [editDialogThumbnailUrl, setEditDialogThumbnailUrl] = useState<string | null>(null);
 
@@ -217,11 +218,14 @@ const ClientAlbumView = () => {
       const fetchEditRequests = async () => {
         const { data } = await supabase
           .from('edit_requests' as any)
-          .select('media_id')
+          .select('media_id, status')
           .eq('album_id', id)
           .eq('user_id', user.id);
         if (data) {
           setEditRequests(new Set((data as any[]).map((r: any) => r.media_id)));
+          setCompletedEdits(new Set(
+            (data as any[]).filter((r: any) => r.status === 'completed').map((r: any) => r.media_id)
+          ));
         }
       };
       fetchEditRequests();
@@ -609,6 +613,7 @@ const ClientAlbumView = () => {
               isLoadingMore={isLoadingMore}
               onLoadMore={handleLoadMore}
               editRequests={editRequests}
+              completedEdits={completedEdits}
               onRequestEdit={(item) => {
                 setEditDialogMedia(item);
                 // Get thumbnail URL from cache
