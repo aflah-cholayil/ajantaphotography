@@ -628,7 +628,7 @@ const AdminAlbumDetail = () => {
                       {mediaIds.slice(0, 10).map((mediaId) => (
                         <div key={mediaId} className="aspect-square rounded-md overflow-hidden bg-muted relative">
                           {mediaUrls[mediaId] ? (
-                            <img src={mediaUrls[mediaId]} alt="Selected" className="w-full h-full object-cover" />
+                            <img src={mediaUrls[mediaId]} alt="Selected" className="w-full h-full object-cover" onError={() => { setMediaUrls(prev => { const u = { ...prev }; delete u[mediaId]; return u; }); }} />
                           ) : (
                             <div className="w-full h-full flex items-center justify-center">
                               <Image size={14} className="text-muted-foreground" />
@@ -813,6 +813,13 @@ const AdminAlbumDetail = () => {
                             src={mediaUrls[item.id]} 
                             alt={item.file_name}
                             className="w-full h-full object-cover"
+                            onError={() => {
+                              setMediaUrls(prev => {
+                                const updated = { ...prev };
+                                delete updated[item.id];
+                                return updated;
+                              });
+                            }}
                           />
                         ) : (
                           <div className="w-full h-full flex items-center justify-center">
