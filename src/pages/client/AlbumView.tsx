@@ -18,6 +18,7 @@ import { OptimizedMediaGrid } from '@/components/client/OptimizedMediaGrid';
 import { PeopleTab } from '@/components/client/PeopleTab';
 import { FavoritesTab } from '@/components/client/FavoritesTab';
 import { EditRequestDialog } from '@/components/client/EditRequestDialog';
+import { BulkEditRequestDialog } from '@/components/client/BulkEditRequestDialog';
 import { EditRequestsTab } from '@/components/client/EditRequestsTab';
 import { MinimalFooter } from '@/components/shared/MinimalFooter';
 
@@ -110,6 +111,7 @@ const ClientAlbumView = () => {
   const [completedEdits, setCompletedEdits] = useState<Set<string>>(new Set());
   const [editDialogMedia, setEditDialogMedia] = useState<{ id: string; file_name: string } | null>(null);
   const [editDialogThumbnailUrl, setEditDialogThumbnailUrl] = useState<string | null>(null);
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
 
   const photos = media.filter(m => m.type === 'photo');
   const videos = media.filter(m => m.type === 'video');
@@ -682,6 +684,23 @@ const ClientAlbumView = () => {
         />
       )}
 
+      {/* Bulk Edit Request Dialog */}
+      <BulkEditRequestDialog
+        open={bulkEditOpen}
+        onOpenChange={setBulkEditOpen}
+        mediaIds={Array.from(selectedItems)}
+        albumId={album.id}
+        existingEditRequests={editRequests}
+        onSuccess={(newIds) => {
+          setEditRequests(prev => {
+            const next = new Set(prev);
+            newIds.forEach(id => next.add(id));
+            return next;
+          });
+          clearSelection();
+        }}
+      />
+
       {/* Sticky Bottom Action Bar */}
       <AnimatePresence>
         {isSelectionMode && (
@@ -721,6 +740,20 @@ const ClientAlbumView = () => {
                   )}
                   Entire Album
                 </Button>
+                {activeTab === 'photos' && (() => {
+                  const eligibleCount = Array.from(selectedItems).filter(id => !editRequests.has(id)).length;
+                  return (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setBulkEditOpen(true)}
+                      disabled={eligibleCount === 0}
+                    >
+                      <Pencil size={14} className="mr-1" />
+                      Request Edit{eligibleCount > 0 ? ` (${eligibleCount})` : ''}
+                    </Button>
+                  );
+                })()}
                 <Button
                   size="sm"
                   onClick={handleDownloadSelected}
