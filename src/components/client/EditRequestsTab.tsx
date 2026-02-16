@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Pencil, Loader2, Clock, Image } from 'lucide-react';
+import { Pencil, Loader2, Clock, Image, CheckCircle2, Download, Sparkles } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { format } from 'date-fns';
+import { toast } from 'sonner';
 
 interface EditRequest {
   id: string;
@@ -11,6 +13,8 @@ interface EditRequest {
   status: string;
   edit_notes: string | null;
   created_at: string;
+  edited_s3_key: string | null;
+  edited_at: string | null;
   media?: {
     file_name: string;
     s3_key: string;
@@ -22,7 +26,6 @@ interface EditRequestsTabProps {
   albumId: string;
 }
 
-// URL cache reuse
 const urlCache = new Map<string, { url: string; expiresAt: number }>();
 const URL_CACHE_DURATION = 50 * 60 * 1000;
 
@@ -48,6 +51,8 @@ export function EditRequestsTab({ albumId }: EditRequestsTabProps) {
   const [requests, setRequests] = useState<EditRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
+  const [editedThumbnails, setEditedThumbnails] = useState<Record<string, string>>({});
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
   const fetchRequests = useCallback(async () => {
     if (!user) return;
@@ -55,7 +60,7 @@ export function EditRequestsTab({ albumId }: EditRequestsTabProps) {
     try {
       const { data, error } = await supabase
         .from('edit_requests' as any)
-        .select('id, media_id, status, edit_notes, created_at')
+        .select('id, media_id, status, edit_notes, created_at, edited_s3_key, edited_at')
         .eq('album_id', albumId)
         .eq('user_id', user.id)
         .order('created_at', { ascending: false });
@@ -63,7 +68,6 @@ export function EditRequestsTab({ albumId }: EditRequestsTabProps) {
       if (error) throw error;
       const editRequests = (data || []) as unknown as EditRequest[];
 
-      // Fetch media info for each request
       if (editRequests.length > 0) {
         const mediaIds = editRequests.map(r => r.media_id);
         const { data: mediaData } = await supabase
@@ -76,7 +80,7 @@ export function EditRequestsTab({ albumId }: EditRequestsTabProps) {
           r.media = mediaMap.get(r.media_id) as any;
         });
 
-        // Fetch thumbnails
+        // Fetch original thumbnails
         const urls: Record<string, string> = {};
         for (const req of editRequests) {
           if (req.media) {
@@ -86,6 +90,16 @@ export function EditRequestsTab({ albumId }: EditRequestsTabProps) {
           }
         }
         setThumbnails(urls);
+
+        // Fetch edited thumbnails for completed requests
+        const editedUrls: Record<string, string> = {};
+        for (const req of editRequests) {
+          if (req.status === 'completed' && req.edited_s3_key) {
+            const url = await getSignedUrl(req.edited_s3_key, albumId);
+            if (url) editedUrls[req.id] = url;
+          }
+        }
+        setEditedThumbnails(editedUrls);
       }
 
       setRequests(editRequests);
@@ -99,6 +113,34 @@ export function EditRequestsTab({ albumId }: EditRequestsTabProps) {
   useEffect(() => {
     fetchRequests();
   }, [fetchRequests]);
+
+  const handleDownloadEdited = async (req: EditRequest) => {
+    if (!req.edited_s3_key) return;
+
+    setDownloadingId(req.id);
+    try {
+      toast.info('Preparing download...');
+      const url = await getSignedUrl(req.edited_s3_key, albumId);
+      if (!url) throw new Error('Failed to get download URL');
+
+      const response = await fetch(url);
+      const blob = await response.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = `edited_${req.media?.file_name || 'file'}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(blobUrl);
+      toast.success('Downloaded edited version');
+    } catch (err) {
+      console.error('Download error:', err);
+      toast.error('Failed to download edited file');
+    } finally {
+      setDownloadingId(null);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -122,39 +164,92 @@ export function EditRequestsTab({ albumId }: EditRequestsTabProps) {
 
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
-      {requests.map((req) => (
-        <div key={req.id} className="rounded-lg border border-border bg-card overflow-hidden">
-          <div className="aspect-square bg-muted relative">
-            {thumbnails[req.media_id] ? (
-              <img
-                src={thumbnails[req.media_id]}
-                alt={req.media?.file_name || 'Photo'}
-                className="w-full h-full object-cover"
-                onError={() => setThumbnails(prev => { const u = { ...prev }; delete u[req.media_id]; return u; })}
-              />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center">
-                <Image size={24} className="text-muted-foreground" />
+      {requests.map((req) => {
+        const isCompleted = req.status === 'completed';
+        const isDownloading = downloadingId === req.id;
+
+        return (
+          <div key={req.id} className="rounded-lg border border-border bg-card overflow-hidden">
+            {/* Show both original and edited side by side for completed */}
+            <div className={`bg-muted relative ${isCompleted ? '' : 'aspect-square'}`}>
+              {isCompleted && editedThumbnails[req.id] ? (
+                <div className="grid grid-cols-2 gap-0.5">
+                  <div className="aspect-square relative">
+                    {thumbnails[req.media_id] ? (
+                      <img
+                        src={thumbnails[req.media_id]}
+                        alt="Original"
+                        className="w-full h-full object-cover opacity-60"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <Image size={16} className="text-muted-foreground" />
+                      </div>
+                    )}
+                    <span className="absolute bottom-1 left-1 text-[8px] bg-black/60 text-white px-1 rounded">Before</span>
+                  </div>
+                  <div className="aspect-square relative">
+                    <img
+                      src={editedThumbnails[req.id]}
+                      alt="Edited"
+                      className="w-full h-full object-cover"
+                    />
+                    <span className="absolute bottom-1 left-1 text-[8px] bg-green-600 text-white px-1 rounded">After</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="aspect-square relative">
+                  {thumbnails[req.media_id] ? (
+                    <img
+                      src={thumbnails[req.media_id]}
+                      alt={req.media?.file_name || 'Photo'}
+                      className="w-full h-full object-cover"
+                      onError={() => setThumbnails(prev => { const u = { ...prev }; delete u[req.media_id]; return u; })}
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center">
+                      <Image size={24} className="text-muted-foreground" />
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="absolute top-2 right-2">
+                {isCompleted ? (
+                  <Badge className="text-[10px] gap-1 bg-green-600 hover:bg-green-700 text-white border-0">
+                    <CheckCircle2 size={10} />
+                    Completed
+                  </Badge>
+                ) : (
+                  <Badge variant="secondary" className="text-[10px] gap-1 bg-amber-500/90 text-white border-0">
+                    <Clock size={10} />
+                    Pending
+                  </Badge>
+                )}
               </div>
-            )}
-            <div className="absolute top-2 right-2">
-              <Badge variant="secondary" className="text-[10px] gap-1">
-                <Clock size={10} />
-                Pending
-              </Badge>
+            </div>
+            <div className="p-3 space-y-1">
+              <p className="text-xs text-muted-foreground truncate">{req.media?.file_name}</p>
+              {req.edit_notes && (
+                <p className="text-xs text-foreground line-clamp-2">{req.edit_notes}</p>
+              )}
+              <p className="text-[10px] text-muted-foreground">
+                {format(new Date(req.created_at), 'MMM d, yyyy')}
+              </p>
+              {isCompleted && req.edited_s3_key && (
+                <Button
+                  size="sm"
+                  className="h-7 text-xs w-full mt-2 gap-1"
+                  onClick={() => handleDownloadEdited(req)}
+                  disabled={isDownloading}
+                >
+                  {isDownloading ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+                  Download Edited
+                </Button>
+              )}
             </div>
           </div>
-          <div className="p-3 space-y-1">
-            <p className="text-xs text-muted-foreground truncate">{req.media?.file_name}</p>
-            {req.edit_notes && (
-              <p className="text-xs text-foreground line-clamp-2">{req.edit_notes}</p>
-            )}
-            <p className="text-[10px] text-muted-foreground">
-              {format(new Date(req.created_at), 'MMM d, yyyy')}
-            </p>
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

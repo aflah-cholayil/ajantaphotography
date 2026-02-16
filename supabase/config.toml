@@ -56,3 +56,6 @@ verify_jwt = false
 
 [functions.migrate-to-r2]
 verify_jwt = false
+
+[functions.upload-edited-media]
+verify_jwt = false

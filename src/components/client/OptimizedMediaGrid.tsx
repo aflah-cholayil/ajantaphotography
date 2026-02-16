@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, memo } from 'react';
 import { motion } from 'framer-motion';
-import { Image, Video, Download, ZoomIn, Play, Loader2, AlertCircle, RefreshCw, Heart, Pencil } from 'lucide-react';
+import { Image, Video, Download, ZoomIn, Play, Loader2, AlertCircle, RefreshCw, Heart, Pencil, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -32,6 +32,7 @@ interface OptimizedMediaGridProps {
   onLoadMore?: () => void;
   editRequests?: Set<string>;
   onRequestEdit?: (item: Media) => void;
+  completedEdits?: Set<string>;
 }
 
 interface MediaItemProps {
@@ -47,6 +48,7 @@ interface MediaItemProps {
   onToggleFavorite?: (id: string) => void;
   isEditRequested?: boolean;
   onRequestEdit?: (item: Media) => void;
+  hasCompletedEdit?: boolean;
 }
 
 // Cache for signed URLs with expiry tracking
@@ -112,7 +114,8 @@ const MediaItem = memo(({
   isFavorited,
   onToggleFavorite,
   isEditRequested,
-  onRequestEdit
+  onRequestEdit,
+  hasCompletedEdit
 }: MediaItemProps) => {
   const [url, setUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -315,10 +318,17 @@ const MediaItem = memo(({
       {/* Edit requested badge */}
       {isEditRequested && !isSelectionMode && (
         <div className="absolute bottom-2 left-2 z-10">
-          <div className="bg-amber-500 text-white px-2 py-0.5 rounded-full text-[10px] font-medium flex items-center gap-1">
-            <Pencil size={10} />
-            Requested
-          </div>
+          {hasCompletedEdit ? (
+            <div className="bg-green-600 text-white px-2 py-0.5 rounded-full text-[10px] font-medium flex items-center gap-1">
+              <Sparkles size={10} />
+              Edited
+            </div>
+          ) : (
+            <div className="bg-amber-500 text-white px-2 py-0.5 rounded-full text-[10px] font-medium flex items-center gap-1">
+              <Pencil size={10} />
+              Requested
+            </div>
+          )}
         </div>
       )}
 
@@ -386,6 +396,7 @@ export function OptimizedMediaGrid({
   onLoadMore,
   editRequests,
   onRequestEdit,
+  completedEdits,
 }: OptimizedMediaGridProps) {
   const filteredMedia = media.filter(m => m.type === type);
   const isPhoto = type === 'photo';
@@ -447,6 +458,7 @@ export function OptimizedMediaGrid({
             onToggleFavorite={onToggleFavorite}
             isEditRequested={editRequests?.has(item.id)}
             onRequestEdit={onRequestEdit}
+            hasCompletedEdit={completedEdits?.has(item.id)}
           />
         ))}
       </div>

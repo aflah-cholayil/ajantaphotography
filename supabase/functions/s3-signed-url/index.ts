@@ -159,7 +159,15 @@ const handler = async (req: Request): Promise<Response> => {
                 .eq("cover_image_key", s3Key)
                 .single();
 
-              if (mediaItem || personItem || coverCheck) {
+              // Check edited media keys
+              const { data: editedCheck } = await supabase
+                .from("edit_requests")
+                .select("id")
+                .eq("album_id", albumId)
+                .eq("edited_s3_key", s3Key)
+                .single();
+
+              if (mediaItem || personItem || coverCheck || editedCheck) {
                 hasAccess = true;
               }
             }

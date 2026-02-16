@@ -298,6 +298,9 @@ export type Database = {
           album_id: string
           created_at: string
           edit_notes: string | null
+          edited_at: string | null
+          edited_by: string | null
+          edited_s3_key: string | null
           id: string
           media_id: string
           status: string
@@ -308,6 +311,9 @@ export type Database = {
           album_id: string
           created_at?: string
           edit_notes?: string | null
+          edited_at?: string | null
+          edited_by?: string | null
+          edited_s3_key?: string | null
           id?: string
           media_id: string
           status?: string
@@ -318,6 +324,9 @@ export type Database = {
           album_id?: string
           created_at?: string
           edit_notes?: string | null
+          edited_at?: string | null
+          edited_by?: string | null
+          edited_s3_key?: string | null
           id?: string
           media_id?: string
           status?: string
