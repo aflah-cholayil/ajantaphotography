@@ -165,12 +165,27 @@ Deno.serve(async (req) => {
     const prefixSizes = r2Stats.prefixSizes;
     const monthlyData = r2Stats.monthlyData;
 
-    // Fetch DB data for per-client breakdown
-    const { data: mediaData } = await adminClient.from("media").select("album_id, size, created_at");
-    const { data: albumsData } = await adminClient.from("albums").select("id, client_id, title").eq("is_deleted", false);
-    const { data: clientsData } = await adminClient.from("clients").select("id, user_id, event_name").eq("is_deleted", false);
-    const { data: profilesData } = await adminClient.from("profiles").select("user_id, name");
-    const { data: shareLinksData } = await adminClient.from("share_links").select("album_id, view_count, download_count");
+    // Paginated fetch helper to bypass 1000-row default limit
+    async function fetchAll<T>(query: () => any): Promise<T[]> {
+      let all: T[] = [];
+      let from = 0;
+      const PAGE_SIZE = 1000;
+      while (true) {
+        const { data } = await query().range(from, from + PAGE_SIZE - 1);
+        if (!data || data.length === 0) break;
+        all = all.concat(data);
+        if (data.length < PAGE_SIZE) break;
+        from += PAGE_SIZE;
+      }
+      return all;
+    }
+
+    // Fetch DB data for per-client breakdown (paginated)
+    const mediaData = await fetchAll<any>(() => adminClient.from("media").select("album_id, size, created_at"));
+    const albumsData = await fetchAll<any>(() => adminClient.from("albums").select("id, client_id, title").eq("is_deleted", false));
+    const clientsData = await fetchAll<any>(() => adminClient.from("clients").select("id, user_id, event_name").eq("is_deleted", false));
+    const profilesData = await fetchAll<any>(() => adminClient.from("profiles").select("user_id, name"));
+    const shareLinksData = await fetchAll<any>(() => adminClient.from("share_links").select("album_id, view_count, download_count"));
 
     const albumToClient: Record<string, string> = {};
     const clientNames: Record<string, string> = {};
