@@ -1,60 +1,66 @@
 
 
-# Multi-Select Download System -- UI Enhancement
+# Fix: Storage Per Client Not Updating for New Users
 
-## Current State
+## Root Cause
 
-The codebase already has working multi-select and ZIP download:
-- Selection mode toggle, checkboxes on items, "Select All" buttons
-- `handleDownloadSelected` creates a ZIP via JSZip with blob downloads
-- Single file download uses blob approach
+The `storage-stats` edge function queries the `media` table without specifying a row limit:
 
-## What Needs Improving
-
-### 1. Sticky Bottom Action Bar (`src/pages/client/AlbumView.tsx`)
-
-Currently, selection controls are only in the header and can be hard to see. Add a fixed bottom action bar that appears when in selection mode:
-
-```text
-+------------------------------------------------------+
-|  [X] 5 selected    [Download Selected]  [Cancel]     |
-+------------------------------------------------------+
+```typescript
+const { data: mediaData } = await adminClient.from("media").select("album_id, size, created_at");
 ```
 
-- Fixed to viewport bottom with `fixed bottom-0 left-0 right-0 z-40`
-- Shows selected count
-- "Download Selected" button (disabled if 0 selected)
-- "Cancel" to exit selection mode
-- Animated slide-up/down with framer-motion
+Supabase has a **default limit of 1000 rows** per query. Your database now has **1,506 media records**. Since AJITH's 144 media items were uploaded after Neymar's 1,362 items, they fall beyond the 1000-row cutoff and are never included in the per-client storage calculation.
 
-### 2. Single vs Multi Download Logic
+This is why AJITH shows **0.0 MB** despite actually having ~1.13 GB of media.
 
-Update `handleDownloadSelected`:
-- If exactly 1 item selected: use direct blob download (no ZIP overhead)
-- If 2+ items selected: create ZIP as currently implemented
+## Fix
 
-### 3. ZIP Filename Improvement
+### File: `supabase/functions/storage-stats/index.ts`
 
-Change ZIP filename from `{title}_gallery.zip` to include event context. Fetch client event name and use: `{EventName}_{AlbumTitle}.zip` format. If event name unavailable, fall back to `{AlbumTitle}_gallery.zip`.
+**Paginate the media query** to fetch ALL rows, not just the first 1000. Replace the single query with a loop:
 
-### 4. "Download Entire Album" Option
+```typescript
+// Instead of:
+const { data: mediaData } = await adminClient.from("media").select("album_id, size, created_at");
 
-When entering selection mode, show a "Select All" and "Download Entire Album" option. "Download Entire Album" should:
-- First load ALL media (paginate through remaining pages if `hasMore` is true)
-- Then ZIP all items
+// Use paginated fetching:
+let allMedia = [];
+let from = 0;
+const PAGE_SIZE = 1000;
+let hasMore = true;
 
-### 5. Move Header Selection Controls to Bottom Bar
+while (hasMore) {
+  const { data } = await adminClient
+    .from("media")
+    .select("album_id, size, created_at")
+    .range(from, from + PAGE_SIZE - 1);
+  
+  if (data && data.length > 0) {
+    allMedia = allMedia.concat(data);
+    hasMore = data.length === PAGE_SIZE;
+    from += PAGE_SIZE;
+  } else {
+    hasMore = false;
+  }
+}
+```
 
-Remove the selection-mode buttons from the header. Keep only the "Select" toggle button in the header. All active selection controls move to the bottom bar.
+Apply the same pagination fix to these queries in the same function that could also exceed 1000 rows:
+- `albumsData` query (currently small but should be future-proofed)
+- `clientsData` query
+- `profilesData` query
+- `shareLinksData` query
 
-## Files to Modify
+## What Changes
+- `supabase/functions/storage-stats/index.ts` -- paginate all database queries
 
-- `src/pages/client/AlbumView.tsx` -- Bottom action bar, improved download logic, fetch-all for entire album download
+## What Stays the Same
+- R2 bucket listing (already handles pagination via XML continuation tokens)
+- Cache logic
+- Cost calculation formulas
+- Frontend Storage Dashboard page
 
-## What Stays Unchanged
-
-- `OptimizedMediaGrid.tsx` -- Checkbox rendering already works
-- Edge functions -- No backend changes needed
-- JSZip logic -- Already correct, just needs filename tweak
-- Admin album detail -- Separate concern
-
+## Expected Result After Fix
+- AJITH will correctly show ~1.13 GB storage across 2 albums
+- All future clients will appear with accurate storage numbers regardless of total media count
