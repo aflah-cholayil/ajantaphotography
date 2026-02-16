@@ -1,68 +1,45 @@
 
 
-# Fix: Video Cover Images Not Showing in Client Gallery
+# Bulk Edit Request from Multi-Select Mode
 
-## Root Cause
+## What This Does
 
-In `OptimizedMediaGrid.tsx` (line 266), the video thumbnail uses:
+Adds a "Request Edit" button to the sticky bottom action bar that appears during selection mode. When clicked, it opens a dialog where the client can add optional notes and submit edit requests for all selected photos at once (skipping any that already have a request).
+
+## Changes
+
+### 1. New Component: `BulkEditRequestDialog`
+
+Create `src/components/client/BulkEditRequestDialog.tsx`:
+
+- Accepts `mediaIds: string[]`, `albumId`, `existingEditRequests: Set<string>`
+- Filters out items that already have edit requests
+- Shows count: "Requesting edits for X of Y selected photos"
+- Single notes textarea (shared across all items)
+- On submit: batch-inserts into `edit_requests` table for all eligible items
+- Shows success toast with count
+- Calls `onSuccess` with array of new media IDs to update parent state
+
+### 2. Update `AlbumView.tsx` -- Bottom Action Bar
+
+Add a "Request Edit" button between "Entire Album" and "Download":
 
 ```
-poster={url + '#t=0.1'}
+[Select All] [Entire Album] [Request Edit (N)] [Download (N)] [Cancel]
 ```
 
-This is broken because:
-1. The `poster` attribute expects an **image URL** (jpg/png), not a video URL
-2. Appending `#t=0.1` to a signed R2 URL does nothing for the poster -- it's only meaningful on `<video src>`
-3. With `preload="metadata"`, R2 may not serve enough data via range requests for the browser to render a first frame
+- The button shows count of selected items that do NOT already have an edit request
+- Disabled if no eligible items (all already requested)
+- Opens the new `BulkEditRequestDialog`
+- On success: updates `editRequests` state, clears selection, exits selection mode
+- Only visible on the Photos tab (not Videos)
 
-Additionally, videos in the database have `s3_preview_key` as `NULL`, so there's no separate thumbnail image to use.
+### 3. Files
 
-## Fix (in `OptimizedMediaGrid.tsx`)
-
-Two changes to the video rendering block (lines 259-269):
-
-1. **Remove the broken `poster` attribute** entirely
-2. **Change `preload="metadata"` to `preload="auto"`** so the browser downloads enough of the video to render the first visible frame
-
-Before:
-```tsx
-<video
-  src={url}
-  className="w-full h-full object-cover"
-  muted
-  playsInline
-  preload="metadata"
-  poster={url + '#t=0.1'}
-  onError={handleImageError}
-  onLoadedData={() => setIsLoading(false)}
-/>
-```
-
-After:
-```tsx
-<video
-  src={url}
-  className="w-full h-full object-cover"
-  muted
-  playsInline
-  preload="auto"
-  onError={handleImageError}
-  onLoadedData={() => setIsLoading(false)}
-/>
-```
-
-## Files Changed
-
-| File | Change |
+| File | Action |
 |------|--------|
-| `src/components/client/OptimizedMediaGrid.tsx` | Remove broken `poster` attr, change `preload` to `"auto"` |
+| `src/components/client/BulkEditRequestDialog.tsx` | New -- bulk edit request dialog |
+| `src/pages/client/AlbumView.tsx` | Add "Request Edit" button to bottom bar, import dialog |
 
-## What Is NOT Touched
-
-- No backend/edge function changes
-- No database changes
-- No storage structure changes
-- No other component changes
-
-This is a 2-line fix in a single file.
+No database changes needed -- the existing `edit_requests` table supports this. Each selected photo gets its own row, matching the existing single-item behavior.
 
