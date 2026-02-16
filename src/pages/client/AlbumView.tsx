@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   ArrowLeft, Image, Video, Download, X, ChevronLeft, ChevronRight, 
-  FolderDown, Loader2, Check, ZoomIn, ZoomOut, Share2, Play, Pause, Users, Heart
+  FolderDown, Loader2, Check, ZoomIn, ZoomOut, Share2, Play, Pause, Users, Heart, Pencil
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { supabase } from '@/integrations/supabase/client';
@@ -17,6 +17,8 @@ import { ShareGalleryTab } from '@/components/client/ShareGalleryTab';
 import { OptimizedMediaGrid } from '@/components/client/OptimizedMediaGrid';
 import { PeopleTab } from '@/components/client/PeopleTab';
 import { FavoritesTab } from '@/components/client/FavoritesTab';
+import { EditRequestDialog } from '@/components/client/EditRequestDialog';
+import { EditRequestsTab } from '@/components/client/EditRequestsTab';
 import { MinimalFooter } from '@/components/shared/MinimalFooter';
 
 interface Media {
@@ -102,6 +104,11 @@ const ClientAlbumView = () => {
 
   // Favorites hook
   const { favorites, toggleFavorite, favoritesCount } = useMediaFavorites(id || '');
+
+  // Edit requests state
+  const [editRequests, setEditRequests] = useState<Set<string>>(new Set());
+  const [editDialogMedia, setEditDialogMedia] = useState<{ id: string; file_name: string } | null>(null);
+  const [editDialogThumbnailUrl, setEditDialogThumbnailUrl] = useState<string | null>(null);
 
   const photos = media.filter(m => m.type === 'photo');
   const videos = media.filter(m => m.type === 'video');
@@ -206,6 +213,18 @@ const ClientAlbumView = () => {
   useEffect(() => {
     if (user && role === 'client') {
       fetchAlbumData();
+      // Fetch existing edit requests
+      const fetchEditRequests = async () => {
+        const { data } = await supabase
+          .from('edit_requests' as any)
+          .select('media_id')
+          .eq('album_id', id)
+          .eq('user_id', user.id);
+        if (data) {
+          setEditRequests(new Set((data as any[]).map((r: any) => r.media_id)));
+        }
+      };
+      fetchEditRequests();
     }
   }, [user, role, fetchAlbumData]);
 
@@ -562,6 +581,15 @@ const ClientAlbumView = () => {
               <Share2 size={14} className="sm:w-4 sm:h-4" />
               <span className="hidden xs:inline">Share</span>
             </TabsTrigger>
+            <TabsTrigger value="edit-requests" className="gap-1 sm:gap-2 text-xs sm:text-sm flex-1 sm:flex-none data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+              <Pencil size={14} className="sm:w-4 sm:h-4" />
+              <span className="hidden xs:inline">Edits</span>
+              {editRequests.size > 0 && (
+                <span className="ml-1 bg-primary/20 text-primary px-1.5 py-0.5 rounded-full text-[10px] font-medium">
+                  {editRequests.size}
+                </span>
+              )}
+            </TabsTrigger>
           </TabsList>
 
           {/* Photos Tab */}
@@ -580,6 +608,13 @@ const ClientAlbumView = () => {
               hasMore={hasMore}
               isLoadingMore={isLoadingMore}
               onLoadMore={handleLoadMore}
+              editRequests={editRequests}
+              onRequestEdit={(item) => {
+                setEditDialogMedia(item);
+                // Get thumbnail URL from cache
+                const key = item.s3_preview_key || item.s3_key;
+                getSignedUrl(key, album.id).then(url => setEditDialogThumbnailUrl(url));
+              }}
             />
           </TabsContent>
 
@@ -619,8 +654,28 @@ const ClientAlbumView = () => {
           <TabsContent value="share">
             <ShareGalleryTab albumId={album.id} albumTitle={album.title} />
           </TabsContent>
+
+          {/* Edit Requests Tab */}
+          <TabsContent value="edit-requests">
+            <EditRequestsTab albumId={album.id} />
+          </TabsContent>
         </Tabs>
       </main>
+
+      {/* Edit Request Dialog */}
+      {editDialogMedia && (
+        <EditRequestDialog
+          open={!!editDialogMedia}
+          onOpenChange={(open) => { if (!open) setEditDialogMedia(null); }}
+          mediaId={editDialogMedia.id}
+          albumId={album.id}
+          thumbnailUrl={editDialogThumbnailUrl}
+          fileName={editDialogMedia.file_name}
+          onSuccess={(mediaId) => {
+            setEditRequests(prev => new Set(prev).add(mediaId));
+          }}
+        />
+      )}
 
       {/* Sticky Bottom Action Bar */}
       <AnimatePresence>
