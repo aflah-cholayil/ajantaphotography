@@ -262,8 +262,7 @@ const MediaItem = memo(({
                 className="w-full h-full object-cover"
                 muted
                 playsInline
-                preload="metadata"
-                poster={url + '#t=0.1'} // Use first frame as poster
+                preload="auto"
                 onError={handleImageError}
                 onLoadedData={() => setIsLoading(false)}
               />
