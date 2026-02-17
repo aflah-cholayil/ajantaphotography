@@ -1,30 +1,53 @@
 
 
-# Fix: Homepage Video Not Playing Automatically
+# Fix: Video Not Auto-Playing -- R2 Proxy Streaming
 
 ## Problem
 
-The video section shows the "Click to play video" fallback instead of auto-playing because the `crossOrigin="anonymous"` attribute on the `<video>` element triggers a CORS preflight/check against the R2 signed URL. R2's raw storage endpoint does not return the required CORS headers for cross-origin video requests, so the browser blocks the video load entirely and fires `onError`.
+The signed URL points directly to R2's raw S3 endpoint (`*.r2.cloudflarestorage.com`). This endpoint does not return proper CORS or Content-Type headers for browser video playback. The `<video>` element fails silently and falls back to the "Click to play video" state.
 
-## Fix
+Images from R2 work because `<img>` tags are more lenient. `<video>` elements require proper headers (Content-Type, CORS, Range support) for inline playback.
 
-In `src/components/home/CinematicVideoSection.tsx`:
+## Solution
 
-1. **Remove `crossOrigin="anonymous"`** from the `<video>` element (line 174). Without this attribute, the browser loads the video as a simple cross-origin resource (like an `<img>` tag) without CORS enforcement, which works fine for playback.
+Create a **video streaming proxy edge function** that fetches the video from R2 server-side and streams it back to the browser with correct headers. Then update the component to use this proxy URL instead of the raw R2 signed URL.
 
-2. **Keep everything else** -- the retry logic, fallback UI, `muted`, `autoPlay`, `playsInline` attributes all remain as-is.
+## Changes
 
-## Why This Works
+### 1. New Edge Function: `video-stream`
 
-- `<video>` elements do NOT need CORS headers for basic playback (play/pause/display)
-- CORS is only needed if you want to read video pixel data via Canvas (which we don't)
-- Removing the attribute lets the browser fetch the video without CORS checks, matching how images from R2 already work in the app
+Create `supabase/functions/video-stream/index.ts`:
 
-## File Changed
+- Accepts a `key` query parameter (the S3 key)
+- Only allows keys starting with `assets/showcase_video/` (public showcase videos)
+- Fetches the video from R2 using the AWS credentials (same as `s3-signed-url`)
+- Streams the response back with proper headers:
+  - `Content-Type: video/mp4` (derived from file extension)
+  - `Access-Control-Allow-Origin: *`
+  - `Accept-Ranges: bytes` (for seeking support)
+- Supports HTTP Range requests for seeking/scrubbing
 
-| File | Change |
+### 2. Update `CinematicVideoSection.tsx`
+
+Instead of fetching a signed URL and using it as the video `src`:
+- Set the video `src` directly to the edge function proxy URL:
+  `${VITE_SUPABASE_URL}/functions/v1/video-stream?key=${encodeURIComponent(showcaseVideoKey)}`
+- Remove the signed URL fetch logic entirely (no more `fetchSignedUrl`, `signedVideoUrl`, `isFetchingUrl`, `retryCount`)
+- Keep the error fallback UI for resilience
+- The video element loads directly from the proxy, which returns proper video headers
+
+### 3. Files
+
+| File | Action |
 |------|--------|
-| `src/components/home/CinematicVideoSection.tsx` | Remove `crossOrigin="anonymous"` from the video element (line 174) |
+| `supabase/functions/video-stream/index.ts` | New -- streaming proxy for showcase videos |
+| `src/components/home/CinematicVideoSection.tsx` | Simplify to use proxy URL directly instead of signed URL fetch |
 
-This is a single-line deletion.
+### 4. Why This Works
+
+- The edge function runs server-side, so it can access R2 without CORS restrictions
+- It streams the response back to the browser with correct `Content-Type` and CORS headers
+- The browser sees a same-origin (or CORS-enabled) video source with proper `video/mp4` content type
+- Range request support enables seeking and efficient loading
+- No changes to R2 configuration needed
 
