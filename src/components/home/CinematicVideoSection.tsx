@@ -171,7 +171,7 @@ export const CinematicVideoSection = () => {
                   key={signedVideoUrl}
                   className="absolute inset-0 w-full h-full object-cover cursor-pointer"
                   src={signedVideoUrl}
-                  crossOrigin="anonymous"
+                  
                   muted
                   loop
                   playsInline
