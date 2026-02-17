@@ -2,63 +2,32 @@ import { useRef, useEffect, useState, useCallback } from 'react';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useStudioSettings } from '@/hooks/useStudioSettings';
 import { SectionHeading } from '@/components/ui/SectionHeading';
-import { Loader2, Play, ExternalLink } from 'lucide-react';
+import { Loader2, Play } from 'lucide-react';
 
 export const CinematicVideoSection = () => {
   const sectionRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isVideoLoaded, setIsVideoLoaded] = useState(false);
   const [hasError, setHasError] = useState(false);
-  const [signedVideoUrl, setSignedVideoUrl] = useState<string | null>(null);
-  const [isFetchingUrl, setIsFetchingUrl] = useState(false);
-  const [retryCount, setRetryCount] = useState(0);
   
   const isMobile = useIsMobile();
   const { settings, isLoading } = useStudioSettings();
 
   const showcaseVideoKey = settings.showcase_video_key?.trim();
   const isVideoVisible = settings.showcase_video_visible === 'true';
-  const hasValidVideo = Boolean(showcaseVideoKey) && showcaseVideoKey.length > 0;
+  const hasValidVideo = Boolean(showcaseVideoKey) && showcaseVideoKey!.length > 0;
   const shouldRenderSection = hasValidVideo && isVideoVisible;
 
-  // Fetch signed URL for the video
-  const fetchSignedUrl = useCallback(async () => {
-    if (!showcaseVideoKey) return;
-    setIsFetchingUrl(true);
-    try {
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/s3-signed-url?key=${encodeURIComponent(showcaseVideoKey)}`
-      );
-      if (!response.ok) throw new Error(`Failed: ${response.status}`);
-      const data = await response.json();
-      if (data.url) {
-        setSignedVideoUrl(data.url);
-        setHasError(false);
-      } else {
-        throw new Error('No URL in response');
-      }
-    } catch (error) {
-      console.error('[CinematicVideoSection] Failed to fetch signed URL:', error);
-      setHasError(true);
-      setSignedVideoUrl(null);
-    } finally {
-      setIsFetchingUrl(false);
-    }
-  }, [showcaseVideoKey]);
-
-  useEffect(() => {
-    if (!shouldRenderSection || !showcaseVideoKey) {
-      setSignedVideoUrl(null);
-      return;
-    }
-    fetchSignedUrl();
-  }, [shouldRenderSection, showcaseVideoKey, fetchSignedUrl]);
+  // Build proxy URL
+  const videoSrc = shouldRenderSection && showcaseVideoKey
+    ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/video-stream?key=${encodeURIComponent(showcaseVideoKey)}`
+    : null;
 
   // Handle video playback based on viewport
   useEffect(() => {
     const video = videoRef.current;
     const section = sectionRef.current;
-    if (!video || !section || !signedVideoUrl || hasError) return;
+    if (!video || !section || !videoSrc || hasError) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -75,7 +44,7 @@ export const CinematicVideoSection = () => {
 
     observer.observe(section);
     return () => observer.disconnect();
-  }, [signedVideoUrl, hasError]);
+  }, [videoSrc, hasError]);
 
   const handleVideoTap = useCallback(() => {
     const video = videoRef.current;
@@ -87,21 +56,13 @@ export const CinematicVideoSection = () => {
   const handleVideoLoad = useCallback(() => {
     setIsVideoLoaded(true);
     setHasError(false);
-    setRetryCount(0);
   }, []);
 
   const handleVideoError = useCallback(() => {
-    console.error('[CinematicVideoSection] Video failed to load, retryCount:', retryCount);
-    if (retryCount < 1) {
-      // Retry once: refetch signed URL
-      setRetryCount(prev => prev + 1);
-      setSignedVideoUrl(null);
-      setTimeout(() => fetchSignedUrl(), 1500);
-    } else {
-      setHasError(true);
-      setIsVideoLoaded(false);
-    }
-  }, [retryCount, fetchSignedUrl]);
+    console.error('[CinematicVideoSection] Video failed to load');
+    setHasError(true);
+    setIsVideoLoaded(false);
+  }, []);
 
   if (isLoading) return null;
   if (!shouldRenderSection) return null;
@@ -125,7 +86,7 @@ export const CinematicVideoSection = () => {
               style={{ aspectRatio: isMobile ? 16 / 9 : 21 / 9 }}
             >
               {/* Loading state */}
-              {(isFetchingUrl || (!signedVideoUrl && !hasError)) && (
+              {!isVideoLoaded && !hasError && (
                 <div className="absolute inset-0 bg-card/80 flex flex-col items-center justify-center gap-4 z-10">
                   <div className="relative">
                     <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center">
@@ -137,25 +98,8 @@ export const CinematicVideoSection = () => {
                 </div>
               )}
 
-              {/* Error fallback — keep section visible */}
-              {hasError && signedVideoUrl && (
-                <a
-                  href={signedVideoUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="absolute inset-0 bg-card/90 flex flex-col items-center justify-center gap-4 z-10 cursor-pointer hover:bg-card/80 transition-colors"
-                >
-                  <div className="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center border border-primary/20">
-                    <Play className="w-10 h-10 text-primary" />
-                  </div>
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <span>Click to play video</span>
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </div>
-                </a>
-              )}
-
-              {hasError && !signedVideoUrl && (
+              {/* Error fallback */}
+              {hasError && (
                 <div className="absolute inset-0 bg-card/90 flex flex-col items-center justify-center gap-4 z-10">
                   <div className="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center border border-primary/20">
                     <Play className="w-10 h-10 text-primary/40" />
@@ -165,13 +109,12 @@ export const CinematicVideoSection = () => {
               )}
 
               {/* Video Element */}
-              {signedVideoUrl && !hasError && (
+              {videoSrc && !hasError && (
                 <video
                   ref={videoRef}
-                  key={signedVideoUrl}
+                  key={videoSrc}
                   className="absolute inset-0 w-full h-full object-cover cursor-pointer"
-                  src={signedVideoUrl}
-                  
+                  src={videoSrc}
                   muted
                   loop
                   playsInline
