@@ -89,27 +89,31 @@ const Works = () => {
       if (error) throw error;
       setWorks(data || []);
 
-      // Fetch signed URLs for thumbnails
+      // Fetch signed URLs in parallel (first 20)
       const session = await supabase.auth.getSession();
       if (session.data.session && data) {
-        const urls: Record<string, string> = {};
-        for (const work of data.slice(0, 20)) { // Limit to first 20 for performance
-          try {
-            const response = await fetch(
-              `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/manage-work?action=signed-url&key=${encodeURIComponent(work.s3_preview_key || work.s3_key)}`,
-              {
-                headers: {
-                  'Authorization': `Bearer ${session.data.session.access_token}`,
-                },
+        const entries = await Promise.all(
+          data.slice(0, 20).map(async (work) => {
+            try {
+              const response = await fetch(
+                `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/manage-work?action=signed-url&key=${encodeURIComponent(work.s3_preview_key || work.s3_key)}`,
+                {
+                  headers: {
+                    'Authorization': `Bearer ${session.data.session!.access_token}`,
+                  },
+                }
+              );
+              if (response.ok) {
+                const { url } = await response.json();
+                return [work.id, url] as const;
               }
-            );
-            if (response.ok) {
-              const { url } = await response.json();
-              urls[work.id] = url;
-            }
-          } catch (err) {
-            console.error('Failed to get signed URL for:', work.id);
-          }
+            } catch { /* skip */ }
+            return null;
+          })
+        );
+        const urls: Record<string, string> = {};
+        for (const entry of entries) {
+          if (entry) urls[entry[0]] = entry[1];
         }
         setImageUrls(urls);
       }

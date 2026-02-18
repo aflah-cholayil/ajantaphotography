@@ -1,7 +1,7 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Upload, X, Image, Video, Loader2, Check } from 'lucide-react';
+import { Upload, X, Image, Video, Loader2, Check, AlertTriangle } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -38,6 +38,30 @@ const categories = [
   { value: 'other', label: 'Other' },
 ];
 
+const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024; // 5GB
+const MULTIPART_THRESHOLD = 50 * 1024 * 1024; // 50MB
+const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB
+const MAX_CONCURRENT_PARTS = 5;
+const MAX_RETRIES = 3;
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function formatSpeed(bytesPerSec: number): string {
+  if (bytesPerSec < 1024 * 1024) return `${(bytesPerSec / 1024).toFixed(0)} KB/s`;
+  return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`;
+}
+
+function formatTime(seconds: number): string {
+  if (seconds < 60) return `${Math.ceil(seconds)}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${Math.ceil(seconds % 60)}s`;
+  return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+}
+
 export const UploadWorkDialog = ({ open, onOpenChange, onSuccess }: UploadWorkDialogProps) => {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -48,23 +72,40 @@ export const UploadWorkDialog = ({ open, onOpenChange, onSuccess }: UploadWorkDi
   const [preview, setPreview] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadSpeed, setUploadSpeed] = useState(0);
+  const [uploadEta, setUploadEta] = useState(0);
+  const [uploadPhase, setUploadPhase] = useState('');
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     const selectedFile = acceptedFiles[0];
-    if (selectedFile) {
-      setFile(selectedFile);
-      // Generate preview
+    if (!selectedFile) return;
+
+    if (selectedFile.size > MAX_FILE_SIZE) {
+      toast.error(`File too large (${formatBytes(selectedFile.size)}). Maximum is 5GB.`);
+      return;
+    }
+
+    if (selectedFile.size > 1024 * 1024 * 1024) {
+      toast.warning(`Large file (${formatBytes(selectedFile.size)}). Upload may take a while.`);
+    }
+
+    setFile(selectedFile);
+    
+    // Generate preview (only for images under 20MB)
+    if (selectedFile.type.startsWith('image/') && selectedFile.size < 20 * 1024 * 1024) {
       const reader = new FileReader();
-      reader.onload = () => {
-        setPreview(reader.result as string);
-      };
+      reader.onload = () => setPreview(reader.result as string);
       reader.readAsDataURL(selectedFile);
-      
-      // Auto-set title from filename if empty
-      if (!title) {
-        const nameWithoutExt = selectedFile.name.replace(/\.[^/.]+$/, '');
-        setTitle(nameWithoutExt.replace(/[_-]/g, ' '));
-      }
+    } else if (selectedFile.type.startsWith('video/')) {
+      setPreview('video');
+    } else {
+      setPreview('large-image');
+    }
+    
+    if (!title) {
+      const nameWithoutExt = selectedFile.name.replace(/\.[^/.]+$/, '');
+      setTitle(nameWithoutExt.replace(/[_-]/g, ' '));
     }
   }, [title]);
 
@@ -75,7 +116,7 @@ export const UploadWorkDialog = ({ open, onOpenChange, onSuccess }: UploadWorkDi
       'video/*': ['.mp4', '.mov', '.webm'],
     },
     maxFiles: 1,
-    maxSize: 100 * 1024 * 1024, // 100MB
+    maxSize: MAX_FILE_SIZE,
   });
 
   const resetForm = () => {
@@ -87,6 +128,10 @@ export const UploadWorkDialog = ({ open, onOpenChange, onSuccess }: UploadWorkDi
     setFile(null);
     setPreview(null);
     setUploadProgress(0);
+    setUploadSpeed(0);
+    setUploadEta(0);
+    setUploadPhase('');
+    abortControllerRef.current = null;
   };
 
   const getMediaDimensions = (file: File): Promise<{ width: number; height: number }> => {
@@ -98,6 +143,7 @@ export const UploadWorkDialog = ({ open, onOpenChange, onSuccess }: UploadWorkDi
           resolve({ width: video.videoWidth, height: video.videoHeight });
           URL.revokeObjectURL(video.src);
         };
+        video.onerror = () => resolve({ width: 0, height: 0 });
         video.src = URL.createObjectURL(file);
       } else {
         const img = document.createElement('img');
@@ -105,9 +151,142 @@ export const UploadWorkDialog = ({ open, onOpenChange, onSuccess }: UploadWorkDi
           resolve({ width: img.naturalWidth, height: img.naturalHeight });
           URL.revokeObjectURL(img.src);
         };
+        img.onerror = () => resolve({ width: 0, height: 0 });
         img.src = URL.createObjectURL(file);
       }
     });
+  };
+
+  const uploadWithXHR = (url: string, fileData: File, onProgress: (loaded: number) => void): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      abortControllerRef.current = { abort: () => xhr.abort() } as any;
+      
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress(e.loaded);
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) resolve();
+        else reject(new Error(`Upload failed with status ${xhr.status}`));
+      };
+      xhr.onerror = () => reject(new Error('Upload failed'));
+      xhr.onabort = () => reject(new Error('Upload cancelled'));
+      
+      xhr.open('PUT', url);
+      xhr.send(fileData);
+    });
+  };
+
+  const uploadChunkWithRetry = async (
+    url: string,
+    chunk: Blob,
+    retries = MAX_RETRIES
+  ): Promise<string> => {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const response = await fetch(url, { method: 'PUT', body: chunk });
+        if (!response.ok) throw new Error(`Part upload failed: ${response.status}`);
+        const etag = response.headers.get('ETag') || '';
+        return etag;
+      } catch (err) {
+        if (attempt === retries) throw err;
+        await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+      }
+    }
+    throw new Error('Exhausted retries');
+  };
+
+  const handleMultipartUpload = async (
+    file: File,
+    session: any,
+  ): Promise<{ s3Key: string; previewKey: string }> => {
+    setUploadPhase('Initiating multipart upload...');
+
+    // Initiate
+    const initResponse = await fetch(
+      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/manage-work?action=multipart-initiate`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ fileName: file.name, contentType: file.type }),
+      }
+    );
+    if (!initResponse.ok) throw new Error('Failed to initiate multipart upload');
+    const { uploadId, s3Key, previewKey } = await initResponse.json();
+
+    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+    const parts: { partNumber: number; etag: string }[] = [];
+    let uploadedBytes = 0;
+    const startTime = Date.now();
+
+    setUploadPhase(`Uploading ${totalChunks} chunks...`);
+
+    // Upload chunks with concurrency limit
+    const queue = Array.from({ length: totalChunks }, (_, i) => i + 1);
+    const inFlight: Promise<void>[] = [];
+
+    const uploadNextPart = async (partNumber: number) => {
+      const start = (partNumber - 1) * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, file.size);
+      const chunk = file.slice(start, end);
+
+      // Get signed URL for this part
+      const urlResponse = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/manage-work?action=multipart-part-url`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ s3Key, uploadId, partNumber }),
+        }
+      );
+      if (!urlResponse.ok) throw new Error(`Failed to get URL for part ${partNumber}`);
+      const { url } = await urlResponse.json();
+
+      const etag = await uploadChunkWithRetry(url, chunk);
+      parts.push({ partNumber, etag });
+
+      uploadedBytes += chunk.size;
+      const elapsed = (Date.now() - startTime) / 1000;
+      const speed = uploadedBytes / elapsed;
+      const remaining = (file.size - uploadedBytes) / speed;
+
+      setUploadProgress(Math.round((uploadedBytes / file.size) * 85) + 5);
+      setUploadSpeed(speed);
+      setUploadEta(remaining);
+    };
+
+    // Process queue with concurrency
+    let i = 0;
+    while (i < queue.length) {
+      const batch = queue.slice(i, i + MAX_CONCURRENT_PARTS);
+      await Promise.all(batch.map(pn => uploadNextPart(pn)));
+      i += MAX_CONCURRENT_PARTS;
+    }
+
+    // Complete multipart
+    setUploadPhase('Finalizing upload...');
+    parts.sort((a, b) => a.partNumber - b.partNumber);
+
+    const completeResponse = await fetch(
+      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/manage-work?action=multipart-complete`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ s3Key, uploadId, parts }),
+      }
+    );
+    if (!completeResponse.ok) throw new Error('Failed to complete multipart upload');
+
+    return { s3Key, previewKey };
   };
 
   const handleUpload = async () => {
@@ -117,7 +296,8 @@ export const UploadWorkDialog = ({ open, onOpenChange, onSuccess }: UploadWorkDi
     }
 
     setUploading(true);
-    setUploadProgress(10);
+    setUploadProgress(5);
+    const startTime = Date.now();
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -126,77 +306,63 @@ export const UploadWorkDialog = ({ open, onOpenChange, onSuccess }: UploadWorkDi
         return;
       }
 
-      // Get presigned URL
-      setUploadProgress(20);
-      const { data: urlData, error: urlError } = await supabase.functions.invoke('manage-work', {
-        body: {
-          fileName: file.name,
-          contentType: file.type,
-          fileSize: file.size,
-        },
-        headers: { 'action': 'upload-url' },
-      });
+      let s3Key: string;
+      let previewKey: string;
 
-      if (urlError) throw urlError;
+      if (file.size >= MULTIPART_THRESHOLD) {
+        // Multipart upload for large files
+        const result = await handleMultipartUpload(file, session);
+        s3Key = result.s3Key;
+        previewKey = result.previewKey;
+      } else {
+        // Single PUT upload with XHR progress
+        setUploadPhase('Getting upload URL...');
+        setUploadProgress(10);
 
-      // Manually call with query params since invoke doesn't support them well
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/manage-work?action=upload-url`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${session.access_token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            fileName: file.name,
-            contentType: file.type,
-            fileSize: file.size,
-          }),
+        const response = await fetch(
+          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/manage-work?action=upload-url`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${session.access_token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              fileName: file.name,
+              contentType: file.type,
+              fileSize: file.size,
+            }),
+          }
+        );
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || 'Failed to get upload URL');
         }
-      );
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to get upload URL');
-      }
+        const urlData = await response.json();
+        s3Key = urlData.s3Key;
+        previewKey = urlData.previewKey;
 
-      const { uploadUrl, previewUploadUrl, s3Key, previewKey } = await response.json();
-
-      // Upload main file to S3
-      setUploadProgress(40);
-      const uploadResponse = await fetch(uploadUrl, {
-        method: 'PUT',
-        body: file,
-        headers: {
-          'Content-Type': file.type,
-        },
-      });
-
-      if (!uploadResponse.ok) {
-        throw new Error('Failed to upload file to S3');
-      }
-
-      // Also upload to preview location (same file for now - could be resized in future)
-      setUploadProgress(55);
-      const previewUploadResponse = await fetch(previewUploadUrl, {
-        method: 'PUT',
-        body: file,
-        headers: {
-          'Content-Type': file.type,
-        },
-      });
-
-      if (!previewUploadResponse.ok) {
-        console.warn('Failed to upload preview, using main file');
+        setUploadPhase('Uploading file...');
+        await uploadWithXHR(urlData.uploadUrl, file, (loaded) => {
+          const elapsed = (Date.now() - startTime) / 1000;
+          const speed = loaded / elapsed;
+          const remaining = (file.size - loaded) / speed;
+          setUploadProgress(Math.round((loaded / file.size) * 80) + 10);
+          setUploadSpeed(speed);
+          setUploadEta(remaining);
+        });
       }
 
       // Get dimensions
-      setUploadProgress(70);
+      setUploadPhase('Processing...');
+      setUploadProgress(90);
       const dimensions = await getMediaDimensions(file);
 
-      // Create work record
-      setUploadProgress(85);
+      // Create work record (preview key same as original - no double upload)
+      setUploadPhase('Saving record...');
+      setUploadProgress(95);
       const createResponse = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/manage-work?action=create`,
         {
@@ -228,16 +394,35 @@ export const UploadWorkDialog = ({ open, onOpenChange, onSuccess }: UploadWorkDi
       }
 
       setUploadProgress(100);
+      setUploadPhase('Complete!');
       toast.success('Work uploaded successfully!');
       resetForm();
       onOpenChange(false);
       onSuccess();
     } catch (error) {
-      console.error('Upload error:', error);
-      toast.error(error instanceof Error ? error.message : 'Failed to upload work');
+      console.error('Upload error:', {
+        fileName: file.name,
+        fileSize: file.size,
+        mimeType: file.type,
+        error: error instanceof Error ? error.message : error,
+      });
+      if (error instanceof Error && error.message === 'Upload cancelled') {
+        toast.info('Upload cancelled');
+      } else {
+        toast.error(error instanceof Error ? error.message : 'Failed to upload work');
+      }
     } finally {
       setUploading(false);
     }
+  };
+
+  const handleCancel = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    setUploading(false);
+    setUploadProgress(0);
+    setUploadPhase('');
   };
 
   const isVideo = file?.type.startsWith('video/');
@@ -253,7 +438,7 @@ export const UploadWorkDialog = ({ open, onOpenChange, onSuccess }: UploadWorkDi
         <DialogHeader>
           <DialogTitle className="font-serif text-2xl">Upload New Work</DialogTitle>
           <DialogDescription>
-            Add a new photo or video to your portfolio
+            Add a new photo or video to your portfolio (up to 5GB)
           </DialogDescription>
         </DialogHeader>
 
@@ -270,25 +455,28 @@ export const UploadWorkDialog = ({ open, onOpenChange, onSuccess }: UploadWorkDi
             <input {...getInputProps()} />
             
             <AnimatePresence mode="wait">
-              {preview ? (
+              {file ? (
                 <motion.div
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.9 }}
-                  className="relative aspect-video max-h-64 mx-auto rounded-lg overflow-hidden"
+                  className="relative"
                 >
-                  {isVideo ? (
-                    <video
-                      src={preview}
-                      className="w-full h-full object-cover"
-                      controls
-                    />
+                  {preview && preview !== 'video' && preview !== 'large-image' ? (
+                    <div className="aspect-video max-h-64 mx-auto rounded-lg overflow-hidden">
+                      <img src={preview} alt="Preview" className="w-full h-full object-cover" />
+                    </div>
                   ) : (
-                    <img
-                      src={preview}
-                      alt="Preview"
-                      className="w-full h-full object-cover"
-                    />
+                    <div className="flex flex-col items-center py-4">
+                      {isVideo ? <Video className="h-12 w-12 text-muted-foreground mb-2" /> : <Image className="h-12 w-12 text-muted-foreground mb-2" />}
+                      <p className="text-foreground font-medium">{file.name}</p>
+                    </div>
+                  )}
+                  <p className="text-sm text-muted-foreground mt-2">{formatBytes(file.size)}</p>
+                  {file.size > 1024 * 1024 * 1024 && (
+                    <p className="text-xs text-yellow-500 flex items-center justify-center gap-1 mt-1">
+                      <AlertTriangle size={12} /> Large file — upload may take several minutes
+                    </p>
                   )}
                   <button
                     type="button"
@@ -314,7 +502,7 @@ export const UploadWorkDialog = ({ open, onOpenChange, onSuccess }: UploadWorkDi
                     {isDragActive ? 'Drop the file here' : 'Drag & drop a file here'}
                   </p>
                   <p className="text-sm text-muted-foreground">
-                    or click to browse (max 100MB)
+                    or click to browse (up to 5GB)
                   </p>
                   <div className="flex justify-center gap-4 mt-4">
                     <span className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -376,29 +564,16 @@ export const UploadWorkDialog = ({ open, onOpenChange, onSuccess }: UploadWorkDi
             <div className="flex items-center justify-between">
               <div>
                 <Label>Show on Home Page</Label>
-                <p className="text-sm text-muted-foreground">
-                  Display in the featured gallery on the home page
-                </p>
+                <p className="text-sm text-muted-foreground">Display in the featured gallery</p>
               </div>
-              <Switch
-                checked={showOnHome}
-                onCheckedChange={setShowOnHome}
-                disabled={uploading}
-              />
+              <Switch checked={showOnHome} onCheckedChange={setShowOnHome} disabled={uploading} />
             </div>
-            
             <div className="flex items-center justify-between">
               <div>
                 <Label>Show on Gallery Page</Label>
-                <p className="text-sm text-muted-foreground">
-                  Display in the full portfolio gallery
-                </p>
+                <p className="text-sm text-muted-foreground">Display in the full portfolio</p>
               </div>
-              <Switch
-                checked={showOnGallery}
-                onCheckedChange={setShowOnGallery}
-                disabled={uploading}
-              />
+              <Switch checked={showOnGallery} onCheckedChange={setShowOnGallery} disabled={uploading} />
             </div>
           </div>
 
@@ -409,13 +584,13 @@ export const UploadWorkDialog = ({ open, onOpenChange, onSuccess }: UploadWorkDi
               animate={{ opacity: 1, height: 'auto' }}
               className="space-y-2"
             >
-              <div className="flex items-center gap-2">
-                <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                <span className="text-sm">
-                  {uploadProgress < 40 ? 'Preparing upload...' :
-                   uploadProgress < 70 ? 'Uploading to storage...' :
-                   uploadProgress < 85 ? 'Processing...' :
-                   uploadProgress < 100 ? 'Saving...' : 'Complete!'}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                  <span className="text-sm">{uploadPhase}</span>
+                </div>
+                <span className="text-xs text-muted-foreground">
+                  {uploadProgress}%
                 </span>
               </div>
               <div className="h-2 bg-muted rounded-full overflow-hidden">
@@ -426,6 +601,12 @@ export const UploadWorkDialog = ({ open, onOpenChange, onSuccess }: UploadWorkDi
                   transition={{ duration: 0.3 }}
                 />
               </div>
+              {uploadSpeed > 0 && (
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>{formatSpeed(uploadSpeed)}</span>
+                  <span>~{formatTime(uploadEta)} remaining</span>
+                </div>
+              )}
             </motion.div>
           )}
 
@@ -433,10 +614,10 @@ export const UploadWorkDialog = ({ open, onOpenChange, onSuccess }: UploadWorkDi
           <div className="flex justify-end gap-3 pt-4">
             <Button
               variant="outline"
-              onClick={() => onOpenChange(false)}
-              disabled={uploading}
+              onClick={uploading ? handleCancel : () => onOpenChange(false)}
+              disabled={false}
             >
-              Cancel
+              {uploading ? 'Cancel Upload' : 'Cancel'}
             </Button>
             <Button
               onClick={handleUpload}

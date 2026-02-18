@@ -41,21 +41,25 @@ export const GalleryPreview = () => {
         if (error) throw error;
         setWorks(data || []);
 
-        // Fetch signed URLs for images
+        // Fetch signed URLs in parallel
         if (data && data.length > 0) {
+          const entries = await Promise.all(
+            data.map(async (work) => {
+              try {
+                const response = await fetch(
+                  `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/s3-signed-url?key=${encodeURIComponent(work.s3_preview_key || work.s3_key)}`
+                );
+                if (response.ok) {
+                  const { url } = await response.json();
+                  return [work.id, url] as const;
+                }
+              } catch { /* skip */ }
+              return null;
+            })
+          );
           const urls: Record<string, string> = {};
-          for (const work of data) {
-            try {
-              const response = await fetch(
-                `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/s3-signed-url?key=${encodeURIComponent(work.s3_preview_key || work.s3_key)}`
-              );
-              if (response.ok) {
-                const { url } = await response.json();
-                urls[work.id] = url;
-              }
-            } catch (err) {
-              console.error('Failed to get signed URL');
-            }
+          for (const entry of entries) {
+            if (entry) urls[entry[0]] = entry[1];
           }
           setImageUrls(urls);
         }
@@ -107,6 +111,7 @@ export const GalleryPreview = () => {
                   <motion.img
                     src={image.src}
                     alt={image.alt}
+                    loading="lazy"
                     className="w-full h-full object-cover"
                     initial={{ scale: 1 }}
                     whileInView={{ scale: 1.08 }}
