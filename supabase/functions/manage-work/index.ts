@@ -4,10 +4,13 @@ import { AwsClient } from "https://esm.sh/aws4fetch@1.0.20?target=deno";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, action',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, action, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
-// R2 only
+const cacheHeaders = {
+  'Cache-Control': 'public, max-age=3500',
+};
+
 const r2Endpoint = Deno.env.get('R2_ENDPOINT')!;
 const r2Bucket = Deno.env.get('R2_BUCKET_NAME')!;
 const r2Client = new AwsClient({
@@ -18,12 +21,6 @@ const r2Client = new AwsClient({
 });
 
 const baseUrl = `${r2Endpoint}/${r2Bucket}`;
-
-interface UploadRequest {
-  fileName: string;
-  contentType: string;
-  fileSize: number;
-}
 
 interface WorkData {
   title: string;
@@ -81,31 +78,31 @@ async function handler(req: Request): Promise<Response> {
     const url = new URL(req.url);
     const action = url.searchParams.get('action') || req.headers.get('action');
 
+    // ── Upload URL (single PUT for files < 50MB) ──
     if (action === 'upload-url') {
-      const { fileName, contentType } = await req.json() as UploadRequest;
+      const { fileName, contentType, fileSize } = await req.json();
       
+      if (fileSize > 5 * 1024 * 1024 * 1024) {
+        return new Response(JSON.stringify({ error: 'File size exceeds 5GB limit' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
       const timestamp = Date.now();
       const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
       const s3Key = `works/${timestamp}_${sanitizedFileName}`;
       const previewKey = `works/previews/${timestamp}_${sanitizedFileName}`;
 
+      // Sign only host header per R2 constraint
       const objectUrl = `${baseUrl}/${s3Key}`;
       const signedReq = await r2Client.sign(objectUrl, {
         method: 'PUT',
-        headers: { 'Content-Type': contentType },
-        aws: { signQuery: true },
-      });
-
-      const previewObjectUrl = `${baseUrl}/${previewKey}`;
-      const previewSignedReq = await r2Client.sign(previewObjectUrl, {
-        method: 'PUT',
-        headers: { 'Content-Type': contentType },
+        headers: { host: new URL(objectUrl).host },
         aws: { signQuery: true },
       });
 
       return new Response(JSON.stringify({
         uploadUrl: signedReq.url,
-        previewUploadUrl: previewSignedReq.url,
         s3Key,
         previewKey,
         bucket: r2Bucket,
@@ -116,6 +113,117 @@ async function handler(req: Request): Promise<Response> {
       });
     }
 
+    // ── Multipart: Initiate ──
+    if (action === 'multipart-initiate') {
+      const { fileName, contentType } = await req.json();
+      
+      const timestamp = Date.now();
+      const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
+      const s3Key = `works/${timestamp}_${sanitizedFileName}`;
+      const previewKey = `works/previews/${timestamp}_${sanitizedFileName}`;
+
+      const initiateUrl = `${baseUrl}/${s3Key}?uploads`;
+      const signedReq = await r2Client.sign(initiateUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': contentType,
+        },
+      });
+
+      const response = await fetch(signedReq.url, {
+        method: 'POST',
+        headers: signedReq.headers,
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        console.error('Multipart initiate failed:', text);
+        return new Response(JSON.stringify({ error: 'Failed to initiate multipart upload' }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      const xml = await response.text();
+      const uploadIdMatch = xml.match(/<UploadId>(.+?)<\/UploadId>/);
+      const uploadId = uploadIdMatch?.[1];
+
+      if (!uploadId) {
+        return new Response(JSON.stringify({ error: 'Failed to get upload ID' }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      return new Response(JSON.stringify({ uploadId, s3Key, previewKey }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // ── Multipart: Get Part URL ──
+    if (action === 'multipart-part-url') {
+      const { s3Key, uploadId, partNumber } = await req.json();
+      
+      const partUrl = `${baseUrl}/${s3Key}?partNumber=${partNumber}&uploadId=${encodeURIComponent(uploadId)}`;
+      const signedReq = await r2Client.sign(partUrl, {
+        method: 'PUT',
+        headers: { host: new URL(partUrl).host },
+        aws: { signQuery: true },
+      });
+
+      return new Response(JSON.stringify({ url: signedReq.url }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // ── Multipart: Complete ──
+    if (action === 'multipart-complete') {
+      const { s3Key, uploadId, parts } = await req.json();
+      
+      let xmlParts = '<CompleteMultipartUpload>';
+      for (const part of parts) {
+        xmlParts += `<Part><PartNumber>${part.partNumber}</PartNumber><ETag>${part.etag}</ETag></Part>`;
+      }
+      xmlParts += '</CompleteMultipartUpload>';
+
+      const completeUrl = `${baseUrl}/${s3Key}?uploadId=${encodeURIComponent(uploadId)}`;
+      const signedReq = await r2Client.sign(completeUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/xml' },
+        body: xmlParts,
+      });
+
+      const response = await fetch(signedReq.url, {
+        method: 'POST',
+        headers: signedReq.headers,
+        body: xmlParts,
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        console.error('Multipart complete failed:', text);
+        return new Response(JSON.stringify({ error: 'Failed to complete multipart upload' }), {
+          status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      return new Response(JSON.stringify({ success: true }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // ── Multipart: Abort ──
+    if (action === 'multipart-abort') {
+      const { s3Key, uploadId } = await req.json();
+      
+      const abortUrl = `${baseUrl}/${s3Key}?uploadId=${encodeURIComponent(uploadId)}`;
+      const signedReq = await r2Client.sign(abortUrl, { method: 'DELETE' });
+      await fetch(signedReq.url, { method: 'DELETE', headers: signedReq.headers });
+
+      return new Response(JSON.stringify({ success: true }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // ── Create work record ──
     if (action === 'create') {
       const workData = await req.json() as WorkData;
       
@@ -151,6 +259,7 @@ async function handler(req: Request): Promise<Response> {
       });
     }
 
+    // ── Update work ──
     if (action === 'update') {
       const workId = url.searchParams.get('id');
       if (!workId) {
@@ -179,6 +288,7 @@ async function handler(req: Request): Promise<Response> {
       });
     }
 
+    // ── Delete work ──
     if (action === 'delete') {
       const workId = url.searchParams.get('id');
       if (!workId) {
@@ -229,6 +339,7 @@ async function handler(req: Request): Promise<Response> {
       });
     }
 
+    // ── Signed URL (with cache headers) ──
     if (action === 'signed-url') {
       const s3Key = url.searchParams.get('key');
       if (!s3Key) {
@@ -244,7 +355,7 @@ async function handler(req: Request): Promise<Response> {
       });
 
       return new Response(JSON.stringify({ url: signedReq.url }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...corsHeaders, ...cacheHeaders, 'Content-Type': 'application/json' },
       });
     }
 

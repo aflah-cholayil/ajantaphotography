@@ -259,7 +259,7 @@ const handler = async (req: Request): Promise<Response> => {
       JSON.stringify({ url: presignedUrl, expiresIn }),
       {
         status: 200,
-        headers: { "Content-Type": "application/json", ...corsHeaders },
+        headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=3500", ...corsHeaders },
       }
     );
   } catch (error: unknown) {
