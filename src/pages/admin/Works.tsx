@@ -96,7 +96,7 @@ const Works = () => {
           data.slice(0, 20).map(async (work) => {
             try {
               const response = await fetch(
-                `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/manage-work?action=signed-url&key=${encodeURIComponent(work.s3_preview_key || work.s3_key)}`,
+                `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/manage-work?action=signed-url&key=${encodeURIComponent(work.s3_key)}`,
                 {
                   headers: {
                     'Authorization': `Bearer ${session.data.session!.access_token}`,
@@ -331,6 +331,7 @@ const Works = () => {
                         src={imageUrls[work.id]}
                         alt={work.title}
                         className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                        onError={(e) => { e.currentTarget.style.display = 'none'; }}
                       />
                     )
                   ) : (

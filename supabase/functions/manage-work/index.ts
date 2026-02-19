@@ -91,7 +91,7 @@ async function handler(req: Request): Promise<Response> {
       const timestamp = Date.now();
       const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
       const s3Key = `works/${timestamp}_${sanitizedFileName}`;
-      const previewKey = `works/previews/${timestamp}_${sanitizedFileName}`;
+      const previewKey = s3Key;
 
       // Sign only host header per R2 constraint
       const objectUrl = `${baseUrl}/${s3Key}`;
@@ -314,7 +314,7 @@ async function handler(req: Request): Promise<Response> {
         const deleteReq = await r2Client.sign(deleteUrl, { method: 'DELETE' });
         await fetch(deleteReq.url, { method: 'DELETE', headers: deleteReq.headers });
 
-        if (work.s3_preview_key) {
+        if (work.s3_preview_key && work.s3_preview_key !== work.s3_key) {
           const previewDeleteUrl = `${baseUrl}/${work.s3_preview_key}`;
           const previewDeleteReq = await r2Client.sign(previewDeleteUrl, { method: 'DELETE' });
           await fetch(previewDeleteReq.url, { method: 'DELETE', headers: previewDeleteReq.headers });
