@@ -1,92 +1,87 @@
 
 
-# Works / Portfolio Performance and Upload Optimization
+# Fix Broken Works/Portfolio Images
 
-## Current State Analysis
+## Root Cause
 
-After reviewing the codebase, here is what exists today:
+The upload flow generates two paths -- `s3_key` (e.g., `works/1771427030221_DSC05471_1.jpg`) and `s3_preview_key` (e.g., `works/previews/1771427030221_DSC05471_1.jpg`) -- but **only uploads the file to `s3_key`**. The preview path is a phantom entry in the database with no actual file in R2.
 
-**Uploads (Works):**
-- Already uses presigned URLs for direct-to-R2 upload (no edge proxy for file data)
-- Limited to 100MB max file size
-- No multipart upload support for works (only album media has it)
-- Uploads both original AND preview as the same full-size file
-- Single file upload only (no batch)
+When the gallery components try to load images using `s3_preview_key` first, R2 returns an XML error response (object not found), and Chrome blocks it with `net::ERR_BLOCKED_BY_ORB`. This causes images to appear broken.
 
-**Gallery/Landing Page:**
-- Loads ALL works at once (no pagination)
-- Fetches signed URLs sequentially one-by-one (waterfall)
-- No lazy loading -- all images load immediately
-- No thumbnail generation -- preview key stores the same full-resolution file
-- No CDN cache headers
+## Fix Plan
 
-**Album Upload Engine (existing):**
-- Already has multipart, retry, concurrency, speed indicators
-- Works well for album media but is not used for portfolio/works uploads
+### 1. Fix Upload: Stop Creating Phantom Preview Keys
 
----
+**File: `supabase/functions/manage-work/index.ts`**
 
-## Changes Overview
+In the `upload-url` action, set `previewKey` equal to `s3Key` (instead of a separate `works/previews/` path). Same for `multipart-initiate`. Since we are not generating actual thumbnails, the preview should point to the same file as the original.
 
-### Phase 1: Upload Optimization
+### 2. Fix Existing Data: Update DB Records
+
+Run a migration to set `s3_preview_key = s3_key` for all existing works where the preview key points to a non-existent file path under `works/previews/`.
+
+```sql
+UPDATE works
+SET s3_preview_key = s3_key
+WHERE s3_preview_key LIKE 'works/previews/%';
+```
+
+### 3. Add Fallback Image Handling
+
+**File: `src/pages/admin/Works.tsx`**
+
+Add `onError` handler to `<img>` tags so broken images show a placeholder icon instead of a broken image:
+
+```tsx
+<img
+  src={imageUrls[work.id]}
+  alt={work.title}
+  onError={(e) => {
+    e.currentTarget.style.display = 'none';
+  }}
+/>
+```
+
+**File: `src/components/home/GalleryPreview.tsx`**
+
+Add `onError` fallback to use the static fallback images when R2 images fail.
+
+**File: `src/pages/Gallery.tsx`**
+
+Add `onError` handler to hide broken images gracefully.
+
+### 4. Use `s3_key` as Primary Fetch Key
+
+**File: `src/components/home/GalleryPreview.tsx`**
+**File: `src/pages/Gallery.tsx`**
+**File: `src/pages/admin/Works.tsx`**
+
+Change signed URL fetch to prefer `s3_key` over `s3_preview_key` as a safety measure, since the original file always exists:
+
+```tsx
+// Before (broken):
+work.s3_preview_key || work.s3_key
+
+// After (safe):
+work.s3_key
+```
+
+Once actual thumbnail generation is implemented in the future, this can switch back to preferring thumbnails.
+
+## Files Changed
 
 | File | Change |
 |------|--------|
-| `src/components/admin/UploadWorkDialog.tsx` | Increase max file size to 5GB, add multipart support for large files, add file size validation with warnings, add real upload progress via XHR, support batch uploads |
-| `supabase/functions/manage-work/index.ts` | Add multipart initiate/part-url/complete/abort actions for works, fix presigned URL signing to only sign host header (matching R2 constraint) |
+| `supabase/functions/manage-work/index.ts` | Set `previewKey = s3Key` in upload-url and multipart-initiate actions |
+| `src/pages/admin/Works.tsx` | Use `s3_key` for signed URL fetch, add `onError` fallback |
+| `src/components/home/GalleryPreview.tsx` | Use `s3_key` for signed URL fetch, add `onError` fallback |
+| `src/pages/Gallery.tsx` | Use `s3_key` for signed URL fetch, add `onError` fallback |
+| Database migration | Update existing `s3_preview_key` to match `s3_key` |
 
-**Details:**
-- Max file size raised from 100MB to 5GB
-- Files under 50MB: single PUT with XHR progress tracking
-- Files 50MB-5GB: multipart upload (10MB chunks, 5 concurrent parts, 3 retries per chunk)
-- Show upload speed (MB/s) and estimated time remaining
-- Warning toast for files over 1GB, error for files over 5GB
-- Fix presigned URL signing: only sign `host` header (per R2 constraint memory), removing `Content-Type` from signature headers
-- Stop uploading the same full file to both original and preview paths (wasteful)
+## What This Does NOT Change
 
-### Phase 2: Gallery and Landing Page Performance
-
-| File | Change |
-|------|--------|
-| `src/pages/Gallery.tsx` | Add pagination (12 items per page) with infinite scroll using IntersectionObserver, lazy load images with `loading="lazy"`, batch fetch signed URLs (parallel with Promise.all), load full-res only in lightbox |
-| `src/components/home/GalleryPreview.tsx` | Add `loading="lazy"` to images, batch fetch signed URLs in parallel |
-| `src/pages/admin/Works.tsx` | Add pagination (20 items per page) with "Load More" button, batch fetch signed URLs in parallel instead of sequential loop |
-
-**Details:**
-- Gallery page loads 12 works initially, loads 12 more on scroll (IntersectionObserver)
-- Uses `limit` and `offset` in Supabase queries
-- All signed URL fetches happen in parallel via `Promise.all` instead of sequential `for` loop
-- Images use `loading="lazy"` attribute for native browser lazy loading
-- Lightbox fetches full-resolution signed URL (original s3_key) only when clicked; gallery grid uses preview key
-
-### Phase 3: Signed URL Caching
-
-| File | Change |
-|------|--------|
-| `supabase/functions/s3-signed-url/index.ts` | Add `Cache-Control: public, max-age=3500` header to signed URL responses (URLs expire in 1hr, cache for ~58min) |
-| `supabase/functions/manage-work/index.ts` | Add same cache headers to signed-url action response |
-
-**Details:**
-- Signed URL edge function responses include `Cache-Control` headers so browsers and CDN cache them
-- This avoids re-fetching the same signed URL on every page visit within the cache window
-- R2 signed URLs typically have a 1-hour expiry, so we cache for slightly less (3500s)
-
----
-
-## What Will NOT Change
-
-- Existing album upload system (UploadEngine/UploadManager) stays untouched
-- Existing works data in database remains intact
-- R2 bucket configuration unchanged
-- Storage structure (`works/` and `works/previews/` prefixes) preserved
-- All existing edge functions continue working
-
-## Expected Results
-
-- Works upload supports files up to 5GB with chunk progress
-- Gallery page loads in under 1 second (12 items vs all items)
-- Home page gallery preview loads 6 items with parallel URL fetching
-- Admin works page paginates with parallel URL fetching
-- Signed URLs cached by browser, reducing repeated edge function calls
-- Real upload progress bar with speed and ETA for large files
+- Existing R2 files remain untouched
+- Upload flow continues to work
+- Album media system unchanged
+- No R2 configuration changes needed
 
