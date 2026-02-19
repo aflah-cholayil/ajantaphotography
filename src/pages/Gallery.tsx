@@ -34,7 +34,7 @@ async function fetchSignedUrls(works: Work[]): Promise<Record<string, string>> {
   const promises = works.map(async (work) => {
     try {
       const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/s3-signed-url?key=${encodeURIComponent(work.s3_preview_key || work.s3_key)}`
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/s3-signed-url?key=${encodeURIComponent(work.s3_key)}`
       );
       if (response.ok) {
         const { url } = await response.json();
@@ -251,6 +251,7 @@ const Gallery = () => {
                             alt={image.alt}
                             className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
                             loading="lazy"
+                            onError={(e) => { e.currentTarget.style.display = 'none'; }}
                           />
                         )}
                       </div>

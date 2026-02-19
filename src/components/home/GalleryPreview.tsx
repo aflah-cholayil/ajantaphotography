@@ -47,7 +47,7 @@ export const GalleryPreview = () => {
             data.map(async (work) => {
               try {
                 const response = await fetch(
-                  `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/s3-signed-url?key=${encodeURIComponent(work.s3_preview_key || work.s3_key)}`
+                  `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/s3-signed-url?key=${encodeURIComponent(work.s3_key)}`
                 );
                 if (response.ok) {
                   const { url } = await response.json();
@@ -108,11 +108,12 @@ export const GalleryPreview = () => {
                 }`}
               >
                 <div className="aspect-[4/5] md:h-full overflow-hidden">
-                  <motion.img
-                    src={image.src}
-                    alt={image.alt}
-                    loading="lazy"
-                    className="w-full h-full object-cover"
+                    <motion.img
+                      src={image.src}
+                      alt={image.alt}
+                      loading="lazy"
+                      className="w-full h-full object-cover"
+                      onError={(e) => { e.currentTarget.style.display = 'none'; }}
                     initial={{ scale: 1 }}
                     whileInView={{ scale: 1.08 }}
                     viewport={{ once: true }}
