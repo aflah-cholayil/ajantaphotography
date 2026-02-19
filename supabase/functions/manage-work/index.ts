@@ -120,7 +120,7 @@ async function handler(req: Request): Promise<Response> {
       const timestamp = Date.now();
       const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
       const s3Key = `works/${timestamp}_${sanitizedFileName}`;
-      const previewKey = `works/previews/${timestamp}_${sanitizedFileName}`;
+      const previewKey = s3Key;
 
       const initiateUrl = `${baseUrl}/${s3Key}?uploads`;
       const signedReq = await r2Client.sign(initiateUrl, {
