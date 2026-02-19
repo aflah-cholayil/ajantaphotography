@@ -1,87 +1,104 @@
 
 
-# Fix Broken Works/Portfolio Images
+# Services Management System (Admin + Frontend)
 
-## Root Cause
+## Overview
 
-The upload flow generates two paths -- `s3_key` (e.g., `works/1771427030221_DSC05471_1.jpg`) and `s3_preview_key` (e.g., `works/previews/1771427030221_DSC05471_1.jpg`) -- but **only uploads the file to `s3_key`**. The preview path is a phantom entry in the database with no actual file in R2.
+Build a dynamic services management system replacing the current hardcoded services page. Admins can create, edit, delete, reorder, and toggle services. The public `/services` page fetches from the database.
 
-When the gallery components try to load images using `s3_preview_key` first, R2 returns an XML error response (object not found), and Chrome blocks it with `net::ERR_BLOCKED_BY_ORB`. This causes images to appear broken.
+## Database
 
-## Fix Plan
+### Table: `services`
 
-### 1. Fix Upload: Stop Creating Phantom Preview Keys
+| Column | Type | Default |
+|--------|------|---------|
+| id | uuid | gen_random_uuid() |
+| title | text | NOT NULL |
+| slug | text | NOT NULL, UNIQUE |
+| short_description | text | NOT NULL |
+| full_description | text | nullable |
+| icon_name | text | default 'Camera' |
+| category | text | default 'wedding' |
+| price | text | nullable (e.g. "From $3,500") |
+| show_price | boolean | true |
+| show_book_button | boolean | false |
+| book_button_text | text | 'Book Now' |
+| estimated_delivery | text | nullable |
+| is_active | boolean | true |
+| display_order | integer | 0 |
+| created_at | timestamptz | now() |
+| updated_at | timestamptz | now() |
 
-**File: `supabase/functions/manage-work/index.ts`**
+### Table: `service_features`
 
-In the `upload-url` action, set `previewKey` equal to `s3Key` (instead of a separate `works/previews/` path). Same for `multipart-initiate`. Since we are not generating actual thumbnails, the preview should point to the same file as the original.
+| Column | Type | Default |
+|--------|------|---------|
+| id | uuid | gen_random_uuid() |
+| service_id | uuid | FK -> services.id ON DELETE CASCADE |
+| feature_text | text | NOT NULL |
+| display_order | integer | 0 |
 
-### 2. Fix Existing Data: Update DB Records
+### RLS Policies
 
-Run a migration to set `s3_preview_key = s3_key` for all existing works where the preview key points to a non-existent file path under `works/previews/`.
+- **Public SELECT** on both tables: `is_active = true` (services) / join to active service (features)
+- **ALL for staff**: using `is_staff(auth.uid())`
 
-```sql
-UPDATE works
-SET s3_preview_key = s3_key
-WHERE s3_preview_key LIKE 'works/previews/%';
-```
+### Seed Data
 
-### 3. Add Fallback Image Handling
+Insert the 6 existing hardcoded services into the new tables so nothing is lost.
 
-**File: `src/pages/admin/Works.tsx`**
+## Files to Create/Modify
 
-Add `onError` handler to `<img>` tags so broken images show a placeholder icon instead of a broken image:
+### New Files
 
-```tsx
-<img
-  src={imageUrls[work.id]}
-  alt={work.title}
-  onError={(e) => {
-    e.currentTarget.style.display = 'none';
-  }}
-/>
-```
+| File | Purpose |
+|------|---------|
+| `src/pages/admin/ServicesManagement.tsx` | Admin page listing all services with edit/delete/reorder/toggle |
+| `src/components/admin/ServiceFormDialog.tsx` | Create/Edit dialog with all form fields + feature points management |
 
-**File: `src/components/home/GalleryPreview.tsx`**
-
-Add `onError` fallback to use the static fallback images when R2 images fail.
-
-**File: `src/pages/Gallery.tsx`**
-
-Add `onError` handler to hide broken images gracefully.
-
-### 4. Use `s3_key` as Primary Fetch Key
-
-**File: `src/components/home/GalleryPreview.tsx`**
-**File: `src/pages/Gallery.tsx`**
-**File: `src/pages/admin/Works.tsx`**
-
-Change signed URL fetch to prefer `s3_key` over `s3_preview_key` as a safety measure, since the original file always exists:
-
-```tsx
-// Before (broken):
-work.s3_preview_key || work.s3_key
-
-// After (safe):
-work.s3_key
-```
-
-Once actual thumbnail generation is implemented in the future, this can switch back to preferring thumbnails.
-
-## Files Changed
+### Modified Files
 
 | File | Change |
 |------|--------|
-| `supabase/functions/manage-work/index.ts` | Set `previewKey = s3Key` in upload-url and multipart-initiate actions |
-| `src/pages/admin/Works.tsx` | Use `s3_key` for signed URL fetch, add `onError` fallback |
-| `src/components/home/GalleryPreview.tsx` | Use `s3_key` for signed URL fetch, add `onError` fallback |
-| `src/pages/Gallery.tsx` | Use `s3_key` for signed URL fetch, add `onError` fallback |
-| Database migration | Update existing `s3_preview_key` to match `s3_key` |
+| `src/components/admin/AdminLayout.tsx` | Add "Services" nav item with `Briefcase` icon |
+| `src/App.tsx` | Add route `/admin/services` |
+| `src/pages/Services.tsx` | Replace hardcoded array with database fetch; render dynamically with price/book button/contact logic |
 
-## What This Does NOT Change
+## Admin Page (`/admin/services`)
 
-- Existing R2 files remain untouched
-- Upload flow continues to work
-- Album media system unchanged
-- No R2 configuration changes needed
+- Card grid showing all services (active and inactive)
+- Each card: icon, title, category badge, price (if shown), active/inactive badge
+- Actions: Edit, Delete, Toggle Active, Move Up/Down (reorder)
+- "Create New Service" button opens form dialog
+- Delete with confirmation dialog
+
+## Service Form Dialog
+
+- Title input (auto-generates slug on create)
+- Short Description textarea
+- Full Description textarea (optional)
+- Icon selector dropdown (Camera, Video, Heart, Star, Users, Clock, Briefcase, etc.)
+- Category selector (Wedding, Corporate, Fashion, Event, Other)
+- Estimated Delivery input (optional)
+- Toggle: Show Price -- if on, show Price input
+- Toggle: Show Book Button -- if on, show Book Button Text input
+- Toggle: Is Active
+- Feature Points section: list of text inputs with add/remove/reorder
+
+## Frontend Services Page Logic
+
+```text
+if show_price = true  --> display price
+if show_book_button = true  --> display styled button linking to /booking?service={slug}
+if both false  --> display "Contact for Pricing" linking to /contact
+if both true  --> display both price and button
+```
+
+## Technical Details
+
+- Use `supabase.from('services')` and `supabase.from('service_features')` directly (no edge function needed -- RLS handles access)
+- Slug auto-generated from title: lowercase, replace spaces with hyphens, remove special chars
+- Icon rendered dynamically using a map of lucide icon names to components
+- `updated_at` trigger reused from existing `update_updated_at_column()` function
+- Service features fetched with a single query joining on service_id
 
