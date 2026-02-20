@@ -1,104 +1,117 @@
 
+# Fix Album Item Count Capped at 1000
 
-# Services Management System (Admin + Frontend)
+## Root Cause
 
-## Overview
+The Albums list page (`src/pages/admin/Albums.tsx`) fetches album data using a Supabase relational sub-query:
 
-Build a dynamic services management system replacing the current hardcoded services page. Admins can create, edit, delete, reorder, and toggle services. The public `/services` page fetches from the database.
+```ts
+.select(`
+  id,
+  title,
+  ...
+  media(id)   // <-- THIS is the problem
+`)
+```
 
-## Database
+This `media(id)` sub-query fetches the actual media rows to count them. Supabase hard-caps all queries at **1000 rows** by default, so albums with more than 1000 items will always show "1000 items" instead of the real number. This is purely a display/counting bug on the Albums list page — the actual media stored in the database is complete and intact.
 
-### Table: `services`
+## What Is Already Working Correctly
 
-| Column | Type | Default |
-|--------|------|---------|
-| id | uuid | gen_random_uuid() |
-| title | text | NOT NULL |
-| slug | text | NOT NULL, UNIQUE |
-| short_description | text | NOT NULL |
-| full_description | text | nullable |
-| icon_name | text | default 'Camera' |
-| category | text | default 'wedding' |
-| price | text | nullable (e.g. "From $3,500") |
-| show_price | boolean | true |
-| show_book_button | boolean | false |
-| book_button_text | text | 'Book Now' |
-| estimated_delivery | text | nullable |
-| is_active | boolean | true |
-| display_order | integer | 0 |
-| created_at | timestamptz | now() |
-| updated_at | timestamptz | now() |
+- `AlbumDetail.tsx` (the page you see when you open a single album) already uses the correct approach: it calls `{ count: 'exact', head: true }` to get the real count without fetching rows, and then uses `PAGE_SIZE = 200` with pagination for loading media itself.
+- `client/AlbumView.tsx` also uses `{ count: 'exact', head: true }` correctly.
 
-### Table: `service_features`
+Only the **Albums list page** (`Albums.tsx`) has the broken counting pattern.
 
-| Column | Type | Default |
-|--------|------|---------|
-| id | uuid | gen_random_uuid() |
-| service_id | uuid | FK -> services.id ON DELETE CASCADE |
-| feature_text | text | NOT NULL |
-| display_order | integer | 0 |
+## Fix
 
-### RLS Policies
+### 1. Remove `media(id)` from the albums list query
 
-- **Public SELECT** on both tables: `is_active = true` (services) / join to active service (features)
-- **ALL for staff**: using `is_staff(auth.uid())`
+Stop fetching media rows just for counting. Replace the sub-select with nothing — we will load counts separately.
 
-### Seed Data
+### 2. Fetch accurate counts using a separate `COUNT` query
 
-Insert the 6 existing hardcoded services into the new tables so nothing is lost.
+After fetching albums, run a single bulk query to get exact media counts per album:
 
-## Files to Create/Modify
+```ts
+const { data: countData } = await supabase
+  .from('media')
+  .select('album_id', { count: 'exact' })
+  .in('album_id', albumIds)
+  // grouped effectively via client-side reduce
+```
 
-### New Files
+Actually the cleanest approach is to use `{ count: 'exact', head: false }` and select only `album_id`, then group in JS — or better, use a single Supabase RPC call that returns counts per album. The simplest and cleanest solution that avoids N+1 queries:
 
-| File | Purpose |
-|------|---------|
-| `src/pages/admin/ServicesManagement.tsx` | Admin page listing all services with edit/delete/reorder/toggle |
-| `src/components/admin/ServiceFormDialog.tsx` | Create/Edit dialog with all form fields + feature points management |
+```ts
+// One query to get all counts: select album_id and group in JS
+const { data: mediaCounts } = await supabase
+  .from('media')
+  .select('album_id')
+  .in('album_id', albumIds);
 
-### Modified Files
+// Build a map: { [albumId]: count }
+const countMap = mediaCounts?.reduce((acc, row) => {
+  acc[row.album_id] = (acc[row.album_id] || 0) + 1;
+  return acc;
+}, {} as Record<string, number>);
+```
+
+**Problem**: This still hits the 1000-row Supabase limit across all albums combined.
+
+**Better approach** — use a database function (RPC) to return counts per album in one call:
+
+```sql
+CREATE OR REPLACE FUNCTION get_album_media_counts(album_ids uuid[])
+RETURNS TABLE(album_id uuid, media_count bigint)
+LANGUAGE sql SECURITY DEFINER AS $$
+  SELECT album_id, COUNT(*) as media_count
+  FROM media
+  WHERE album_id = ANY(album_ids)
+  GROUP BY album_id;
+$$;
+```
+
+Then call it from the frontend:
+```ts
+const { data: counts } = await supabase.rpc('get_album_media_counts', {
+  album_ids: albumIds
+});
+```
+
+This returns accurate counts for all albums in **one database call** without hitting any row limit.
+
+### 3. Update the `Album` interface
+
+Change `media: { id: string }[]` to just store the count:
+
+```ts
+interface Album {
+  ...
+  mediaCount: number; // replaces media: { id: string }[]
+}
+```
+
+### 4. Update all references to `album.media.length`
+
+- Line 361: `map[key].totalMedia += album.media.length` → `album.mediaCount`
+- Line 577: `{album.media.length} item{...}` → `{album.mediaCount} item{...}`
+- Line 540: `{group.totalMedia} Media` already works since totalMedia is computed
+
+## Files Changed
 
 | File | Change |
 |------|--------|
-| `src/components/admin/AdminLayout.tsx` | Add "Services" nav item with `Briefcase` icon |
-| `src/App.tsx` | Add route `/admin/services` |
-| `src/pages/Services.tsx` | Replace hardcoded array with database fetch; render dynamically with price/book button/contact logic |
+| Database migration | Add `get_album_media_counts(uuid[])` function with RLS-safe `SECURITY DEFINER` |
+| `src/pages/admin/Albums.tsx` | Remove `media(id)` sub-query, add RPC call for counts, update interface and all `.media.length` references |
 
-## Admin Page (`/admin/services`)
+## What This Does NOT Change
 
-- Card grid showing all services (active and inactive)
-- Each card: icon, title, category badge, price (if shown), active/inactive badge
-- Actions: Edit, Delete, Toggle Active, Move Up/Down (reorder)
-- "Create New Service" button opens form dialog
-- Delete with confirmation dialog
+- The `AlbumDetail.tsx` page (already works correctly with pagination)
+- The client album view (already works correctly)
+- Actual media storage or upload logic
+- Any data in the database
 
-## Service Form Dialog
+## Result
 
-- Title input (auto-generates slug on create)
-- Short Description textarea
-- Full Description textarea (optional)
-- Icon selector dropdown (Camera, Video, Heart, Star, Users, Clock, Briefcase, etc.)
-- Category selector (Wedding, Corporate, Fashion, Event, Other)
-- Estimated Delivery input (optional)
-- Toggle: Show Price -- if on, show Price input
-- Toggle: Show Book Button -- if on, show Book Button Text input
-- Toggle: Is Active
-- Feature Points section: list of text inputs with add/remove/reorder
-
-## Frontend Services Page Logic
-
-```text
-if show_price = true  --> display price
-if show_book_button = true  --> display styled button linking to /booking?service={slug}
-if both false  --> display "Contact for Pricing" linking to /contact
-if both true  --> display both price and button
-```
-
-## Technical Details
-
-- Use `supabase.from('services')` and `supabase.from('service_features')` directly (no edge function needed -- RLS handles access)
-- Slug auto-generated from title: lowercase, replace spaces with hyphens, remove special chars
-- Icon rendered dynamically using a map of lucide icon names to components
-- `updated_at` trigger reused from existing `update_updated_at_column()` function
-- Service features fetched with a single query joining on service_id
-
+Albums with 1000+ items (like the "WEDDING" album shown in the screenshot) will now display the true count — whether that's 1,200, 2,500, or 3,000+ — accurately reflected in the admin albums list.
