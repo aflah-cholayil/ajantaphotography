@@ -14,7 +14,8 @@ import {
   Menu,
   X,
   ExternalLink,
-  HardDrive
+  HardDrive,
+  Briefcase
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
@@ -29,6 +30,7 @@ const navItems = [
   { path: '/admin/clients', label: 'Clients', icon: Users },
   { path: '/admin/albums', label: 'Albums', icon: Image },
   { path: '/admin/works', label: 'Works / Portfolio', icon: Image },
+  { path: '/admin/services', label: 'Services', icon: Briefcase },
   { path: '/admin/bookings', label: 'Bookings', icon: Calendar },
   { path: '/admin/messages', label: 'Messages', icon: MessageSquare },
   { path: '/admin/users', label: 'Admin Users', icon: UserCog, ownerOnly: true },
