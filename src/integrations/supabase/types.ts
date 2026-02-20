@@ -709,6 +709,92 @@ export type Database = {
         }
         Relationships: []
       }
+      service_features: {
+        Row: {
+          display_order: number
+          feature_text: string
+          id: string
+          service_id: string
+        }
+        Insert: {
+          display_order?: number
+          feature_text: string
+          id?: string
+          service_id: string
+        }
+        Update: {
+          display_order?: number
+          feature_text?: string
+          id?: string
+          service_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "service_features_service_id_fkey"
+            columns: ["service_id"]
+            isOneToOne: false
+            referencedRelation: "services"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      services: {
+        Row: {
+          book_button_text: string
+          category: string
+          created_at: string
+          display_order: number
+          estimated_delivery: string | null
+          full_description: string | null
+          icon_name: string
+          id: string
+          is_active: boolean
+          price: string | null
+          short_description: string
+          show_book_button: boolean
+          show_price: boolean
+          slug: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          book_button_text?: string
+          category?: string
+          created_at?: string
+          display_order?: number
+          estimated_delivery?: string | null
+          full_description?: string | null
+          icon_name?: string
+          id?: string
+          is_active?: boolean
+          price?: string | null
+          short_description: string
+          show_book_button?: boolean
+          show_price?: boolean
+          slug: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          book_button_text?: string
+          category?: string
+          created_at?: string
+          display_order?: number
+          estimated_delivery?: string | null
+          full_description?: string | null
+          icon_name?: string
+          id?: string
+          is_active?: boolean
+          price?: string | null
+          short_description?: string
+          show_book_button?: boolean
+          show_price?: boolean
+          slug?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       share_links: {
         Row: {
           album_id: string
