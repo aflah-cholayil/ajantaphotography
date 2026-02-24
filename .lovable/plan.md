@@ -1,117 +1,178 @@
 
-# Fix Album Item Count Capped at 1000
 
-## Root Cause
+# Quotation Management System
 
-The Albums list page (`src/pages/admin/Albums.tsx`) fetches album data using a Supabase relational sub-query:
+## Overview
 
-```ts
-.select(`
-  id,
-  title,
-  ...
-  media(id)   // <-- THIS is the problem
-`)
-```
+Build a complete quotation system allowing admins to create, send, and track quotations. Clients receive professional branded emails and can view quotations via a secure public link with PDF download.
 
-This `media(id)` sub-query fetches the actual media rows to count them. Supabase hard-caps all queries at **1000 rows** by default, so albums with more than 1000 items will always show "1000 items" instead of the real number. This is purely a display/counting bug on the Albums list page — the actual media stored in the database is complete and intact.
+## Database
 
-## What Is Already Working Correctly
+### Table: `quotations`
 
-- `AlbumDetail.tsx` (the page you see when you open a single album) already uses the correct approach: it calls `{ count: 'exact', head: true }` to get the real count without fetching rows, and then uses `PAGE_SIZE = 200` with pagination for loading media itself.
-- `client/AlbumView.tsx` also uses `{ count: 'exact', head: true }` correctly.
+| Column | Type | Notes |
+|--------|------|-------|
+| id | uuid | PK, gen_random_uuid() |
+| quotation_number | text | UNIQUE, NOT NULL, auto-generated (AJ-2026-0001) |
+| client_name | text | NOT NULL |
+| client_email | text | NOT NULL |
+| client_phone | text | nullable |
+| event_type | text | nullable |
+| event_date | date | nullable |
+| subtotal | numeric | NOT NULL, default 0 |
+| tax_percentage | numeric | NOT NULL, default 0 |
+| discount_amount | numeric | NOT NULL, default 0 |
+| total_amount | numeric | NOT NULL, default 0 |
+| notes | text | nullable (terms, payment info) |
+| status | text | NOT NULL, default 'draft' (draft/sent/viewed/accepted/rejected) |
+| booking_id | uuid | nullable FK to bookings.id |
+| valid_until | date | nullable |
+| created_at | timestamptz | default now() |
+| updated_at | timestamptz | default now() |
 
-Only the **Albums list page** (`Albums.tsx`) has the broken counting pattern.
+### Table: `quotation_items`
 
-## Fix
+| Column | Type | Notes |
+|--------|------|-------|
+| id | uuid | PK |
+| quotation_id | uuid | FK to quotations.id ON DELETE CASCADE |
+| item_name | text | NOT NULL |
+| description | text | nullable |
+| quantity | integer | NOT NULL, default 1 |
+| price | numeric | NOT NULL, default 0 |
+| total | numeric | NOT NULL, default 0 |
+| display_order | integer | default 0 |
 
-### 1. Remove `media(id)` from the albums list query
+### Auto-increment quotation number
 
-Stop fetching media rows just for counting. Replace the sub-select with nothing — we will load counts separately.
+A database function `generate_quotation_number()` will be created:
+- Format: `AJ-YYYY-NNNN` (e.g., AJ-2026-0001)
+- Uses a sequence or counts existing quotations for the current year
+- Called via trigger on INSERT
 
-### 2. Fetch accurate counts using a separate `COUNT` query
+### RLS Policies
 
-After fetching albums, run a single bulk query to get exact media counts per album:
+- Staff can manage all quotations and items (using `is_staff()`)
+- Public/anonymous: no direct access (quotation viewing goes through an edge function)
 
-```ts
-const { data: countData } = await supabase
-  .from('media')
-  .select('album_id', { count: 'exact' })
-  .in('album_id', albumIds)
-  // grouped effectively via client-side reduce
-```
+### Trigger
 
-Actually the cleanest approach is to use `{ count: 'exact', head: false }` and select only `album_id`, then group in JS — or better, use a single Supabase RPC call that returns counts per album. The simplest and cleanest solution that avoids N+1 queries:
+- `update_updated_at` trigger on quotations table
 
-```ts
-// One query to get all counts: select album_id and group in JS
-const { data: mediaCounts } = await supabase
-  .from('media')
-  .select('album_id')
-  .in('album_id', albumIds);
+## Edge Function: `send-quotation`
 
-// Build a map: { [albumId]: count }
-const countMap = mediaCounts?.reduce((acc, row) => {
-  acc[row.album_id] = (acc[row.album_id] || 0) + 1;
-  return acc;
-}, {} as Record<string, number>);
-```
+New edge function at `supabase/functions/send-quotation/index.ts`:
 
-**Problem**: This still hits the 1000-row Supabase limit across all albums combined.
+- Accepts `{ quotationId: string }` 
+- Fetches quotation + items from DB using service role
+- Generates a branded HTML email matching existing email style (dark theme with gold accents, studio logo, footer)
+- Includes: client name, event details, itemized breakdown table, subtotal/tax/discount/total, notes, and a "View Quotation" button linking to `/quotation/{quotation_number}`
+- Sends via Resend (reuses existing `RESEND_API_KEY` and `RESEND_FROM_EMAIL` secrets)
+- Updates quotation status to `sent`
+- Logs to `email_logs` table
 
-**Better approach** — use a database function (RPC) to return counts per album in one call:
+## Edge Function: `get-quotation`
 
-```sql
-CREATE OR REPLACE FUNCTION get_album_media_counts(album_ids uuid[])
-RETURNS TABLE(album_id uuid, media_count bigint)
-LANGUAGE sql SECURITY DEFINER AS $$
-  SELECT album_id, COUNT(*) as media_count
-  FROM media
-  WHERE album_id = ANY(album_ids)
-  GROUP BY album_id;
-$$;
-```
+New edge function at `supabase/functions/get-quotation/index.ts`:
 
-Then call it from the frontend:
-```ts
-const { data: counts } = await supabase.rpc('get_album_media_counts', {
-  album_ids: albumIds
-});
-```
+- Public endpoint (no auth required)
+- Accepts `{ quotation_number: string }`
+- Returns quotation data + items for the public view page
+- Updates status to `viewed` if currently `sent`
 
-This returns accurate counts for all albums in **one database call** without hitting any row limit.
+## Edge Function: `update-quotation-status`
 
-### 3. Update the `Album` interface
+New edge function at `supabase/functions/update-quotation-status/index.ts`:
 
-Change `media: { id: string }[]` to just store the count:
+- Public endpoint for accept/reject actions
+- Accepts `{ quotation_number: string, action: 'accept' | 'reject' }`
+- Updates status accordingly
 
-```ts
-interface Album {
-  ...
-  mediaCount: number; // replaces media: { id: string }[]
-}
-```
+## New Frontend Pages
 
-### 4. Update all references to `album.media.length`
+### 1. Admin Quotations List (`src/pages/admin/Quotations.tsx`)
 
-- Line 361: `map[key].totalMedia += album.media.length` → `album.mediaCount`
-- Line 577: `{album.media.length} item{...}` → `{album.mediaCount} item{...}`
-- Line 540: `{group.totalMedia} Media` already works since totalMedia is computed
+Route: `/admin/quotations`
 
-## Files Changed
+- Table with columns: Quotation Number, Client Name, Event, Event Date, Total Amount, Status (color-coded badge), Created Date, Actions
+- Search by client name/email/quotation number
+- Filter by status
+- "Create New Quotation" button
+- Row actions: View, Edit, Send (email), Delete
+- Follows existing admin page patterns (like Bookings.tsx)
 
-| File | Change |
+### 2. Admin Quotation Form (`src/components/admin/QuotationFormDialog.tsx`)
+
+Full-page dialog or large dialog with sections:
+
+**Client Section:**
+- Client Name, Email, Phone inputs
+- "Fill from Booking" button -- opens a dropdown/select of bookings to auto-fill client data
+
+**Event Section:**
+- Event Type, Event Date
+
+**Items Section (dynamic):**
+- Add/remove item rows
+- Each row: Item Name, Description, Quantity, Price, auto-calculated Total
+- Add Item button
+
+**Pricing Section (auto-calculated):**
+- Subtotal (sum of item totals)
+- Tax % input with calculated tax amount shown
+- Discount amount input
+- Final Total (auto-calculated: subtotal + tax - discount)
+
+**Notes Section:**
+- Textarea for terms, payment details, advance info
+
+**Validity:**
+- Valid Until date picker
+
+### 3. Public Quotation View (`src/pages/QuotationView.tsx`)
+
+Route: `/quotation/:quotationNumber`
+
+- Fetches quotation via `get-quotation` edge function
+- Professional branded layout showing:
+  - Studio logo and details
+  - Client info
+  - Event details
+  - Itemized table
+  - Pricing breakdown
+  - Notes/terms
+  - Accept / Reject buttons (if status is sent or viewed)
+- PDF download button using jspdf (already installed)
+
+### 4. Booking Integration
+
+In `src/pages/admin/Bookings.tsx`:
+- Add "Create Quotation" option to the dropdown menu for each booking
+- Clicking navigates to `/admin/quotations?fromBooking={bookingId}` or opens the form dialog pre-filled
+
+## Admin Sidebar
+
+Add "Quotations" nav item with `FileText` icon to `AdminLayout.tsx`, positioned after Services.
+
+## Routing
+
+Add to `App.tsx`:
+- `/admin/quotations` -- AdminQuotations
+- `/quotation/:quotationNumber` -- QuotationView (public)
+
+## Files Summary
+
+| File | Action |
 |------|--------|
-| Database migration | Add `get_album_media_counts(uuid[])` function with RLS-safe `SECURITY DEFINER` |
-| `src/pages/admin/Albums.tsx` | Remove `media(id)` sub-query, add RPC call for counts, update interface and all `.media.length` references |
+| Database migration | Create tables, function, trigger, RLS |
+| `supabase/functions/send-quotation/index.ts` | Create -- send quotation email |
+| `supabase/functions/get-quotation/index.ts` | Create -- public quotation fetch |
+| `supabase/functions/update-quotation-status/index.ts` | Create -- accept/reject |
+| `src/pages/admin/Quotations.tsx` | Create -- admin list page |
+| `src/components/admin/QuotationFormDialog.tsx` | Create -- create/edit form |
+| `src/pages/QuotationView.tsx` | Create -- public view + PDF download |
+| `src/components/admin/AdminLayout.tsx` | Add nav item |
+| `src/pages/admin/Bookings.tsx` | Add "Create Quotation" action |
+| `src/App.tsx` | Add routes |
+| `supabase/config.toml` | Add verify_jwt = false for public edge functions |
 
-## What This Does NOT Change
-
-- The `AlbumDetail.tsx` page (already works correctly with pagination)
-- The client album view (already works correctly)
-- Actual media storage or upload logic
-- Any data in the database
-
-## Result
-
-Albums with 1000+ items (like the "WEDDING" album shown in the screenshot) will now display the true count — whether that's 1,200, 2,500, or 3,000+ — accurately reflected in the admin albums list.
