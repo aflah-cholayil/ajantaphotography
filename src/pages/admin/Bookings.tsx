@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { format } from 'date-fns';
-import { Search, MoreVertical, Mail, Check, X, FileText, Send, Eye } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Search, MoreVertical, Mail, Check, X, FileText, Send, Eye, Receipt } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { AdminLayout } from '@/components/admin/AdminLayout';
@@ -78,6 +79,7 @@ const questionnaireStatusConfig: Record<QuestionnaireStatus, { label: string; cl
 
 const AdminBookings = () => {
   const { toast } = useToast();
+  const navigate = useNavigate();
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -371,6 +373,11 @@ const AdminBookings = () => {
                                 View Questionnaire
                               </DropdownMenuItem>
                             )}
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem onClick={() => navigate(`/admin/quotations?fromBooking=${booking.id}`)}>
+                              <Receipt size={16} className="mr-2" />
+                              Create Quotation
+                            </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem onClick={() => handleUpdateStatus(booking.id, 'contacted')}>
                               <Mail size={16} className="mr-2" />

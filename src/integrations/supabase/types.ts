@@ -685,6 +685,115 @@ export type Database = {
         }
         Relationships: []
       }
+      quotation_items: {
+        Row: {
+          description: string | null
+          display_order: number | null
+          id: string
+          item_name: string
+          price: number
+          quantity: number
+          quotation_id: string
+          total: number
+        }
+        Insert: {
+          description?: string | null
+          display_order?: number | null
+          id?: string
+          item_name: string
+          price?: number
+          quantity?: number
+          quotation_id: string
+          total?: number
+        }
+        Update: {
+          description?: string | null
+          display_order?: number | null
+          id?: string
+          item_name?: string
+          price?: number
+          quantity?: number
+          quotation_id?: string
+          total?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "quotation_items_quotation_id_fkey"
+            columns: ["quotation_id"]
+            isOneToOne: false
+            referencedRelation: "quotations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      quotations: {
+        Row: {
+          booking_id: string | null
+          client_email: string
+          client_name: string
+          client_phone: string | null
+          created_at: string
+          discount_amount: number
+          event_date: string | null
+          event_type: string | null
+          id: string
+          notes: string | null
+          quotation_number: string
+          status: string
+          subtotal: number
+          tax_percentage: number
+          total_amount: number
+          updated_at: string
+          valid_until: string | null
+        }
+        Insert: {
+          booking_id?: string | null
+          client_email: string
+          client_name: string
+          client_phone?: string | null
+          created_at?: string
+          discount_amount?: number
+          event_date?: string | null
+          event_type?: string | null
+          id?: string
+          notes?: string | null
+          quotation_number: string
+          status?: string
+          subtotal?: number
+          tax_percentage?: number
+          total_amount?: number
+          updated_at?: string
+          valid_until?: string | null
+        }
+        Update: {
+          booking_id?: string | null
+          client_email?: string
+          client_name?: string
+          client_phone?: string | null
+          created_at?: string
+          discount_amount?: number
+          event_date?: string | null
+          event_type?: string | null
+          id?: string
+          notes?: string | null
+          quotation_number?: string
+          status?: string
+          subtotal?: number
+          tax_percentage?: number
+          total_amount?: number
+          updated_at?: string
+          valid_until?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "quotations_booking_id_fkey"
+            columns: ["booking_id"]
+            isOneToOne: false
+            referencedRelation: "bookings"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       rate_limits: {
         Row: {
           action_type: string
