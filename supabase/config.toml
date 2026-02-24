@@ -62,3 +62,12 @@ verify_jwt = false
 
 [functions.video-stream]
 verify_jwt = false
+
+[functions.send-quotation]
+verify_jwt = false
+
+[functions.get-quotation]
+verify_jwt = false
+
+[functions.update-quotation-status]
+verify_jwt = false

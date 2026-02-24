@@ -30,6 +30,8 @@ import ClientAlbumView from "./pages/client/AlbumView";
 import ClientSettings from "./pages/client/Settings";
 import SharedGallery from "./pages/share/SharedGallery";
 import Questionnaire from "./pages/Questionnaire";
+import AdminQuotations from "./pages/admin/Quotations";
+import QuotationView from "./pages/QuotationView";
 
 const queryClient = new QueryClient();
 
@@ -69,7 +71,10 @@ const App = () => (
             <Route path="/admin/users" element={<AdminUsers />} />
             <Route path="/admin/storage" element={<AdminStorageDashboard />} />
             <Route path="/admin/services" element={<ServicesManagement />} />
+            <Route path="/admin/quotations" element={<AdminQuotations />} />
             <Route path="/admin/settings" element={<AdminSettings />} />
+            {/* Public Quotation View */}
+            <Route path="/quotation/:quotationNumber" element={<QuotationView />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>
