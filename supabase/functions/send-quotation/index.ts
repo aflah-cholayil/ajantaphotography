@@ -117,18 +117,28 @@ serve(async (req: Request) => {
 
     // Notes block - render HTML directly, sanitized
     const styledNotes = quotation.notes ? sanitizeHtml(quotation.notes)
-      .replace(/<h1[^>]*>/gi, '<h1 style="font-size:22px; color:#222; margin:16px 0 8px; font-weight:700;">')
-      .replace(/<h2[^>]*>/gi, '<h2 style="font-size:18px; color:#222; margin:14px 0 6px; font-weight:700;">')
-      .replace(/<h3[^>]*>/gi, '<h3 style="font-size:15px; color:#222; margin:12px 0 6px; font-weight:600;">')
-      .replace(/<h4[^>]*>/gi, '<h4 style="font-size:14px; color:#222; margin:10px 0 4px; font-weight:600;">')
-      .replace(/<p[^>]*>/gi, '<p style="margin:8px 0; color:#444; line-height:1.6;">')
+      // Headings — merge existing style (preserves text-align) then handle bare tags
+      .replace(/<h1 style="([^"]*)"/gi, (_m: string, s: string) => `<h1 style="${s}; font-size:26px; color:#222; margin:20px 0 10px; font-weight:700;"`)
+      .replace(/<h1>/gi, '<h1 style="font-size:26px; color:#222; margin:20px 0 10px; font-weight:700;">')
+      .replace(/<h2 style="([^"]*)"/gi, (_m: string, s: string) => `<h2 style="${s}; font-size:22px; color:#222; margin:18px 0 8px; font-weight:700;"`)
+      .replace(/<h2>/gi, '<h2 style="font-size:22px; color:#222; margin:18px 0 8px; font-weight:700;">')
+      .replace(/<h3 style="([^"]*)"/gi, (_m: string, s: string) => `<h3 style="${s}; font-size:18px; color:#222; margin:15px 0 6px; font-weight:600;"`)
+      .replace(/<h3>/gi, '<h3 style="font-size:18px; color:#222; margin:15px 0 6px; font-weight:600;">')
+      .replace(/<h4 style="([^"]*)"/gi, (_m: string, s: string) => `<h4 style="${s}; font-size:15px; color:#222; margin:12px 0 4px; font-weight:600;"`)
+      .replace(/<h4>/gi, '<h4 style="font-size:15px; color:#222; margin:12px 0 4px; font-weight:600;">')
+      // Paragraphs — merge existing style (preserves text-align)
+      .replace(/<p style="([^"]*)"/gi, (_m: string, s: string) => `<p style="${s}; margin:8px 0; color:#444; line-height:1.6;"`)
+      .replace(/<p>/gi, '<p style="margin:8px 0; color:#444; line-height:1.6;">')
+      // Inline formatting
       .replace(/<strong>/gi, '<strong style="color:#222; font-weight:600;">')
       .replace(/<b>/gi, '<b style="color:#222; font-weight:600;">')
       .replace(/<em>/gi, '<em style="color:#444;">')
       .replace(/<u>/gi, '<u style="color:#444;">')
+      // Lists
       .replace(/<ul>/gi, '<ul style="list-style-type:disc; padding-left:20px; margin:8px 0;">')
       .replace(/<ol>/gi, '<ol style="list-style-type:decimal; padding-left:20px; margin:8px 0;">')
       .replace(/<li>/gi, '<li style="margin:4px 0; color:#444;">')
+      // Media & separators
       .replace(/<img /gi, '<img style="max-width:100%; height:auto; border-radius:6px; margin:10px 0;" ')
       .replace(/<hr\s*\/?>/gi, '<hr style="border:none; border-top:1px solid #eee; margin:15px 0;">')
       : '';
@@ -136,7 +146,7 @@ serve(async (req: Request) => {
     const notesBlock = quotation.notes ? `
       <div style="background: #fafafa; padding: 15px; border-radius: 8px; margin: 20px 0;">
         <p style="color: #d4af37; font-size: 12px; margin: 0 0 8px 0; text-transform: uppercase; font-weight: 600;">Terms & Notes</p>
-        <div style="color: #444; margin: 0; font-size: 13px; line-height: 1.6;">${styledNotes}</div>
+        <div style="color: #444; margin: 0; line-height: 1.7;">${styledNotes}</div>
       </div>` : '';
 
     const html = `
