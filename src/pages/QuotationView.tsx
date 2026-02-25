@@ -279,7 +279,180 @@ const QuotationView = () => {
     y += boxH + 8;
 
     // ═══════════════════════════════════════
-    // 3) ITEMS TABLE
+    // 3) TERMS & CONDITIONS (moved before Items Table)
+    // ═══════════════════════════════════════
+    if (quotation.notes) {
+      checkPage(20);
+      doc.setFontSize(11);
+      doc.setTextColor(...textDark);
+      doc.text('TERMS & CONDITIONS', margin, y);
+      y += 2;
+      doc.setDrawColor(...gold);
+      doc.setLineWidth(0.3);
+      doc.line(margin, y, margin + 45, y);
+      y += 6;
+
+      // ── HTML-aware renderer ──
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = quotation.notes;
+
+      const centerX = pageW / 2;
+      let listCounter = 0;
+
+      const getAlign = (el: HTMLElement): string => {
+        const style = el.getAttribute('style') || '';
+        const match = style.match(/text-align:\s*(center|right|left)/i);
+        return match ? match[1].toLowerCase() : 'left';
+      };
+
+      const drawTextBlock = (text: string, fontSize: number, bold: boolean, align: string, indent: number = 0) => {
+        doc.setFontSize(fontSize);
+        doc.setFont('NotoSans', bold ? 'bold' : 'normal');
+        doc.setTextColor(34, 34, 34);
+        const maxW = contentW - indent;
+        const lines = doc.splitTextToSize(text, maxW);
+        for (let i = 0; i < lines.length; i++) {
+          checkPage(fontSize * 0.5 + 2);
+          if (align === 'center') {
+            doc.text(lines[i], centerX, y, { align: 'center' });
+          } else if (align === 'right') {
+            doc.text(lines[i], pageW - margin, y, { align: 'right' });
+          } else {
+            doc.text(lines[i], margin + indent, y);
+          }
+          y += fontSize * 0.45 + 1;
+        }
+      };
+
+      const walkNode = (node: Node, inheritBold: boolean = false, inList: 'ul' | 'ol' | null = null) => {
+        if (node.nodeType === Node.TEXT_NODE) {
+          const text = node.textContent?.replace(/\s+/g, ' ') || '';
+          if (text.trim()) {
+            // Text nodes inside block elements are handled by the parent
+            // Only draw if parent is inline or direct child of container
+            const parent = node.parentElement;
+            const parentTag = parent?.tagName.toLowerCase() || '';
+            if (!['h1', 'h2', 'h3', 'p', 'li', 'div'].includes(parentTag)) {
+              drawTextBlock(text.trim(), 9, inheritBold, 'left');
+            }
+          }
+          return;
+        }
+
+        if (node.nodeType !== Node.ELEMENT_NODE) return;
+        const el = node as HTMLElement;
+        const tag = el.tagName.toLowerCase();
+        const align = getAlign(el);
+        const isBold = inheritBold || tag === 'strong' || tag === 'b';
+
+        // Collect all text content from children (preserving bold segments)
+        const getTextContent = (n: Node): string => {
+          let t = '';
+          n.childNodes.forEach(c => {
+            if (c.nodeType === Node.TEXT_NODE) {
+              t += c.textContent || '';
+            } else {
+              t += getTextContent(c);
+            }
+          });
+          return t;
+        };
+
+        // Check if element has any bold children
+        const hasBoldChild = (n: Node): boolean => {
+          for (let i = 0; i < n.childNodes.length; i++) {
+            const c = n.childNodes[i];
+            if (c.nodeType === Node.ELEMENT_NODE) {
+              const ct = (c as HTMLElement).tagName.toLowerCase();
+              if (ct === 'strong' || ct === 'b') return true;
+              if (hasBoldChild(c)) return true;
+            }
+          }
+          return false;
+        };
+
+        switch (tag) {
+          case 'h1':
+            y += 4;
+            drawTextBlock(getTextContent(el).trim(), 18, true, align);
+            y += 3;
+            break;
+          case 'h2':
+            y += 3;
+            drawTextBlock(getTextContent(el).trim(), 15, true, align);
+            y += 2;
+            break;
+          case 'h3':
+            y += 2;
+            drawTextBlock(getTextContent(el).trim(), 13, true, align);
+            y += 2;
+            break;
+          case 'p': {
+            const text = getTextContent(el).trim();
+            if (text) {
+              y += 2;
+              const pBold = isBold || hasBoldChild(el);
+              drawTextBlock(text, 9, pBold, align);
+              y += 1;
+            }
+            break;
+          }
+          case 'ul':
+            y += 1;
+            el.childNodes.forEach(c => walkNode(c, isBold, 'ul'));
+            y += 1;
+            break;
+          case 'ol':
+            listCounter = 0;
+            y += 1;
+            el.childNodes.forEach(c => walkNode(c, isBold, 'ol'));
+            y += 1;
+            break;
+          case 'li': {
+            const liText = getTextContent(el).trim();
+            if (liText) {
+              checkPage(6);
+              doc.setFontSize(9);
+              doc.setFont('NotoSans', isBold ? 'bold' : 'normal');
+              doc.setTextColor(34, 34, 34);
+              if (inList === 'ol') {
+                listCounter++;
+                doc.text(`${listCounter}.`, margin + 4, y);
+              } else {
+                doc.text('•', margin + 4, y);
+              }
+              const liLines = doc.splitTextToSize(liText, contentW - 14);
+              for (let i = 0; i < liLines.length; i++) {
+                if (i > 0) checkPage(5);
+                doc.text(liLines[i], margin + 10, y);
+                y += 4;
+              }
+            }
+            break;
+          }
+          case 'br':
+            y += 3;
+            break;
+          case 'strong':
+          case 'b':
+            el.childNodes.forEach(c => walkNode(c, true, inList));
+            break;
+          case 'div':
+          default:
+            el.childNodes.forEach(c => walkNode(c, isBold, inList));
+            break;
+        }
+      };
+
+      tempDiv.childNodes.forEach(c => walkNode(c));
+
+      // Reset font
+      doc.setFont('NotoSans', 'normal');
+      y += 6;
+    }
+
+    // ═══════════════════════════════════════
+    // 4) ITEMS TABLE
     // ═══════════════════════════════════════
     const col = {
       num: margin,
@@ -340,7 +513,7 @@ const QuotationView = () => {
     y += 10;
 
     // ═══════════════════════════════════════
-    // 4) TOTALS SECTION
+    // 5) TOTALS SECTION
     // ═══════════════════════════════════════
     checkPage(40);
     const totalsLabelX = pageW - margin - 60;
@@ -377,32 +550,6 @@ const QuotationView = () => {
     doc.text('GRAND TOTAL:', totalsLabelX - 15, y);
     doc.text(formatCurrency(quotation.total_amount), totalsValX, y, { align: 'right' });
     y += 14;
-
-    // ═══════════════════════════════════════
-    // 5) TERMS & CONDITIONS
-    // ═══════════════════════════════════════
-    if (quotation.notes) {
-      checkPage(20);
-      doc.setFontSize(11);
-      doc.setTextColor(...textDark);
-      doc.text('TERMS & CONDITIONS', margin, y);
-      y += 2;
-      doc.setDrawColor(...gold);
-      doc.setLineWidth(0.3);
-      doc.line(margin, y, margin + 45, y);
-      y += 6;
-
-      doc.setFontSize(8);
-      doc.setTextColor(80, 80, 80);
-      const structuredNotes = htmlToStructuredText(quotation.notes);
-      const noteLines = doc.splitTextToSize(structuredNotes, contentW);
-      for (let i = 0; i < noteLines.length; i++) {
-        checkPage(5);
-        doc.text(noteLines[i], margin, y);
-        y += 4;
-      }
-      y += 6;
-    }
 
     // ═══════════════════════════════════════
     // 6) FOOTER
