@@ -1,77 +1,54 @@
 
 
-# Fix Quotation View, Email, and PDF Issues
+# Fix "Quotation Not Found" on Mobile/Email Links
 
-## Current State
+## Root Cause
 
-After reviewing the code, the **view page** (`QuotationView.tsx`) and **email template** (`send-quotation/index.ts`) already have most fixes in place from the previous implementation:
-- Notes render via `dangerouslySetInnerHTML` with `sanitizeHtml` (line 332)
-- Multiple dates display correctly via `getEventDates` helper (lines 310-321)
-- Notes section is positioned after event details (lines 326-335)
-- Email template has multi-date support and sanitized HTML notes
+The `QuotationView.tsx` page uses `supabase.functions.invoke()` to call the edge functions. When a user opens the quotation link from an email on mobile (no active session), the Supabase JS client may fail to properly invoke the function because it attempts to attach session-related headers. On mobile browsers opening from email, this can cause the request to fail entirely with "Failed to send a request to the Edge Function".
 
-The remaining issues are all in the **PDF generation** section of `QuotationView.tsx` (lines 119-246):
+## Fix
 
-## Fixes Required
+Replace `supabase.functions.invoke()` with direct `fetch()` calls using the absolute Supabase URL for both public edge functions (`get-quotation` and `update-quotation-status`). These are public endpoints (`verify_jwt = false`) and do not need authentication.
 
-### 1. PDF: ₹ Symbol Shows as Small "1"
+### File: `src/pages/QuotationView.tsx`
 
-**Root cause**: jsPDF's default Helvetica font does not support the Unicode ₹ character.
+**Change 1 -- `fetchQuotation` function (lines 103-118):**
 
-**Fix**: Create a `formatCurrencyPDF` function that uses `"Rs."` prefix instead of ₹:
+Replace `supabase.functions.invoke('get-quotation', ...)` with:
 
 ```typescript
-const formatCurrencyPDF = (amount: number) =>
-  'Rs. ' + new Intl.NumberFormat('en-IN', { minimumFractionDigits: 0 }).format(amount);
+const res = await fetch(
+  `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-quotation`,
+  {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ quotation_number: quotationNumber }),
+  }
+);
+const data = await res.json();
+if (!res.ok || data.error) throw new Error(data.error || 'Quotation not found');
 ```
 
-Replace all `formatCurrency()` calls inside `handleDownloadPDF` with `formatCurrencyPDF()`. The web view continues using ₹ via `formatCurrency`.
+**Change 2 -- `handleResponse` function (lines 120-135):**
 
-### 2. PDF: Notes Section Position Wrong
-
-**Current**: Notes are rendered after the totals section (lines 234-243).
-
-**Fix**: Move the notes block to immediately after the event dates block (after line 173), before the items table header. This matches the view page and email layout order:
-
-```
-Event Type → Event Dates → Terms & Notes → Items Table → Totals
-```
-
-### 3. PDF: Notes Show Raw HTML Instead of Formatted Text
-
-**Current**: `htmlToPlainText` strips all formatting, losing bullet structure.
-
-**Fix**: Replace `htmlToPlainText` with a smarter HTML-to-text converter that preserves list structure:
+Replace `supabase.functions.invoke('update-quotation-status', ...)` with:
 
 ```typescript
-function htmlToStructuredText(html: string): string {
-  const div = document.createElement('div');
-  div.innerHTML = html;
-  let result = '';
-  const walk = (node: Node) => {
-    if (node.nodeType === Node.TEXT_NODE) {
-      result += node.textContent;
-    } else if (node.nodeType === Node.ELEMENT_NODE) {
-      const el = node as HTMLElement;
-      const tag = el.tagName.toLowerCase();
-      if (tag === 'li') result += '  • ';
-      if (tag === 'br' || tag === 'p' || tag === 'div') result += '\n';
-      el.childNodes.forEach(walk);
-      if (tag === 'li' || tag === 'p' || tag === 'div') result += '\n';
-    }
-  };
-  div.childNodes.forEach(walk);
-  return result.replace(/\n{3,}/g, '\n\n').trim();
-}
+const res = await fetch(
+  `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/update-quotation-status`,
+  {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ quotation_number: quotationNumber, action }),
+  }
+);
+const data = await res.json();
+if (!res.ok || data.error) throw new Error(data.error || 'Failed to update');
 ```
 
-This preserves bullet points as `• ` prefixed lines in the PDF output.
-
-## Files Changed
+This removes the dependency on the Supabase client session entirely for these public endpoints, fixing the mobile/email access issue. No edge function or database changes needed.
 
 | File | Change |
 |------|--------|
-| `src/pages/QuotationView.tsx` | Add `formatCurrencyPDF`, improve `htmlToPlainText`, move notes in PDF, use PDF-safe currency |
-
-No database, edge function, or other file changes needed.
+| `src/pages/QuotationView.tsx` | Replace `supabase.functions.invoke` with direct `fetch` for both public endpoints |
 
