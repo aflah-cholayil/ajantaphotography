@@ -1,178 +1,116 @@
 
 
-# Quotation Management System
+# Quotation Layout Update + Multi-Date Support
 
 ## Overview
 
-Build a complete quotation system allowing admins to create, send, and track quotations. Clients receive professional branded emails and can view quotations via a secure public link with PDF download.
+Enhance the quotation system with multi-date support, rich text notes editing, and reordered form layout. Changes span the database, 3 edge functions, 2 frontend pages, and the form dialog.
 
-## Database
+## Database Migration
 
-### Table: `quotations`
+Add `event_dates` column to `quotations` table:
 
-| Column | Type | Notes |
-|--------|------|-------|
-| id | uuid | PK, gen_random_uuid() |
-| quotation_number | text | UNIQUE, NOT NULL, auto-generated (AJ-2026-0001) |
-| client_name | text | NOT NULL |
-| client_email | text | NOT NULL |
-| client_phone | text | nullable |
-| event_type | text | nullable |
-| event_date | date | nullable |
-| subtotal | numeric | NOT NULL, default 0 |
-| tax_percentage | numeric | NOT NULL, default 0 |
-| discount_amount | numeric | NOT NULL, default 0 |
-| total_amount | numeric | NOT NULL, default 0 |
-| notes | text | nullable (terms, payment info) |
-| status | text | NOT NULL, default 'draft' (draft/sent/viewed/accepted/rejected) |
-| booking_id | uuid | nullable FK to bookings.id |
-| valid_until | date | nullable |
-| created_at | timestamptz | default now() |
-| updated_at | timestamptz | default now() |
+```sql
+ALTER TABLE quotations ADD COLUMN event_dates text[] DEFAULT '{}';
+```
 
-### Table: `quotation_items`
+Migrate existing single `event_date` values into the new array column so no data is lost. Keep `event_date` column for backward compatibility but stop using it in new code.
 
-| Column | Type | Notes |
-|--------|------|-------|
-| id | uuid | PK |
-| quotation_id | uuid | FK to quotations.id ON DELETE CASCADE |
-| item_name | text | NOT NULL |
-| description | text | nullable |
-| quantity | integer | NOT NULL, default 1 |
-| price | numeric | NOT NULL, default 0 |
-| total | numeric | NOT NULL, default 0 |
-| display_order | integer | default 0 |
+## File Changes
 
-### Auto-increment quotation number
+### 1. `src/components/admin/QuotationFormDialog.tsx`
 
-A database function `generate_quotation_number()` will be created:
-- Format: `AJ-YYYY-NNNN` (e.g., AJ-2026-0001)
-- Uses a sequence or counts existing quotations for the current year
-- Called via trigger on INSERT
+**Multi-date support:**
+- Replace `event_date: string` in form state with `event_dates: string[]`
+- Add "Add Date" button that appends a new date input
+- Each date has a remove button (X icon)
+- At least 1 date not enforced (optional field)
 
-### RLS Policies
+**Rich text notes:**
+- Replace plain `<Textarea>` with a simple toolbar-enhanced textarea approach using markdown-style formatting
+- Since adding TipTap/Quill would require new dependencies, use a lightweight approach: keep `<Textarea>` but add formatting toolbar buttons (bold `**text**`, bullet `• `, numbered `1. `) that insert markdown markers. Store as HTML by converting on save using a simple markdown-to-HTML converter built inline (no dependency needed)
+- Alternatively, store raw text and render with `white-space: pre-wrap` plus basic pattern replacement for bullets/bold on display
 
-- Staff can manage all quotations and items (using `is_staff()`)
-- Public/anonymous: no direct access (quotation viewing goes through an edge function)
+**Recommended approach:** Use a simple rich textarea that stores HTML directly. Add toolbar buttons that use `document.execCommand` on a `contentEditable` div styled to match the existing textarea. This gives bullet points, bold, and line breaks without any new dependency.
 
-### Trigger
+**Form section reorder:**
+```
+Fill from Booking (if creating)
+Client Info (name, email, phone)
+Event Type
+Event Dates (multi-date picker)
+Notes / Terms & Conditions (rich text)
+Items
+Pricing Summary
+Valid Until
+Actions
+```
 
-- `update_updated_at` trigger on quotations table
+**Save logic update:**
+- Send `event_dates` array instead of `event_date`
+- Convert notes from contentEditable HTML to stored HTML string
+- When loading existing quotation, populate `event_dates` from the array column (fallback to `[event_date]` for old records)
 
-## Edge Function: `send-quotation`
+### 2. `src/pages/QuotationView.tsx`
 
-New edge function at `supabase/functions/send-quotation/index.ts`:
+- Update `QuotationData` interface: add `event_dates: string[] | null`
+- Event details section: render multiple dates, each on its own line or comma-separated
+- Notes section: render HTML using `dangerouslySetInnerHTML` with basic sanitization (strip script tags, event handlers)
+- PDF generation: render dates as multi-line, render notes as plain text extracted from HTML
 
-- Accepts `{ quotationId: string }` 
-- Fetches quotation + items from DB using service role
-- Generates a branded HTML email matching existing email style (dark theme with gold accents, studio logo, footer)
-- Includes: client name, event details, itemized breakdown table, subtotal/tax/discount/total, notes, and a "View Quotation" button linking to `/quotation/{quotation_number}`
-- Sends via Resend (reuses existing `RESEND_API_KEY` and `RESEND_FROM_EMAIL` secrets)
-- Updates quotation status to `sent`
-- Logs to `email_logs` table
+### 3. `supabase/functions/send-quotation/index.ts`
 
-## Edge Function: `get-quotation`
+- Read `event_dates` array from quotation
+- Display dates in the event details block as comma-separated formatted dates
+- Render notes HTML directly in the email (already in an HTML context, so this works naturally)
+- Sanitize notes HTML server-side (strip `<script>`, `onclick`, etc.) before embedding
 
-New edge function at `supabase/functions/get-quotation/index.ts`:
+### 4. `supabase/functions/get-quotation/index.ts`
 
-- Public endpoint (no auth required)
-- Accepts `{ quotation_number: string }`
-- Returns quotation data + items for the public view page
-- Updates status to `viewed` if currently `sent`
+- No structural change needed -- `select("*")` already returns all columns including new `event_dates`
+- Backward compat: if `event_dates` is empty/null but `event_date` exists, return `event_dates: [event_date]`
 
-## Edge Function: `update-quotation-status`
+### 5. `src/pages/admin/Quotations.tsx`
 
-New edge function at `supabase/functions/update-quotation-status/index.ts`:
+- Update `Quotation` interface to include `event_dates`
+- Event Date column: show first date or "Multiple dates" badge if > 1
 
-- Public endpoint for accept/reject actions
-- Accepts `{ quotation_number: string, action: 'accept' | 'reject' }`
-- Updates status accordingly
+## Rich Text Implementation Detail
 
-## New Frontend Pages
+Use a `contentEditable` div with a minimal toolbar (no new dependencies):
 
-### 1. Admin Quotations List (`src/pages/admin/Quotations.tsx`)
+```text
+[B] [• List] [1. Numbered] [—]
+┌─────────────────────────────────────┐
+│ • 50% advance required              │
+│ • Balance before delivery            │
+│ • Cancellation not refundable        │
+└─────────────────────────────────────┘
+```
 
-Route: `/admin/quotations`
+Toolbar buttons:
+- **Bold**: wraps selection in `<strong>`
+- **Bullet list**: inserts `<ul><li>` 
+- **Ordered list**: inserts `<ol><li>`
 
-- Table with columns: Quotation Number, Client Name, Event, Event Date, Total Amount, Status (color-coded badge), Created Date, Actions
-- Search by client name/email/quotation number
-- Filter by status
-- "Create New Quotation" button
-- Row actions: View, Edit, Send (email), Delete
-- Follows existing admin page patterns (like Bookings.tsx)
+The `contentEditable` div's innerHTML is captured on blur/change and stored in `form.notes`. On load, existing HTML is set as innerHTML. Plain text from old records renders fine as-is.
 
-### 2. Admin Quotation Form (`src/components/admin/QuotationFormDialog.tsx`)
+Sanitization function (no dependency): strip `<script>`, `<iframe>`, `on*` attributes using regex before rendering.
 
-Full-page dialog or large dialog with sections:
+## Backward Compatibility
 
-**Client Section:**
-- Client Name, Email, Phone inputs
-- "Fill from Booking" button -- opens a dropdown/select of bookings to auto-fill client data
-
-**Event Section:**
-- Event Type, Event Date
-
-**Items Section (dynamic):**
-- Add/remove item rows
-- Each row: Item Name, Description, Quantity, Price, auto-calculated Total
-- Add Item button
-
-**Pricing Section (auto-calculated):**
-- Subtotal (sum of item totals)
-- Tax % input with calculated tax amount shown
-- Discount amount input
-- Final Total (auto-calculated: subtotal + tax - discount)
-
-**Notes Section:**
-- Textarea for terms, payment details, advance info
-
-**Validity:**
-- Valid Until date picker
-
-### 3. Public Quotation View (`src/pages/QuotationView.tsx`)
-
-Route: `/quotation/:quotationNumber`
-
-- Fetches quotation via `get-quotation` edge function
-- Professional branded layout showing:
-  - Studio logo and details
-  - Client info
-  - Event details
-  - Itemized table
-  - Pricing breakdown
-  - Notes/terms
-  - Accept / Reject buttons (if status is sent or viewed)
-- PDF download button using jspdf (already installed)
-
-### 4. Booking Integration
-
-In `src/pages/admin/Bookings.tsx`:
-- Add "Create Quotation" option to the dropdown menu for each booking
-- Clicking navigates to `/admin/quotations?fromBooking={bookingId}` or opens the form dialog pre-filled
-
-## Admin Sidebar
-
-Add "Quotations" nav item with `FileText` icon to `AdminLayout.tsx`, positioned after Services.
-
-## Routing
-
-Add to `App.tsx`:
-- `/admin/quotations` -- AdminQuotations
-- `/quotation/:quotationNumber` -- QuotationView (public)
+- Old quotations with `event_date` but no `event_dates`: handled by fallback logic in both frontend and edge functions
+- Old plain text notes: render correctly in contentEditable and in all display contexts
+- No breaking changes to existing data
 
 ## Files Summary
 
 | File | Action |
 |------|--------|
-| Database migration | Create tables, function, trigger, RLS |
-| `supabase/functions/send-quotation/index.ts` | Create -- send quotation email |
-| `supabase/functions/get-quotation/index.ts` | Create -- public quotation fetch |
-| `supabase/functions/update-quotation-status/index.ts` | Create -- accept/reject |
-| `src/pages/admin/Quotations.tsx` | Create -- admin list page |
-| `src/components/admin/QuotationFormDialog.tsx` | Create -- create/edit form |
-| `src/pages/QuotationView.tsx` | Create -- public view + PDF download |
-| `src/components/admin/AdminLayout.tsx` | Add nav item |
-| `src/pages/admin/Bookings.tsx` | Add "Create Quotation" action |
-| `src/App.tsx` | Add routes |
-| `supabase/config.toml` | Add verify_jwt = false for public edge functions |
+| Database migration | Add `event_dates text[]` column, migrate existing data |
+| `src/components/admin/QuotationFormDialog.tsx` | Reorder sections, multi-date UI, rich text editor |
+| `src/pages/QuotationView.tsx` | Multi-date display, HTML notes rendering |
+| `src/pages/admin/Quotations.tsx` | Update interface and date column display |
+| `supabase/functions/send-quotation/index.ts` | Multi-date + HTML notes in email |
+| `supabase/functions/get-quotation/index.ts` | Backward compat for event_dates |
 
