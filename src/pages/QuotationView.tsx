@@ -403,8 +403,10 @@ const QuotationView = () => {
             y += 1;
             break;
           case 'ol': {
-            const prevSib = (el as Element).previousElementSibling;
-            if (!prevSib || prevSib.tagName.toLowerCase() !== 'ol') {
+            const startAttr = (el as HTMLElement).getAttribute('start');
+            if (startAttr) {
+              listCounter = parseInt(startAttr, 10) - 1;
+            } else {
               listCounter = 0;
             }
             y += 1;
