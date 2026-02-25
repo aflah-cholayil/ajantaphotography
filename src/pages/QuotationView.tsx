@@ -181,7 +181,7 @@ const QuotationView = () => {
 
     // ── Helper: check page break ──
     const checkPage = (needed: number) => {
-      if (y + needed > pageH - 25) {
+      if (y + needed > pageH - 35) {
         doc.addPage();
         y = margin;
       }
@@ -402,12 +402,16 @@ const QuotationView = () => {
             el.childNodes.forEach(c => walkNode(c, isBold, 'ul'));
             y += 1;
             break;
-          case 'ol':
-            listCounter = 0;
+          case 'ol': {
+            const prevSib = (el as Element).previousElementSibling;
+            if (!prevSib || prevSib.tagName.toLowerCase() !== 'ol') {
+              listCounter = 0;
+            }
             y += 1;
             el.childNodes.forEach(c => walkNode(c, isBold, 'ol'));
             y += 1;
             break;
+          }
           case 'li': {
             const liText = getTextContent(el).trim();
             if (liText) {
