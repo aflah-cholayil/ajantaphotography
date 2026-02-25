@@ -90,8 +90,9 @@ serve(async (req: Request) => {
       .order("display_order");
 
     const config = await getStudioConfig(supabase);
-    const siteUrl = Deno.env.get("SITE_URL") || "https://ajantaphotography.in";
-    const viewUrl = `${siteUrl}/quotation/${quotation.quotation_number}`;
+    const rawSiteUrl = Deno.env.get("SITE_URL") || "https://ajantaphotography.in";
+    const siteUrl = rawSiteUrl.replace(/\/+$/, "");
+    const viewUrl = `${siteUrl}/quotation/${encodeURIComponent(quotation.quotation_number)}`;
 
     const itemRows = (items || []).map((item: any, i: number) => `
       <tr style="border-bottom: 1px solid #eee;">
