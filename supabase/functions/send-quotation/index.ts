@@ -90,7 +90,7 @@ serve(async (req: Request) => {
       .order("display_order");
 
     const config = await getStudioConfig(supabase);
-    const siteUrl = Deno.env.get("SITE_URL") || "https://studio-shines-77.lovable.app";
+    const siteUrl = Deno.env.get("SITE_URL") || "https://ajantaphotography.in";
     const viewUrl = `${siteUrl}/quotation/${quotation.quotation_number}`;
 
     const itemRows = (items || []).map((item: any, i: number) => `

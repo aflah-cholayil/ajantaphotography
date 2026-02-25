@@ -95,7 +95,7 @@ const handler = async (req: Request): Promise<Response> => {
     const studioPhone = studioConfig.studio_phone || "";
 
     // Build questionnaire URL
-    const baseUrl = Deno.env.get("SITE_URL") || "https://studio-shines-77.lovable.app";
+    const baseUrl = Deno.env.get("SITE_URL") || "https://ajantaphotography.in";
     const questionnaireUrl = `${baseUrl}/questionnaire/${questionnaire.token}`;
 
     const logoUrl = "https://dtknywnttoslxthlqwsz.supabase.co/storage/v1/object/public/avatars/logo.png";
