@@ -99,13 +99,27 @@ const QuotationView = () => {
     fetchQuotation();
   }, [quotationNumber]);
 
+  // Timeout protection for slow mobile networks
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (loading) {
+        setLoading(false);
+        setError('Request timed out. Please check your connection and try again.');
+      }
+    }, 15000);
+    return () => clearTimeout(timer);
+  }, [loading]);
+
   const fetchQuotation = async () => {
     try {
       const res = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-quotation`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          },
           body: JSON.stringify({ quotation_number: quotationNumber }),
         }
       );
@@ -128,7 +142,10 @@ const QuotationView = () => {
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/update-quotation-status`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          },
           body: JSON.stringify({ quotation_number: quotationNumber, action }),
         }
       );
