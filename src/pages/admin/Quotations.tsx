@@ -28,6 +28,7 @@ interface Quotation {
   client_email: string;
   event_type: string | null;
   event_date: string | null;
+  event_dates: string[] | null;
   total_amount: number;
   status: string;
   created_at: string;
@@ -60,9 +61,9 @@ const AdminQuotations = () => {
   const fetchQuotations = async () => {
     const { data, error } = await supabase
       .from('quotations')
-      .select('id, quotation_number, client_name, client_email, event_type, event_date, total_amount, status, created_at')
+      .select('id, quotation_number, client_name, client_email, event_type, event_date, event_dates, total_amount, status, created_at')
       .order('created_at', { ascending: false });
-    if (!error) setQuotations((data as Quotation[]) || []);
+    if (!error) setQuotations((data as unknown as Quotation[]) || []);
     setIsLoading(false);
   };
 
@@ -200,7 +201,19 @@ const AdminQuotations = () => {
                     </div>
                   </TableCell>
                   <TableCell>{q.event_type || '-'}</TableCell>
-                  <TableCell>{q.event_date ? format(new Date(q.event_date), 'MMM d, yyyy') : '-'}</TableCell>
+                  <TableCell>
+                    {(() => {
+                      const dates = q.event_dates?.length ? q.event_dates : q.event_date ? [q.event_date] : [];
+                      if (dates.length === 0) return '-';
+                      if (dates.length === 1) return format(new Date(dates[0]), 'MMM d, yyyy');
+                      return (
+                        <div>
+                          <span>{format(new Date(dates[0]), 'MMM d, yyyy')}</span>
+                          <Badge variant="outline" className="ml-2 text-xs">+{dates.length - 1} more</Badge>
+                        </div>
+                      );
+                    })()}
+                  </TableCell>
                   <TableCell className="font-medium">{formatCurrency(q.total_amount)}</TableCell>
                   <TableCell>
                     <Badge variant="outline" className={statusConfig[q.status]?.className || ''}>

@@ -735,6 +735,7 @@ export type Database = {
           created_at: string
           discount_amount: number
           event_date: string | null
+          event_dates: string[] | null
           event_type: string | null
           id: string
           notes: string | null
@@ -754,6 +755,7 @@ export type Database = {
           created_at?: string
           discount_amount?: number
           event_date?: string | null
+          event_dates?: string[] | null
           event_type?: string | null
           id?: string
           notes?: string | null
@@ -773,6 +775,7 @@ export type Database = {
           created_at?: string
           discount_amount?: number
           event_date?: string | null
+          event_dates?: string[] | null
           event_type?: string | null
           id?: string
           notes?: string | null

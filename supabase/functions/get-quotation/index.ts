@@ -51,6 +51,11 @@ serve(async (req: Request) => {
       quotation.status = "viewed";
     }
 
+    // Backward compat: populate event_dates from event_date if empty
+    if ((!quotation.event_dates || quotation.event_dates.length === 0) && quotation.event_date) {
+      quotation.event_dates = [quotation.event_date];
+    }
+
     return new Response(JSON.stringify({ quotation, items: items || [], studioConfig }), {
       status: 200,
       headers: { "Content-Type": "application/json", ...corsHeaders },
