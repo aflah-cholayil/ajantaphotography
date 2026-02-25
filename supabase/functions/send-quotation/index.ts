@@ -116,10 +116,15 @@ serve(async (req: Request) => {
       </div>` : '';
 
     // Notes block - render HTML directly, sanitized
+    const styledNotes = quotation.notes ? sanitizeHtml(quotation.notes)
+      .replace(/<ul>/gi, '<ul style="list-style-type: disc; padding-left: 20px; margin: 8px 0;">')
+      .replace(/<ol>/gi, '<ol style="list-style-type: decimal; padding-left: 20px; margin: 8px 0;">')
+      .replace(/<li>/gi, '<li style="margin: 4px 0; color: #a09080;">') : '';
+
     const notesBlock = quotation.notes ? `
       <div style="background: #252118; padding: 15px; border-radius: 8px; margin: 20px 0;">
         <p style="color: #d4a853; font-size: 12px; margin: 0 0 8px 0; text-transform: uppercase;">Terms & Notes</p>
-        <div style="color: #a09080; margin: 0; font-size: 13px; line-height: 1.6;">${sanitizeHtml(quotation.notes)}</div>
+        <div style="color: #a09080; margin: 0; font-size: 13px; line-height: 1.6;">${styledNotes}</div>
       </div>` : '';
 
     const html = `
