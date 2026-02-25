@@ -34,10 +34,10 @@ export function VideoUploader({ currentVideoKey, onUploadComplete, onRemove }: V
     }
 
     // Validate file size (max 500MB)
-    if (file.size > 500 * 1024 * 1024) {
+    if (file.size > 1024 * 1024 * 1024) {
       toast({
         title: 'File too large',
-        description: 'Maximum video size is 500MB',
+        description: 'Maximum video size is 1GB',
         variant: 'destructive',
       });
       return;
@@ -202,7 +202,7 @@ export function VideoUploader({ currentVideoKey, onUploadComplete, onRemove }: V
       )}
 
       <p className="text-xs text-muted-foreground text-center">
-        Accepted formats: MP4, WebM, MOV • Max size: 500MB
+        Accepted formats: MP4, WebM, MOV • Max size: 1GB
       </p>
     </div>
   );
