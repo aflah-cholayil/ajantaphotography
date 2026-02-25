@@ -1,13 +1,31 @@
 
 
-# Replace Favicon ICO File
+# Update Favicon with New .ico File
 
-## What's happening
-The `public/favicon.ico` still contains the default Lovable icon. The user has now uploaded their custom `.ico` file (`ajantaico.ico`).
+## Changes
 
-## Fix
-1. Copy `user-uploads://ajantaico.ico` → `public/favicon.ico`
-2. No HTML changes needed — `index.html` already has `<link rel="icon" type="image/x-icon" href="/favicon.ico" />`
+**1. Copy uploaded file → `public/favicon.ico`**
+Replace the existing favicon.ico with the newly uploaded `user-uploads://ajantaico-2.ico`.
 
-Single file copy. No code changes.
+**2. Update `index.html`** — Add `<link rel="shortcut icon">` tag alongside the existing icon tags, and remove the PNG favicon references:
+
+Current (lines 5-7):
+```html
+<link rel="icon" type="image/x-icon" href="/favicon.ico" />
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />
+<link rel="apple-touch-icon" href="/favicon.png" />
+```
+
+After:
+```html
+<link rel="icon" type="image/x-icon" href="/favicon.ico" />
+<link rel="shortcut icon" href="/favicon.ico" />
+<link rel="apple-touch-icon" href="/favicon.ico" />
+```
+
+This removes the PNG favicon references and consolidates on the .ico file.
+
+**Not applicable:** This is a Vite/React project, not Next.js — no `layout.tsx` metadata changes needed.
+
+**No other files touched.** No styling, layout, or functionality changes.
 
