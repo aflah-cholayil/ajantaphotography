@@ -1,31 +1,31 @@
 
 
-# Update Favicon with New .ico File
+# Fix "View Full Quotation" Wrong Link
 
-## Changes
+## Problem
 
-**1. Copy uploaded file → `public/favicon.ico`**
-Replace the existing favicon.ico with the newly uploaded `user-uploads://ajantaico-2.ico`.
+The "View Full Quotation" button in the email links to `https://studio-shines-77.lovable.app/quotation/AJ-2026-0002`. This is the old Lovable preview URL, not your published site. When users click it, they see "Publish or update your Lovable project for it to appear here."
 
-**2. Update `index.html`** — Add `<link rel="shortcut icon">` tag alongside the existing icon tags, and remove the PNG favicon references:
+## Root Cause
 
-Current (lines 5-7):
-```html
-<link rel="icon" type="image/x-icon" href="/favicon.ico" />
-<link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />
-<link rel="apple-touch-icon" href="/favicon.png" />
+In `supabase/functions/send-quotation/index.ts` (line 93), the fallback URL is hardcoded to the old preview domain:
+
+```
+const siteUrl = Deno.env.get("SITE_URL") || "https://studio-shines-77.lovable.app";
 ```
 
-After:
-```html
-<link rel="icon" type="image/x-icon" href="/favicon.ico" />
-<link rel="shortcut icon" href="/favicon.ico" />
-<link rel="apple-touch-icon" href="/favicon.ico" />
-```
+The `SITE_URL` secret is not configured, so it always falls back to `studio-shines-77.lovable.app`.
 
-This removes the PNG favicon references and consolidates on the .ico file.
+The same issue exists in `supabase/functions/send-questionnaire/index.ts` (line 98).
 
-**Not applicable:** This is a Vite/React project, not Next.js — no `layout.tsx` metadata changes needed.
+## Fix
 
-**No other files touched.** No styling, layout, or functionality changes.
+**1. Update the fallback URL in both edge functions** to use the correct published URL (`https://ajantaphotography.in` if your custom domain is active, or `https://ajantaphotography.lovable.app`):
+
+- `supabase/functions/send-quotation/index.ts` line 93: change fallback to `https://ajantaphotography.in`
+- `supabase/functions/send-questionnaire/index.ts` line 98: change fallback to `https://ajantaphotography.in`
+
+**2. Set the `SITE_URL` secret** to `https://ajantaphotography.in` so both functions use the correct domain going forward.
+
+No other files are changed. No styling or layout modifications.
 
