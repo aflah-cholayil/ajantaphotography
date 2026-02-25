@@ -165,130 +165,253 @@ const QuotationView = () => {
     const { jsPDF } = await import('jspdf');
     const doc = new jsPDF();
     await registerPDFFont(doc);
+
     const margin = 20;
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const contentW = pageW - margin * 2;
     let y = margin;
 
-    // Header
-    doc.setFontSize(22);
-    doc.setTextColor(40, 40, 40);
-    doc.text('Ajanta Photography', margin, y);
-    y += 8;
-    doc.setFontSize(10);
-    doc.setTextColor(120, 120, 120);
-    doc.text(studioConfig.address_line1 || 'GHSS School Junction, Pandalur', margin, y);
-    y += 5;
-    doc.text(`${studioConfig.address_line2 || 'The Nilgiris'} – ${studioConfig.pincode || '643233'}`, margin, y);
-    y += 5;
-    doc.text(`Phone: ${studioConfig.phones || '+91 94435 68486'}`, margin, y);
-    y += 5;
-    doc.text(`Email: ${studioConfig.email || 'ajantastudiopandalur@gmail.com'}`, margin, y);
-    y += 12;
+    // ── Colors ──
+    const gold: [number, number, number] = [212, 175, 55];
+    const textDark: [number, number, number] = [34, 34, 34];
+    const textMuted: [number, number, number] = [136, 136, 136];
+    const bgBox: [number, number, number] = [247, 247, 247];
+    const borderLight: [number, number, number] = [238, 238, 238];
 
-    // Quotation title
-    doc.setFontSize(16);
-    doc.setTextColor(40, 40, 40);
-    doc.text(`Quotation: ${quotation.quotation_number}`, margin, y);
-    y += 8;
+    // ── Helper: check page break ──
+    const checkPage = (needed: number) => {
+      if (y + needed > pageH - 25) {
+        doc.addPage();
+        y = margin;
+      }
+    };
+
+    // ── Helper: draw footer on current page ──
+    const drawFooter = () => {
+      const fy = pageH - 12;
+      doc.setFontSize(7);
+      doc.setTextColor(...textMuted);
+      const studioName = 'Ajanta Photography';
+      const addr = `${studioConfig.address_line1 || 'GHSS School Junction, Pandalur'}, ${studioConfig.address_line2 || 'The Nilgiris'} – ${studioConfig.pincode || '643233'}`;
+      const contact = `Phone: ${studioConfig.primary_phone || studioConfig.phones || '+91 94435 68486'}  |  Email: ${studioConfig.email || 'ajantastudiopandalur@gmail.com'}  |  ajantaphotography.in`;
+      doc.text(studioName, pageW / 2, fy - 4, { align: 'center' });
+      doc.text(addr, pageW / 2, fy, { align: 'center' });
+      doc.text(contact, pageW / 2, fy + 4, { align: 'center' });
+    };
+
+    // ═══════════════════════════════════════
+    // 1) HEADER — Logo left, title right
+    // ═══════════════════════════════════════
+    try {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      await new Promise<void>((resolve) => {
+        img.onload = () => {
+          doc.addImage(img, 'PNG', margin, y, 25, 25);
+          resolve();
+        };
+        img.onerror = () => resolve();
+        img.src = logoSrc;
+      });
+    } catch { /* logo skipped */ }
+
+    // Right-aligned header text
+    doc.setFontSize(24);
+    doc.setTextColor(...textDark);
+    doc.text('QUOTATION', pageW - margin, y + 8, { align: 'right' });
     doc.setFontSize(10);
-    doc.setTextColor(120, 120, 120);
-    doc.text(`Date: ${formatDate(quotation.created_at)}`, margin, y);
+    doc.setTextColor(...textMuted);
+    doc.text(quotation.quotation_number, pageW - margin, y + 15, { align: 'right' });
+    doc.text(`Date: ${formatDate(quotation.created_at)}`, pageW - margin, y + 21, { align: 'right' });
     if (quotation.valid_until) {
-      doc.text(`Valid Until: ${formatDate(quotation.valid_until)}`, margin + 80, y);
+      doc.text(`Valid Until: ${formatDate(quotation.valid_until)}`, pageW - margin, y + 27, { align: 'right' });
     }
+
+    y += 32;
+
+    // Gold divider line
+    doc.setDrawColor(...gold);
+    doc.setLineWidth(0.5);
+    doc.line(margin, y, pageW - margin, y);
     y += 10;
 
-    // Client info
-    doc.setFontSize(11);
-    doc.setTextColor(40, 40, 40);
-    doc.text('Bill To:', margin, y);
-    y += 6;
-    doc.setFontSize(10);
-    doc.text(quotation.client_name, margin, y); y += 5;
-    doc.setTextColor(120, 120, 120);
-    doc.text(quotation.client_email, margin, y); y += 5;
-    if (quotation.client_phone) { doc.text(quotation.client_phone, margin, y); y += 5; }
-    if (quotation.event_type) { doc.text(`Event: ${quotation.event_type}`, margin, y); y += 5; }
+    // ═══════════════════════════════════════
+    // 2) CLIENT + EVENT SECTION
+    // ═══════════════════════════════════════
+    const boxH = 32;
+    doc.setFillColor(...bgBox);
+    doc.roundedRect(margin, y - 4, contentW, boxH, 2, 2, 'F');
 
-    // Event dates
+    // Left column — Bill To
+    doc.setFontSize(8);
+    doc.setTextColor(...textMuted);
+    doc.text('BILL TO', margin + 5, y + 2);
+    doc.setFontSize(10);
+    doc.setTextColor(...textDark);
+    doc.text(quotation.client_name, margin + 5, y + 8);
+    doc.setFontSize(9);
+    doc.setTextColor(...textMuted);
+    doc.text(quotation.client_email, margin + 5, y + 13);
+    if (quotation.client_phone) {
+      doc.text(quotation.client_phone, margin + 5, y + 18);
+    }
+
+    // Right column — Event Details
+    const rightColX = margin + contentW / 2 + 5;
+    doc.setFontSize(8);
+    doc.setTextColor(...textMuted);
+    doc.text('EVENT DETAILS', rightColX, y + 2);
+    doc.setFontSize(10);
+    doc.setTextColor(...textDark);
+    if (quotation.event_type) {
+      doc.text(quotation.event_type, rightColX, y + 8);
+    }
     const eventDates = getEventDates(quotation);
     if (eventDates.length > 0) {
-      const datesStr = eventDates.map(d => formatDate(d)).join(', ');
-      doc.text(`Event Date${eventDates.length > 1 ? 's' : ''}: ${datesStr}`, margin, y);
-      y += 5;
-    }
-    y += 5;
-
-    // Notes / Terms (before items table)
-    if (quotation.notes) {
-      doc.setFontSize(10);
-      doc.setTextColor(100, 100, 100);
-      doc.text('Terms & Notes:', margin, y); y += 6;
       doc.setFontSize(9);
-      const structuredNotes = htmlToStructuredText(quotation.notes);
-      const noteLines = doc.splitTextToSize(structuredNotes, 170);
-      doc.text(noteLines, margin, y);
-      y += noteLines.length * 4.5 + 5;
+      doc.setTextColor(...textMuted);
+      const datesStr = eventDates.map(d => formatDate(d)).join(', ');
+      const dateLines = doc.splitTextToSize(datesStr, contentW / 2 - 10);
+      doc.text(dateLines, rightColX, y + (quotation.event_type ? 13 : 8));
     }
 
-    y += 3;
+    y += boxH + 8;
 
-    // Items table header
-    const colX = [margin, margin + 10, margin + 85, margin + 105, margin + 130, margin + 155];
-    doc.setFillColor(245, 245, 245);
-    doc.rect(margin, y - 4, 170, 8, 'F');
-    doc.setFontSize(9);
-    doc.setTextColor(100, 100, 100);
-    doc.text('#', colX[0], y);
-    doc.text('Item', colX[1], y);
-    doc.text('Qty', colX[2], y);
-    doc.text('Price', colX[3], y);
-    doc.text('Total', colX[4], y);
-    y += 8;
+    // ═══════════════════════════════════════
+    // 3) ITEMS TABLE
+    // ═══════════════════════════════════════
+    const col = {
+      num: margin,
+      item: margin + 12,
+      desc: margin + 52,
+      qty: margin + 110,
+      price: margin + 130,
+      total: margin + 155,
+    };
+    const rowH = 7;
+    const headerH = 8;
 
-    // Items
-    doc.setTextColor(40, 40, 40);
+    // Table header
+    doc.setFillColor(...gold);
+    doc.rect(margin, y, contentW, headerH, 'F');
+    doc.setFontSize(8);
+    doc.setTextColor(255, 255, 255);
+    const headerY = y + 5.5;
+    doc.text('#', col.num + 2, headerY);
+    doc.text('Item', col.item, headerY);
+    doc.text('Description', col.desc, headerY);
+    doc.text('Qty', col.qty + 5, headerY, { align: 'center' });
+    doc.text('Price', col.price + 10, headerY, { align: 'right' });
+    doc.text('Total', pageW - margin - 2, headerY, { align: 'right' });
+    y += headerH;
+
+    // Table rows
     items.forEach((item, i) => {
-      if (y > 260) { doc.addPage(); y = margin; }
-      doc.text(`${i + 1}`, colX[0], y);
-      doc.text(item.item_name.substring(0, 35), colX[1], y);
-      doc.text(`${item.quantity}`, colX[2], y);
-      doc.text(formatCurrency(item.price), colX[3], y);
-      doc.text(formatCurrency(item.total), colX[4], y);
-      y += 7;
-      if (item.description) {
+      const descLines = item.description
+        ? doc.splitTextToSize(item.description, col.qty - col.desc - 3)
+        : [];
+      const neededH = Math.max(rowH, descLines.length * 4 + 4);
+      checkPage(neededH + 2);
+
+      doc.setFontSize(8);
+      doc.setTextColor(...textDark);
+      const cellY = y + 5;
+      doc.text(`${i + 1}`, col.num + 2, cellY);
+      doc.text(item.item_name.substring(0, 25), col.item, cellY);
+      if (descLines.length > 0) {
+        doc.setFontSize(7);
+        doc.setTextColor(...textMuted);
+        doc.text(descLines, col.desc, cellY);
         doc.setFontSize(8);
-        doc.setTextColor(140, 140, 140);
-        doc.text(item.description.substring(0, 50), colX[1], y);
-        y += 5;
-        doc.setFontSize(9);
-        doc.setTextColor(40, 40, 40);
       }
+      doc.setTextColor(...textDark);
+      doc.text(`${item.quantity}`, col.qty + 5, cellY, { align: 'center' });
+      doc.text(formatCurrency(item.price), col.price + 10, cellY, { align: 'right' });
+      doc.text(formatCurrency(item.total), pageW - margin - 2, cellY, { align: 'right' });
+
+      y += neededH;
+      // Row border
+      doc.setDrawColor(...borderLight);
+      doc.setLineWidth(0.3);
+      doc.line(margin, y, pageW - margin, y);
     });
 
-    y += 5;
-    doc.line(margin, y, margin + 170, y);
-    y += 8;
-
-    // Totals
-    const rightCol = margin + 130;
-    doc.text('Subtotal:', margin + 100, y);
-    doc.text(formatCurrency(quotation.subtotal), rightCol, y);
-    y += 6;
-    if (quotation.tax_percentage > 0) {
-      doc.text(`Tax (${quotation.tax_percentage}%):`, margin + 100, y);
-      doc.text(formatCurrency(quotation.subtotal * quotation.tax_percentage / 100), rightCol, y);
-      y += 6;
-    }
-    if (quotation.discount_amount > 0) {
-      doc.text('Discount:', margin + 100, y);
-      doc.text(`-${formatCurrency(quotation.discount_amount)}`, rightCol, y);
-      y += 6;
-    }
-    doc.setFontSize(12);
-    doc.setTextColor(180, 146, 61);
-    doc.text('Total:', margin + 100, y);
-    doc.text(formatCurrency(quotation.total_amount), rightCol, y);
     y += 10;
+
+    // ═══════════════════════════════════════
+    // 4) TOTALS SECTION
+    // ═══════════════════════════════════════
+    checkPage(40);
+    const totalsLabelX = pageW - margin - 60;
+    const totalsValX = pageW - margin - 2;
+
+    doc.setFontSize(9);
+    doc.setTextColor(...textDark);
+    doc.text('Subtotal:', totalsLabelX, y);
+    doc.text(formatCurrency(quotation.subtotal), totalsValX, y, { align: 'right' });
+    y += 6;
+
+    if (quotation.discount_amount > 0) {
+      doc.text('Discount:', totalsLabelX, y);
+      doc.text(`-${formatCurrency(quotation.discount_amount)}`, totalsValX, y, { align: 'right' });
+      y += 6;
+    }
+
+    if (quotation.tax_percentage > 0) {
+      const taxAmt = quotation.subtotal * quotation.tax_percentage / 100;
+      doc.text(`Tax (${quotation.tax_percentage}%):`, totalsLabelX, y);
+      doc.text(formatCurrency(taxAmt), totalsValX, y, { align: 'right' });
+      y += 6;
+    }
+
+    // Separator
+    doc.setDrawColor(...gold);
+    doc.setLineWidth(0.3);
+    doc.line(totalsLabelX - 5, y, pageW - margin, y);
+    y += 7;
+
+    // Grand Total
+    doc.setFontSize(14);
+    doc.setTextColor(...gold);
+    doc.text('GRAND TOTAL:', totalsLabelX - 15, y);
+    doc.text(formatCurrency(quotation.total_amount), totalsValX, y, { align: 'right' });
+    y += 14;
+
+    // ═══════════════════════════════════════
+    // 5) TERMS & CONDITIONS
+    // ═══════════════════════════════════════
+    if (quotation.notes) {
+      checkPage(20);
+      doc.setFontSize(11);
+      doc.setTextColor(...textDark);
+      doc.text('TERMS & CONDITIONS', margin, y);
+      y += 2;
+      doc.setDrawColor(...gold);
+      doc.setLineWidth(0.3);
+      doc.line(margin, y, margin + 45, y);
+      y += 6;
+
+      doc.setFontSize(8);
+      doc.setTextColor(80, 80, 80);
+      const structuredNotes = htmlToStructuredText(quotation.notes);
+      const noteLines = doc.splitTextToSize(structuredNotes, contentW);
+      for (let i = 0; i < noteLines.length; i++) {
+        checkPage(5);
+        doc.text(noteLines[i], margin, y);
+        y += 4;
+      }
+      y += 6;
+    }
+
+    // ═══════════════════════════════════════
+    // 6) FOOTER
+    // ═══════════════════════════════════════
+    const totalPages = doc.getNumberOfPages();
+    for (let p = 1; p <= totalPages; p++) {
+      doc.setPage(p);
+      drawFooter();
+    }
 
     doc.save(`Quotation-${quotation.quotation_number}.pdf`);
   };
