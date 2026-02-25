@@ -119,7 +119,13 @@ serve(async (req: Request) => {
     const styledNotes = quotation.notes ? sanitizeHtml(quotation.notes)
       .replace(/<ul>/gi, '<ul style="list-style-type: disc; padding-left: 20px; margin: 8px 0;">')
       .replace(/<ol>/gi, '<ol style="list-style-type: decimal; padding-left: 20px; margin: 8px 0;">')
-      .replace(/<li>/gi, '<li style="margin: 4px 0; color: #a09080;">') : '';
+      .replace(/<li>/gi, '<li style="margin: 4px 0; color: #a09080;">')
+      .replace(/<p>/gi, '<p style="margin: 8px 0; color: #a09080; line-height: 1.6;">')
+      .replace(/<strong>/gi, '<strong style="color: #f5f0e8; font-weight: 600;">')
+      .replace(/<b>/gi, '<b style="color: #f5f0e8; font-weight: 600;">')
+      .replace(/<h3>/gi, '<h3 style="color: #f5f0e8; font-size: 15px; margin: 12px 0 6px 0; font-weight: 600;">')
+      .replace(/<h4>/gi, '<h4 style="color: #f5f0e8; font-size: 14px; margin: 10px 0 4px 0; font-weight: 600;">')
+      : '';
 
     const notesBlock = quotation.notes ? `
       <div style="background: #252118; padding: 15px; border-radius: 8px; margin: 20px 0;">
