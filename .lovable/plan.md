@@ -1,116 +1,77 @@
 
 
-# Quotation Layout Update + Multi-Date Support
+# Fix Quotation View, Email, and PDF Issues
 
-## Overview
+## Current State
 
-Enhance the quotation system with multi-date support, rich text notes editing, and reordered form layout. Changes span the database, 3 edge functions, 2 frontend pages, and the form dialog.
+After reviewing the code, the **view page** (`QuotationView.tsx`) and **email template** (`send-quotation/index.ts`) already have most fixes in place from the previous implementation:
+- Notes render via `dangerouslySetInnerHTML` with `sanitizeHtml` (line 332)
+- Multiple dates display correctly via `getEventDates` helper (lines 310-321)
+- Notes section is positioned after event details (lines 326-335)
+- Email template has multi-date support and sanitized HTML notes
 
-## Database Migration
+The remaining issues are all in the **PDF generation** section of `QuotationView.tsx` (lines 119-246):
 
-Add `event_dates` column to `quotations` table:
+## Fixes Required
 
-```sql
-ALTER TABLE quotations ADD COLUMN event_dates text[] DEFAULT '{}';
+### 1. PDF: ₹ Symbol Shows as Small "1"
+
+**Root cause**: jsPDF's default Helvetica font does not support the Unicode ₹ character.
+
+**Fix**: Create a `formatCurrencyPDF` function that uses `"Rs."` prefix instead of ₹:
+
+```typescript
+const formatCurrencyPDF = (amount: number) =>
+  'Rs. ' + new Intl.NumberFormat('en-IN', { minimumFractionDigits: 0 }).format(amount);
 ```
 
-Migrate existing single `event_date` values into the new array column so no data is lost. Keep `event_date` column for backward compatibility but stop using it in new code.
+Replace all `formatCurrency()` calls inside `handleDownloadPDF` with `formatCurrencyPDF()`. The web view continues using ₹ via `formatCurrency`.
 
-## File Changes
+### 2. PDF: Notes Section Position Wrong
 
-### 1. `src/components/admin/QuotationFormDialog.tsx`
+**Current**: Notes are rendered after the totals section (lines 234-243).
 
-**Multi-date support:**
-- Replace `event_date: string` in form state with `event_dates: string[]`
-- Add "Add Date" button that appends a new date input
-- Each date has a remove button (X icon)
-- At least 1 date not enforced (optional field)
+**Fix**: Move the notes block to immediately after the event dates block (after line 173), before the items table header. This matches the view page and email layout order:
 
-**Rich text notes:**
-- Replace plain `<Textarea>` with a simple toolbar-enhanced textarea approach using markdown-style formatting
-- Since adding TipTap/Quill would require new dependencies, use a lightweight approach: keep `<Textarea>` but add formatting toolbar buttons (bold `**text**`, bullet `• `, numbered `1. `) that insert markdown markers. Store as HTML by converting on save using a simple markdown-to-HTML converter built inline (no dependency needed)
-- Alternatively, store raw text and render with `white-space: pre-wrap` plus basic pattern replacement for bullets/bold on display
-
-**Recommended approach:** Use a simple rich textarea that stores HTML directly. Add toolbar buttons that use `document.execCommand` on a `contentEditable` div styled to match the existing textarea. This gives bullet points, bold, and line breaks without any new dependency.
-
-**Form section reorder:**
 ```
-Fill from Booking (if creating)
-Client Info (name, email, phone)
-Event Type
-Event Dates (multi-date picker)
-Notes / Terms & Conditions (rich text)
-Items
-Pricing Summary
-Valid Until
-Actions
+Event Type → Event Dates → Terms & Notes → Items Table → Totals
 ```
 
-**Save logic update:**
-- Send `event_dates` array instead of `event_date`
-- Convert notes from contentEditable HTML to stored HTML string
-- When loading existing quotation, populate `event_dates` from the array column (fallback to `[event_date]` for old records)
+### 3. PDF: Notes Show Raw HTML Instead of Formatted Text
 
-### 2. `src/pages/QuotationView.tsx`
+**Current**: `htmlToPlainText` strips all formatting, losing bullet structure.
 
-- Update `QuotationData` interface: add `event_dates: string[] | null`
-- Event details section: render multiple dates, each on its own line or comma-separated
-- Notes section: render HTML using `dangerouslySetInnerHTML` with basic sanitization (strip script tags, event handlers)
-- PDF generation: render dates as multi-line, render notes as plain text extracted from HTML
+**Fix**: Replace `htmlToPlainText` with a smarter HTML-to-text converter that preserves list structure:
 
-### 3. `supabase/functions/send-quotation/index.ts`
-
-- Read `event_dates` array from quotation
-- Display dates in the event details block as comma-separated formatted dates
-- Render notes HTML directly in the email (already in an HTML context, so this works naturally)
-- Sanitize notes HTML server-side (strip `<script>`, `onclick`, etc.) before embedding
-
-### 4. `supabase/functions/get-quotation/index.ts`
-
-- No structural change needed -- `select("*")` already returns all columns including new `event_dates`
-- Backward compat: if `event_dates` is empty/null but `event_date` exists, return `event_dates: [event_date]`
-
-### 5. `src/pages/admin/Quotations.tsx`
-
-- Update `Quotation` interface to include `event_dates`
-- Event Date column: show first date or "Multiple dates" badge if > 1
-
-## Rich Text Implementation Detail
-
-Use a `contentEditable` div with a minimal toolbar (no new dependencies):
-
-```text
-[B] [• List] [1. Numbered] [—]
-┌─────────────────────────────────────┐
-│ • 50% advance required              │
-│ • Balance before delivery            │
-│ • Cancellation not refundable        │
-└─────────────────────────────────────┘
+```typescript
+function htmlToStructuredText(html: string): string {
+  const div = document.createElement('div');
+  div.innerHTML = html;
+  let result = '';
+  const walk = (node: Node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      result += node.textContent;
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      const el = node as HTMLElement;
+      const tag = el.tagName.toLowerCase();
+      if (tag === 'li') result += '  • ';
+      if (tag === 'br' || tag === 'p' || tag === 'div') result += '\n';
+      el.childNodes.forEach(walk);
+      if (tag === 'li' || tag === 'p' || tag === 'div') result += '\n';
+    }
+  };
+  div.childNodes.forEach(walk);
+  return result.replace(/\n{3,}/g, '\n\n').trim();
+}
 ```
 
-Toolbar buttons:
-- **Bold**: wraps selection in `<strong>`
-- **Bullet list**: inserts `<ul><li>` 
-- **Ordered list**: inserts `<ol><li>`
+This preserves bullet points as `• ` prefixed lines in the PDF output.
 
-The `contentEditable` div's innerHTML is captured on blur/change and stored in `form.notes`. On load, existing HTML is set as innerHTML. Plain text from old records renders fine as-is.
+## Files Changed
 
-Sanitization function (no dependency): strip `<script>`, `<iframe>`, `on*` attributes using regex before rendering.
-
-## Backward Compatibility
-
-- Old quotations with `event_date` but no `event_dates`: handled by fallback logic in both frontend and edge functions
-- Old plain text notes: render correctly in contentEditable and in all display contexts
-- No breaking changes to existing data
-
-## Files Summary
-
-| File | Action |
+| File | Change |
 |------|--------|
-| Database migration | Add `event_dates text[]` column, migrate existing data |
-| `src/components/admin/QuotationFormDialog.tsx` | Reorder sections, multi-date UI, rich text editor |
-| `src/pages/QuotationView.tsx` | Multi-date display, HTML notes rendering |
-| `src/pages/admin/Quotations.tsx` | Update interface and date column display |
-| `supabase/functions/send-quotation/index.ts` | Multi-date + HTML notes in email |
-| `supabase/functions/get-quotation/index.ts` | Backward compat for event_dates |
+| `src/pages/QuotationView.tsx` | Add `formatCurrencyPDF`, improve `htmlToPlainText`, move notes in PDF, use PDF-safe currency |
+
+No database, edge function, or other file changes needed.
 
