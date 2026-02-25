@@ -1,40 +1,31 @@
 
 
-# Fix PDF Footer Overlap and Ordered List Numbering
+# Fix Ordered List Numbering in PDF
 
-## File: `src/pages/QuotationView.tsx`
+## Root Cause (confirmed via database query)
 
-Two targeted fixes, nothing else changes.
+The actual HTML stored by TipTap for this quotation is:
 
----
-
-### Fix 1: Footer overlapping content
-
-**Root cause:** `checkPage` (line 183-188) reserves only 25mm at the bottom (`pageH - 25`), but the footer draws starting at `pageH - 16` (fy - 4 where fy = pageH - 12). Content can render into the footer zone.
-
-**Fix:** Increase the bottom margin in `checkPage` from 25 to 35, so content never enters the footer area.
-
-```text
-Line 184: change  pageH - 25  →  pageH - 35
+```html
+<ol><li><p><strong>STILL:</strong></p></li></ol>
+...
+<ol start="2"><li><p><strong>VIDEO:</strong></p></li></ol>
 ```
 
-This single change ensures all content (items table, terms, totals) respects the footer space. The footer itself stays at its fixed position — no structural change needed since jsPDF uses absolute coordinates (not CSS positioning).
+TipTap uses the `start` attribute on `<ol>` to indicate continuation. The current code ignores this attribute — it uses a `previousElementSibling` heuristic that does not match how TipTap structures its output.
 
----
+## Fix
 
-### Fix 2: Ordered list numbers always show "1"
+**File:** `src/pages/QuotationView.tsx`, lines 405-414
 
-**Root cause:** TipTap's HTML output wraps each list item in its own `<ol>` tag (e.g., `<ol><li>STILL</li></ol><ol><li>VIDEO</li></ol>`). At line 406, `listCounter` resets to 0 on every `<ol>` entry, so every item becomes "1."
+Replace the `case 'ol'` block to read the `start` attribute:
 
-**Fix:** Only reset `listCounter` when the previous sibling is NOT an `<ol>`. This way consecutive `<ol>` blocks share a single counter.
-
-```text
-Lines 405-409: Change from unconditional reset to:
-
+```typescript
 case 'ol': {
-  // Only reset counter if previous sibling wasn't also an <ol>
-  const prevSib = el.previousElementSibling;
-  if (!prevSib || prevSib.tagName.toLowerCase() !== 'ol') {
+  const startAttr = (el as HTMLElement).getAttribute('start');
+  if (startAttr) {
+    listCounter = parseInt(startAttr, 10) - 1;
+  } else {
     listCounter = 0;
   }
   y += 1;
@@ -44,14 +35,15 @@ case 'ol': {
 }
 ```
 
----
+When `<ol start="2">` is encountered, `listCounter` is set to 1. The `<li>` handler then increments to 2, producing "2." — exactly matching what the admin typed.
 
-### Summary of changes
+When no `start` attribute exists (plain `<ol>`), counter resets to 0 as before, so item becomes "1."
 
-| Line | What | Change |
-|------|------|--------|
-| 184 | `checkPage` threshold | `pageH - 25` → `pageH - 35` |
-| 405-409 | `case 'ol'` | Conditional counter reset based on previous sibling |
+## Summary
 
-No other files or logic modified.
+| Line | Change |
+|------|--------|
+| 405-414 | Read `start` attribute from `<ol>` instead of checking `previousElementSibling` |
+
+Single change. No other files or logic modified.
 
