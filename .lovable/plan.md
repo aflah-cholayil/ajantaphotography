@@ -1,61 +1,57 @@
 
 
-# Fix Terms & Conditions in PDF
+# Fix PDF Footer Overlap and Ordered List Numbering
 
-## Scope
-Only modifying the `handleDownloadPDF` function in `src/pages/QuotationView.tsx`. No other changes.
+## File: `src/pages/QuotationView.tsx`
 
-## Two Changes
+Two targeted fixes, nothing else changes.
 
-### 1. Move Terms & Conditions section
-Currently at lines 382–405 (section 5, after Totals). Will be relocated to immediately after the Client + Event section (after line 279), before the Items Table.
+---
 
-New order:
+### Fix 1: Footer overlapping content
+
+**Root cause:** `checkPage` (line 183-188) reserves only 25mm at the bottom (`pageH - 25`), but the footer draws starting at `pageH - 16` (fy - 4 where fy = pageH - 12). Content can render into the footer zone.
+
+**Fix:** Increase the bottom margin in `checkPage` from 25 to 35, so content never enters the footer area.
+
 ```text
-Header → Client/Event → Terms & Conditions → Items Table → Totals → Footer
+Line 184: change  pageH - 25  →  pageH - 35
 ```
 
-### 2. Replace plain-text rendering with HTML-aware renderer
-Currently the notes are converted via `htmlToStructuredText()` which strips all formatting into flat text with manual `•` bullets. This loses headings, bold, alignment, and proper list styling.
+This single change ensures all content (items table, terms, totals) respects the footer space. The footer itself stays at its fixed position — no structural change needed since jsPDF uses absolute coordinates (not CSS positioning).
 
-**New approach**: Write an inline HTML walker that reads the DOM nodes and calls jsPDF methods accordingly:
-- `<h1>` → `setFontSize(18)`, bold, check `text-align: center` → use `align: 'center'`
-- `<h2>` → `setFontSize(15)`, bold, same alignment logic
-- `<h3>` → `setFontSize(13)`, bold
-- `<p>` → `setFontSize(9)`, normal weight, respect `text-align` from style attribute
-- `<strong>/<b>` → bold style
-- `<ul>/<ol> + <li>` → indented with proper bullet `•` or number, no random symbols
-- `<br>` → line break
-- Page break check before each block element
+---
 
-This keeps using jsPDF's native text drawing (not `doc.html()`) so it works reliably, but parses the HTML structure to preserve formatting.
+### Fix 2: Ordered list numbers always show "1"
 
-**Key details of the renderer:**
-- Parses `style="text-align: center"` from TipTap output to determine alignment
-- Uses `doc.setFont(undefined, 'bold')` / `'normal'` for weight
-- Proper spacing: headings get 8mm top margin, paragraphs get 5mm, list items get 4mm
-- `splitTextToSize` used for long text to handle wrapping
-- Color stays `#222` on white — no dark theme
+**Root cause:** TipTap's HTML output wraps each list item in its own `<ol>` tag (e.g., `<ol><li>STILL</li></ol><ol><li>VIDEO</li></ol>`). At line 406, `listCounter` resets to 0 on every `<ol>` entry, so every item becomes "1."
 
-### Files modified
-- `src/pages/QuotationView.tsx` — lines 279–405 (reorder sections + replace notes renderer)
+**Fix:** Only reset `listCounter` when the previous sibling is NOT an `<ol>`. This way consecutive `<ol>` blocks share a single counter.
 
-### Technical approach (code-level)
 ```text
-After line 279 (end of Client+Event):
-  → Insert Terms & Conditions block with new HTML-aware renderer
+Lines 405-409: Change from unconditional reset to:
 
-Lines 282-338 (Items Table):
-  → Stays the same, just shifts down in order
-
-Lines 382-405 (old Terms section):
-  → Removed (moved up)
+case 'ol': {
+  // Only reset counter if previous sibling wasn't also an <ol>
+  const prevSib = el.previousElementSibling;
+  if (!prevSib || prevSib.tagName.toLowerCase() !== 'ol') {
+    listCounter = 0;
+  }
+  y += 1;
+  el.childNodes.forEach(c => walkNode(c, isBold, 'ol'));
+  y += 1;
+  break;
+}
 ```
 
-The new renderer function `renderHtmlToPdf(doc, html, ...)` will:
-1. Create a temporary DOM div, set innerHTML
-2. Walk child nodes recursively
-3. For each element, set font size/weight/alignment based on tag
-4. Draw text with proper coordinates and page break handling
-5. Handle nested bold within paragraphs/headings
+---
+
+### Summary of changes
+
+| Line | What | Change |
+|------|------|--------|
+| 184 | `checkPage` threshold | `pageH - 25` → `pageH - 35` |
+| 405-409 | `case 'ol'` | Conditional counter reset based on previous sibling |
+
+No other files or logic modified.
 
