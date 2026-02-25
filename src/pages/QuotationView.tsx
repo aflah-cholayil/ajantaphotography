@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { Download, Check, X, Loader2 } from 'lucide-react';
-import { supabase } from '@/integrations/supabase/client';
+
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { MinimalFooter } from '@/components/shared/MinimalFooter';
@@ -102,11 +102,16 @@ const QuotationView = () => {
 
   const fetchQuotation = async () => {
     try {
-      const { data, error: fnErr } = await supabase.functions.invoke('get-quotation', {
-        body: { quotation_number: quotationNumber },
-      });
-      if (fnErr) throw fnErr;
-      if (data.error) throw new Error(data.error);
+      const res = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-quotation`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ quotation_number: quotationNumber }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'Quotation not found');
       setQuotation(data.quotation);
       setItems(data.items || []);
       setStudioConfig(data.studioConfig || {});
@@ -120,11 +125,16 @@ const QuotationView = () => {
   const handleResponse = async (action: 'accept' | 'reject') => {
     setResponding(true);
     try {
-      const { data, error } = await supabase.functions.invoke('update-quotation-status', {
-        body: { quotation_number: quotationNumber, action },
-      });
-      if (error) throw error;
-      if (data.error) throw new Error(data.error);
+      const res = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/update-quotation-status`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ quotation_number: quotationNumber, action }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'Failed to update');
       toast({ title: action === 'accept' ? 'Quotation Accepted' : 'Quotation Rejected' });
       setQuotation(prev => prev ? { ...prev, status: data.status } : null);
     } catch (err: any) {
