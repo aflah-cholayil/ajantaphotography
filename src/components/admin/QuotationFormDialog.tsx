@@ -1,11 +1,10 @@
-import { useState, useEffect, useMemo } from 'react';
-import { Plus, Trash2, ChevronsUpDown } from 'lucide-react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { Plus, Trash2, X, Bold, List, ListOrdered } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog,
   DialogContent,
@@ -35,7 +34,7 @@ interface QuotationFormData {
   client_email: string;
   client_phone: string;
   event_type: string;
-  event_date: string;
+  event_dates: string[];
   tax_percentage: number;
   discount_amount: number;
   notes: string;
@@ -60,13 +59,23 @@ interface Props {
   onSaved: () => void;
 }
 
+// Sanitize HTML - strip scripts, iframes, on* attributes
+function sanitizeHtml(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
+    .replace(/\son\w+="[^"]*"/gi, '')
+    .replace(/\son\w+='[^']*'/gi, '');
+}
+
 export function QuotationFormDialog({ open, onOpenChange, quotationId, prefillBookingId, onSaved }: Props) {
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
   const [bookings, setBookings] = useState<Booking[]>([]);
+  const notesRef = useRef<HTMLDivElement>(null);
   const [form, setForm] = useState<QuotationFormData>({
     client_name: '', client_email: '', client_phone: '',
-    event_type: '', event_date: '', tax_percentage: 0,
+    event_type: '', event_dates: [], tax_percentage: 0,
     discount_amount: 0, notes: '', valid_until: '', booking_id: null,
   });
   const [items, setItems] = useState<QuotationItem[]>([
@@ -98,25 +107,44 @@ export function QuotationFormDialog({ open, onOpenChange, quotationId, prefillBo
     }
   }, [open, quotationId, prefillBookingId, bookings]);
 
+  // Sync notes content to contentEditable div
+  useEffect(() => {
+    if (notesRef.current && open) {
+      // Set initial content when form loads
+      const currentHtml = notesRef.current.innerHTML;
+      if (form.notes && currentHtml !== form.notes) {
+        notesRef.current.innerHTML = sanitizeHtml(form.notes);
+      }
+    }
+  }, [form.notes, open]);
+
   const resetForm = () => {
     setForm({
       client_name: '', client_email: '', client_phone: '',
-      event_type: '', event_date: '', tax_percentage: 0,
+      event_type: '', event_dates: [], tax_percentage: 0,
       discount_amount: 0, notes: '', valid_until: '', booking_id: null,
     });
     setItems([{ item_name: '', description: '', quantity: 1, price: 0, total: 0, display_order: 0 }]);
+    if (notesRef.current) notesRef.current.innerHTML = '';
   };
 
   const loadQuotation = async (id: string) => {
     const { data: q } = await supabase.from('quotations').select('*').eq('id', id).single();
     if (!q) return;
+    // Backward compat: use event_dates array, fallback to single event_date
+    const eventDates: string[] = (q as any).event_dates?.length
+      ? (q as any).event_dates
+      : q.event_date ? [q.event_date] : [];
     setForm({
       client_name: q.client_name, client_email: q.client_email,
       client_phone: q.client_phone || '', event_type: q.event_type || '',
-      event_date: q.event_date || '', tax_percentage: Number(q.tax_percentage),
+      event_dates: eventDates, tax_percentage: Number(q.tax_percentage),
       discount_amount: Number(q.discount_amount), notes: q.notes || '',
       valid_until: q.valid_until || '', booking_id: q.booking_id,
     });
+    if (notesRef.current) {
+      notesRef.current.innerHTML = sanitizeHtml(q.notes || '');
+    }
     const { data: itemsData } = await supabase.from('quotation_items')
       .select('*').eq('quotation_id', id).order('display_order');
     if (itemsData?.length) {
@@ -135,7 +163,7 @@ export function QuotationFormDialog({ open, onOpenChange, quotationId, prefillBo
       client_email: booking.client_email,
       client_phone: booking.phone || '',
       event_type: booking.event_type,
-      event_date: booking.event_date || '',
+      event_dates: booking.event_date ? [booking.event_date] : [],
       booking_id: booking.id,
     }));
   };
@@ -164,6 +192,42 @@ export function QuotationFormDialog({ open, onOpenChange, quotationId, prefillBo
     setItems(prev => prev.filter((_, i) => i !== index));
   };
 
+  // Multi-date handlers
+  const addDate = () => {
+    setForm(prev => ({ ...prev, event_dates: [...prev.event_dates, ''] }));
+  };
+
+  const updateDate = (index: number, value: string) => {
+    setForm(prev => {
+      const dates = [...prev.event_dates];
+      dates[index] = value;
+      return { ...prev, event_dates: dates };
+    });
+  };
+
+  const removeDate = (index: number) => {
+    setForm(prev => ({
+      ...prev,
+      event_dates: prev.event_dates.filter((_, i) => i !== index),
+    }));
+  };
+
+  // Rich text toolbar handlers
+  const execCommand = useCallback((command: string, value?: string) => {
+    notesRef.current?.focus();
+    document.execCommand(command, false, value);
+    // Capture updated HTML
+    if (notesRef.current) {
+      setForm(prev => ({ ...prev, notes: notesRef.current!.innerHTML }));
+    }
+  }, []);
+
+  const handleNotesInput = useCallback(() => {
+    if (notesRef.current) {
+      setForm(prev => ({ ...prev, notes: notesRef.current!.innerHTML }));
+    }
+  }, []);
+
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 0 }).format(amount);
   };
@@ -178,19 +242,24 @@ export function QuotationFormDialog({ open, onOpenChange, quotationId, prefillBo
       return;
     }
 
+    // Capture latest notes from contentEditable
+    const notesHtml = notesRef.current?.innerHTML || form.notes || '';
+
     setSaving(true);
     try {
-      const quotationData = {
+      const filteredDates = form.event_dates.filter(d => d.trim() !== '');
+      const quotationData: Record<string, any> = {
         client_name: form.client_name,
         client_email: form.client_email,
         client_phone: form.client_phone || null,
         event_type: form.event_type || null,
-        event_date: form.event_date || null,
+        event_date: filteredDates[0] || null, // backward compat
+        event_dates: filteredDates,
         subtotal,
         tax_percentage: form.tax_percentage,
         discount_amount: form.discount_amount,
         total_amount: totalAmount,
-        notes: form.notes || null,
+        notes: sanitizeHtml(notesHtml) || null,
         valid_until: form.valid_until || null,
         booking_id: form.booking_id || null,
       };
@@ -198,19 +267,17 @@ export function QuotationFormDialog({ open, onOpenChange, quotationId, prefillBo
       let qId = quotationId;
 
       if (quotationId) {
-        const { error } = await supabase.from('quotations').update(quotationData).eq('id', quotationId);
+        const { error } = await supabase.from('quotations').update(quotationData as any).eq('id', quotationId);
         if (error) throw error;
-        // Delete old items and re-insert
         await supabase.from('quotation_items').delete().eq('quotation_id', quotationId);
       } else {
         const { data, error } = await supabase.from('quotations')
-          .insert({ ...quotationData, quotation_number: '' })
+          .insert({ ...quotationData, quotation_number: '' } as any)
           .select('id').single();
         if (error) throw error;
         qId = data.id;
       }
 
-      // Insert items
       const itemsToInsert = items.map((item, i) => ({
         quotation_id: qId!,
         item_name: item.item_name,
@@ -285,15 +352,94 @@ export function QuotationFormDialog({ open, onOpenChange, quotationId, prefillBo
             </div>
           </div>
 
-          {/* Event Details */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <Label>Event Type</Label>
-              <Input value={form.event_type} onChange={e => setForm(p => ({ ...p, event_type: e.target.value }))} placeholder="e.g. Wedding, Pre-Wedding" />
+          {/* Event Type */}
+          <div>
+            <Label>Event Type</Label>
+            <Input value={form.event_type} onChange={e => setForm(p => ({ ...p, event_type: e.target.value }))} placeholder="e.g. Wedding, Pre-Wedding" />
+          </div>
+
+          {/* Event Dates (Multi) */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <Label>Event Dates</Label>
+              <Button variant="outline" size="sm" onClick={addDate} type="button">
+                <Plus size={14} className="mr-1" /> Add Date
+              </Button>
             </div>
-            <div>
-              <Label>Event Date</Label>
-              <Input type="date" value={form.event_date} onChange={e => setForm(p => ({ ...p, event_date: e.target.value }))} />
+            {form.event_dates.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No dates added. Click "Add Date" to add event dates.</p>
+            ) : (
+              <div className="space-y-2">
+                {form.event_dates.map((date, index) => (
+                  <div key={index} className="flex items-center gap-2">
+                    <Input
+                      type="date"
+                      value={date}
+                      onChange={e => updateDate(index, e.target.value)}
+                      className="flex-1"
+                    />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => removeDate(index)}
+                      className="h-8 w-8 text-destructive shrink-0"
+                      type="button"
+                    >
+                      <X size={14} />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Notes / Terms & Conditions (Rich Text) */}
+          <div>
+            <Label className="mb-2 block">Notes / Terms & Conditions</Label>
+            <div className="border border-input rounded-md overflow-hidden">
+              {/* Toolbar */}
+              <div className="flex items-center gap-1 px-2 py-1.5 bg-muted/30 border-b border-input">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  type="button"
+                  onClick={() => execCommand('bold')}
+                  title="Bold"
+                >
+                  <Bold size={14} />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  type="button"
+                  onClick={() => execCommand('insertUnorderedList')}
+                  title="Bullet List"
+                >
+                  <List size={14} />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  type="button"
+                  onClick={() => execCommand('insertOrderedList')}
+                  title="Numbered List"
+                >
+                  <ListOrdered size={14} />
+                </Button>
+              </div>
+              {/* Editable area */}
+              <div
+                ref={notesRef}
+                contentEditable
+                suppressContentEditableWarning
+                onInput={handleNotesInput}
+                onBlur={handleNotesInput}
+                className="min-h-[120px] px-3 py-2 text-sm bg-background focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 [&_ul]:list-disc [&_ul]:ml-4 [&_ol]:list-decimal [&_ol]:ml-4 [&_li]:my-0.5"
+                style={{ whiteSpace: 'pre-wrap' }}
+              />
             </div>
           </div>
 
@@ -301,7 +447,7 @@ export function QuotationFormDialog({ open, onOpenChange, quotationId, prefillBo
           <div>
             <div className="flex items-center justify-between mb-3">
               <Label className="text-xs text-muted-foreground uppercase tracking-wider">Items</Label>
-              <Button variant="outline" size="sm" onClick={addItem}>
+              <Button variant="outline" size="sm" onClick={addItem} type="button">
                 <Plus size={14} className="mr-1" /> Add Item
               </Button>
             </div>
@@ -329,7 +475,7 @@ export function QuotationFormDialog({ open, onOpenChange, quotationId, prefillBo
                   </div>
                   <div className="col-span-1 flex items-center justify-center">
                     <Button variant="ghost" size="icon" onClick={() => removeItem(index)}
-                      disabled={items.length <= 1} className="h-8 w-8 text-destructive">
+                      disabled={items.length <= 1} className="h-8 w-8 text-destructive" type="button">
                       <Trash2 size={14} />
                     </Button>
                   </div>
@@ -366,12 +512,7 @@ export function QuotationFormDialog({ open, onOpenChange, quotationId, prefillBo
             </div>
           </div>
 
-          {/* Notes & Validity */}
-          <div>
-            <Label>Notes / Terms & Conditions</Label>
-            <Textarea rows={4} value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))}
-              placeholder="Payment terms, advance details, cancellation policy..." />
-          </div>
+          {/* Valid Until */}
           <div className="w-48">
             <Label>Valid Until</Label>
             <Input type="date" value={form.valid_until} onChange={e => setForm(p => ({ ...p, valid_until: e.target.value }))} />

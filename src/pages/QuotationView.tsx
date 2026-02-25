@@ -15,6 +15,7 @@ interface QuotationData {
   client_phone: string | null;
   event_type: string | null;
   event_date: string | null;
+  event_dates: string[] | null;
   subtotal: number;
   tax_percentage: number;
   discount_amount: number;
@@ -42,6 +43,29 @@ const formatDate = (dateStr: string | null) => {
   if (!dateStr) return '-';
   return new Date(dateStr).toLocaleDateString('en-IN', { year: 'numeric', month: 'long', day: 'numeric' });
 };
+
+// Sanitize HTML for safe rendering
+function sanitizeHtml(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
+    .replace(/\son\w+="[^"]*"/gi, '')
+    .replace(/\son\w+='[^']*'/gi, '');
+}
+
+// Extract plain text from HTML for PDF
+function htmlToPlainText(html: string): string {
+  const div = document.createElement('div');
+  div.innerHTML = html;
+  return div.textContent || div.innerText || '';
+}
+
+// Get effective dates array with backward compat
+function getEventDates(q: QuotationData): string[] {
+  if (q.event_dates && q.event_dates.length > 0) return q.event_dates;
+  if (q.event_date) return [q.event_date];
+  return [];
+}
 
 const QuotationView = () => {
   const { quotationNumber } = useParams<{ quotationNumber: string }>();
@@ -139,7 +163,14 @@ const QuotationView = () => {
     doc.text(quotation.client_email, margin, y); y += 5;
     if (quotation.client_phone) { doc.text(quotation.client_phone, margin, y); y += 5; }
     if (quotation.event_type) { doc.text(`Event: ${quotation.event_type}`, margin, y); y += 5; }
-    if (quotation.event_date) { doc.text(`Event Date: ${formatDate(quotation.event_date)}`, margin, y); y += 5; }
+
+    // Event dates
+    const eventDates = getEventDates(quotation);
+    if (eventDates.length > 0) {
+      const datesStr = eventDates.map(d => formatDate(d)).join(', ');
+      doc.text(`Event Date${eventDates.length > 1 ? 's' : ''}: ${datesStr}`, margin, y);
+      y += 5;
+    }
     y += 8;
 
     // Items table header
@@ -206,7 +237,8 @@ const QuotationView = () => {
       doc.setTextColor(100, 100, 100);
       doc.text('Terms & Notes:', margin, y); y += 6;
       doc.setFontSize(9);
-      const lines = doc.splitTextToSize(quotation.notes, 170);
+      const plainNotes = htmlToPlainText(quotation.notes);
+      const lines = doc.splitTextToSize(plainNotes, 170);
       doc.text(lines, margin, y);
     }
 
@@ -234,6 +266,7 @@ const QuotationView = () => {
 
   const taxAmount = quotation.subtotal * (quotation.tax_percentage / 100);
   const canRespond = ['sent', 'viewed'].includes(quotation.status);
+  const eventDates = getEventDates(quotation);
 
   return (
     <div className="min-h-screen bg-background">
@@ -265,7 +298,7 @@ const QuotationView = () => {
         </div>
 
         {/* Event Details */}
-        {(quotation.event_type || quotation.event_date) && (
+        {(quotation.event_type || eventDates.length > 0) && (
           <div className="bg-card border border-border rounded-lg p-4 mb-6">
             <div className="grid grid-cols-2 gap-4">
               {quotation.event_type && (
@@ -274,13 +307,30 @@ const QuotationView = () => {
                   <p className="font-medium text-foreground">{quotation.event_type}</p>
                 </div>
               )}
-              {quotation.event_date && (
+              {eventDates.length > 0 && (
                 <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wider">Event Date</p>
-                  <p className="font-medium text-foreground">{formatDate(quotation.event_date)}</p>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider">
+                    Event Date{eventDates.length > 1 ? 's' : ''}
+                  </p>
+                  <div className="font-medium text-foreground">
+                    {eventDates.map((d, i) => (
+                      <p key={i}>{formatDate(d)}</p>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {/* Notes / Terms - now between event details and items */}
+        {quotation.notes && (
+          <div className="bg-card border border-border rounded-lg p-4 mb-6">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Terms & Notes</p>
+            <div
+              className="text-sm text-foreground [&_ul]:list-disc [&_ul]:ml-4 [&_ol]:list-decimal [&_ol]:ml-4 [&_li]:my-0.5 [&_strong]:font-bold"
+              dangerouslySetInnerHTML={{ __html: sanitizeHtml(quotation.notes) }}
+            />
           </div>
         )}
 
@@ -338,14 +388,6 @@ const QuotationView = () => {
             </div>
           </div>
         </div>
-
-        {/* Notes */}
-        {quotation.notes && (
-          <div className="bg-card border border-border rounded-lg p-4 mb-6">
-            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Terms & Notes</p>
-            <p className="text-sm text-foreground whitespace-pre-wrap">{quotation.notes}</p>
-          </div>
-        )}
 
         {/* Status Banner */}
         {quotation.status === 'accepted' && (

@@ -46,6 +46,22 @@ function formatDate(dateStr: string | null): string {
   return new Date(dateStr).toLocaleDateString('en-IN', { year: 'numeric', month: 'long', day: 'numeric' });
 }
 
+// Sanitize HTML server-side
+function sanitizeHtml(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
+    .replace(/\son\w+="[^"]*"/gi, '')
+    .replace(/\son\w+='[^']*'/gi, '');
+}
+
+// Get effective dates with backward compat
+function getEventDates(quotation: any): string[] {
+  if (quotation.event_dates && quotation.event_dates.length > 0) return quotation.event_dates;
+  if (quotation.event_date) return [quotation.event_date];
+  return [];
+}
+
 serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -60,7 +76,6 @@ serve(async (req: Request) => {
     const { quotationId } = await req.json();
     if (!quotationId) throw new Error("quotationId is required");
 
-    // Fetch quotation
     const { data: quotation, error: qErr } = await supabase
       .from("quotations")
       .select("*")
@@ -68,7 +83,6 @@ serve(async (req: Request) => {
       .single();
     if (qErr || !quotation) throw new Error("Quotation not found");
 
-    // Fetch items
     const { data: items } = await supabase
       .from("quotation_items")
       .select("*")
@@ -79,7 +93,6 @@ serve(async (req: Request) => {
     const siteUrl = Deno.env.get("SITE_URL") || "https://studio-shines-77.lovable.app";
     const viewUrl = `${siteUrl}/quotation/${quotation.quotation_number}`;
 
-    // Build items table rows
     const itemRows = (items || []).map((item: any, i: number) => `
       <tr style="border-bottom: 1px solid #333;">
         <td style="padding: 12px 8px; color: #a09080;">${i + 1}</td>
@@ -91,6 +104,23 @@ serve(async (req: Request) => {
     `).join('');
 
     const taxAmount = quotation.subtotal * (quotation.tax_percentage / 100);
+    const eventDates = getEventDates(quotation);
+    const datesDisplay = eventDates.map((d: string) => formatDate(d)).join(', ');
+
+    // Build event details block
+    const hasEventInfo = quotation.event_type || eventDates.length > 0;
+    const eventBlock = hasEventInfo ? `
+      <div style="background: #252118; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 3px solid #d4a853;">
+        ${quotation.event_type ? `<p style="margin: 5px 0; color: #a09080;"><strong style="color: #f5f0e8;">Event:</strong> ${quotation.event_type}</p>` : ''}
+        ${eventDates.length > 0 ? `<p style="margin: 5px 0; color: #a09080;"><strong style="color: #f5f0e8;">Date${eventDates.length > 1 ? 's' : ''}:</strong> ${datesDisplay}</p>` : ''}
+      </div>` : '';
+
+    // Notes block - render HTML directly, sanitized
+    const notesBlock = quotation.notes ? `
+      <div style="background: #252118; padding: 15px; border-radius: 8px; margin: 20px 0;">
+        <p style="color: #d4a853; font-size: 12px; margin: 0 0 8px 0; text-transform: uppercase;">Terms & Notes</p>
+        <div style="color: #a09080; margin: 0; font-size: 13px; line-height: 1.6;">${sanitizeHtml(quotation.notes)}</div>
+      </div>` : '';
 
     const html = `
       <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; background: #1a1814; color: #f5f0e8; padding: 40px;">
@@ -104,11 +134,8 @@ serve(async (req: Request) => {
         <p style="line-height: 1.8; color: #a09080;">Dear ${quotation.client_name},</p>
         <p style="line-height: 1.8; color: #a09080;">Thank you for your interest. Please find your quotation details below:</p>
 
-        ${quotation.event_type || quotation.event_date ? `
-        <div style="background: #252118; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 3px solid #d4a853;">
-          ${quotation.event_type ? `<p style="margin: 5px 0; color: #a09080;"><strong style="color: #f5f0e8;">Event:</strong> ${quotation.event_type}</p>` : ''}
-          ${quotation.event_date ? `<p style="margin: 5px 0; color: #a09080;"><strong style="color: #f5f0e8;">Date:</strong> ${formatDate(quotation.event_date)}</p>` : ''}
-        </div>` : ''}
+        ${eventBlock}
+        ${notesBlock}
 
         <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
           <thead>
@@ -132,12 +159,6 @@ serve(async (req: Request) => {
 
         ${quotation.valid_until ? `<p style="color: #a09080; font-size: 13px;">Valid until: ${formatDate(quotation.valid_until)}</p>` : ''}
 
-        ${quotation.notes ? `
-        <div style="background: #252118; padding: 15px; border-radius: 8px; margin: 20px 0;">
-          <p style="color: #d4a853; font-size: 12px; margin: 0 0 8px 0; text-transform: uppercase;">Terms & Notes</p>
-          <p style="color: #a09080; margin: 0; white-space: pre-wrap; font-size: 13px; line-height: 1.6;">${quotation.notes}</p>
-        </div>` : ''}
-
         <div style="text-align: center; margin: 30px 0;">
           <a href="${viewUrl}" style="display: inline-block; background: linear-gradient(135deg, #d4a853, #b8923d); color: #1a1814; padding: 14px 30px; text-decoration: none; border-radius: 4px; font-weight: 600;">View Full Quotation</a>
         </div>
@@ -156,7 +177,6 @@ serve(async (req: Request) => {
       </div>
     `;
 
-    // Send email
     const { data: emailResult, error: emailErr } = await resend.emails.send({
       from: fromEmail,
       to: [quotation.client_email],
@@ -166,13 +186,11 @@ serve(async (req: Request) => {
 
     if (emailErr) throw new Error(emailErr.message);
 
-    // Update status to sent
     await supabase
       .from("quotations")
       .update({ status: "sent" })
       .eq("id", quotationId);
 
-    // Log email
     await supabase.from("email_logs").insert({
       to_email: quotation.client_email,
       subject: `Quotation ${quotation.quotation_number} - Ajanta Photography`,
