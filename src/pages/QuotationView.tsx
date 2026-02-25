@@ -39,6 +39,10 @@ interface QuotationItem {
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 0 }).format(amount);
 
+// PDF-safe currency format (jsPDF default fonts don't support ₹)
+const formatCurrencyPDF = (amount: number) =>
+  'Rs. ' + new Intl.NumberFormat('en-IN', { minimumFractionDigits: 0 }).format(amount);
+
 const formatDate = (dateStr: string | null) => {
   if (!dateStr) return '-';
   return new Date(dateStr).toLocaleDateString('en-IN', { year: 'numeric', month: 'long', day: 'numeric' });
@@ -53,11 +57,25 @@ function sanitizeHtml(html: string): string {
     .replace(/\son\w+='[^']*'/gi, '');
 }
 
-// Extract plain text from HTML for PDF
-function htmlToPlainText(html: string): string {
+// Convert HTML to structured plain text for PDF, preserving bullets
+function htmlToStructuredText(html: string): string {
   const div = document.createElement('div');
   div.innerHTML = html;
-  return div.textContent || div.innerText || '';
+  let result = '';
+  const walk = (node: Node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      result += node.textContent;
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      const el = node as HTMLElement;
+      const tag = el.tagName.toLowerCase();
+      if (tag === 'li') result += '  • ';
+      if (tag === 'br' || tag === 'p' || tag === 'div') result += '\n';
+      el.childNodes.forEach(walk);
+      if (tag === 'li' || tag === 'p' || tag === 'div') result += '\n';
+    }
+  };
+  div.childNodes.forEach(walk);
+  return result.replace(/\n{3,}/g, '\n\n').trim();
 }
 
 // Get effective dates array with backward compat
@@ -171,7 +189,21 @@ const QuotationView = () => {
       doc.text(`Event Date${eventDates.length > 1 ? 's' : ''}: ${datesStr}`, margin, y);
       y += 5;
     }
-    y += 8;
+    y += 5;
+
+    // Notes / Terms (before items table)
+    if (quotation.notes) {
+      doc.setFontSize(10);
+      doc.setTextColor(100, 100, 100);
+      doc.text('Terms & Notes:', margin, y); y += 6;
+      doc.setFontSize(9);
+      const structuredNotes = htmlToStructuredText(quotation.notes);
+      const noteLines = doc.splitTextToSize(structuredNotes, 170);
+      doc.text(noteLines, margin, y);
+      y += noteLines.length * 4.5 + 5;
+    }
+
+    y += 3;
 
     // Items table header
     const colX = [margin, margin + 10, margin + 85, margin + 105, margin + 130, margin + 155];
@@ -193,8 +225,8 @@ const QuotationView = () => {
       doc.text(`${i + 1}`, colX[0], y);
       doc.text(item.item_name.substring(0, 35), colX[1], y);
       doc.text(`${item.quantity}`, colX[2], y);
-      doc.text(formatCurrency(item.price), colX[3], y);
-      doc.text(formatCurrency(item.total), colX[4], y);
+      doc.text(formatCurrencyPDF(item.price), colX[3], y);
+      doc.text(formatCurrencyPDF(item.total), colX[4], y);
       y += 7;
       if (item.description) {
         doc.setFontSize(8);
@@ -213,34 +245,23 @@ const QuotationView = () => {
     // Totals
     const rightCol = margin + 130;
     doc.text('Subtotal:', margin + 100, y);
-    doc.text(formatCurrency(quotation.subtotal), rightCol, y);
+    doc.text(formatCurrencyPDF(quotation.subtotal), rightCol, y);
     y += 6;
     if (quotation.tax_percentage > 0) {
       doc.text(`Tax (${quotation.tax_percentage}%):`, margin + 100, y);
-      doc.text(formatCurrency(quotation.subtotal * quotation.tax_percentage / 100), rightCol, y);
+      doc.text(formatCurrencyPDF(quotation.subtotal * quotation.tax_percentage / 100), rightCol, y);
       y += 6;
     }
     if (quotation.discount_amount > 0) {
       doc.text('Discount:', margin + 100, y);
-      doc.text(`-${formatCurrency(quotation.discount_amount)}`, rightCol, y);
+      doc.text(`-${formatCurrencyPDF(quotation.discount_amount)}`, rightCol, y);
       y += 6;
     }
     doc.setFontSize(12);
     doc.setTextColor(180, 146, 61);
     doc.text('Total:', margin + 100, y);
-    doc.text(formatCurrency(quotation.total_amount), rightCol, y);
+    doc.text(formatCurrencyPDF(quotation.total_amount), rightCol, y);
     y += 10;
-
-    // Notes
-    if (quotation.notes) {
-      doc.setFontSize(10);
-      doc.setTextColor(100, 100, 100);
-      doc.text('Terms & Notes:', margin, y); y += 6;
-      doc.setFontSize(9);
-      const plainNotes = htmlToPlainText(quotation.notes);
-      const lines = doc.splitTextToSize(plainNotes, 170);
-      doc.text(lines, margin, y);
-    }
 
     doc.save(`Quotation-${quotation.quotation_number}.pdf`);
   };
