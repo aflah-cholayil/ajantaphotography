@@ -141,7 +141,7 @@ serve(async (req: Request) => {
               <table width="650" cellpadding="0" cellspacing="0" style="background: #ffffff; border-radius: 10px; padding: 40px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); font-family: Arial, Helvetica, sans-serif;">
                 <tr>
                   <td style="text-align: center; padding-bottom: 25px;">
-                    <img src="${logoUrl}" alt="Ajanta Photography" style="height: 100px; width: auto;" />
+                    <img src="${logoUrl}" alt="Ajanta Photography" style="height: 140px; width: auto;" />
                   </td>
                 </tr>
                 <tr>
@@ -191,7 +191,7 @@ serve(async (req: Request) => {
                 <tr>
                   <td style="padding-top: 30px; border-top: 1px solid #eee;">
                     <div style="text-align: center; margin-bottom: 15px;">
-                      <img src="${logoUrl}" alt="Ajanta Photography" style="height: 60px; width: auto;" />
+                      <img src="${logoUrl}" alt="Ajanta Photography" style="height: 90px; width: auto;" />
                     </div>
                     <p style="font-size: 12px; color: #999; margin: 0; line-height: 1.8; text-align: center;">
                       ${config.address_line1}<br />
