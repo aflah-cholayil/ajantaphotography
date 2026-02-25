@@ -376,7 +376,7 @@ const QuotationView = () => {
           <div className="bg-card border border-border rounded-lg p-4 mb-6">
             <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Terms & Notes</p>
             <div
-              className="text-sm text-foreground [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:ml-0 [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:ml-0 [&_li]:my-0.5 [&_li]:list-item [&_strong]:font-bold"
+              className="quotation-notes text-sm text-foreground"
               dangerouslySetInnerHTML={{ __html: sanitizeHtml(quotation.notes) }}
             />
           </div>

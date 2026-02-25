@@ -117,14 +117,20 @@ serve(async (req: Request) => {
 
     // Notes block - render HTML directly, sanitized
     const styledNotes = quotation.notes ? sanitizeHtml(quotation.notes)
-      .replace(/<ul>/gi, '<ul style="list-style-type: disc; padding-left: 20px; margin: 8px 0;">')
-      .replace(/<ol>/gi, '<ol style="list-style-type: decimal; padding-left: 20px; margin: 8px 0;">')
-      .replace(/<li>/gi, '<li style="margin: 4px 0; color: #444;">')
-      .replace(/<p>/gi, '<p style="margin: 8px 0; color: #444; line-height: 1.6;">')
-      .replace(/<strong>/gi, '<strong style="color: #222; font-weight: 600;">')
-      .replace(/<b>/gi, '<b style="color: #222; font-weight: 600;">')
-      .replace(/<h3>/gi, '<h3 style="color: #222; font-size: 15px; margin: 12px 0 6px 0; font-weight: 600;">')
-      .replace(/<h4>/gi, '<h4 style="color: #222; font-size: 14px; margin: 10px 0 4px 0; font-weight: 600;">')
+      .replace(/<h1[^>]*>/gi, '<h1 style="font-size:22px; color:#222; margin:16px 0 8px; font-weight:700;">')
+      .replace(/<h2[^>]*>/gi, '<h2 style="font-size:18px; color:#222; margin:14px 0 6px; font-weight:700;">')
+      .replace(/<h3[^>]*>/gi, '<h3 style="font-size:15px; color:#222; margin:12px 0 6px; font-weight:600;">')
+      .replace(/<h4[^>]*>/gi, '<h4 style="font-size:14px; color:#222; margin:10px 0 4px; font-weight:600;">')
+      .replace(/<p[^>]*>/gi, '<p style="margin:8px 0; color:#444; line-height:1.6;">')
+      .replace(/<strong>/gi, '<strong style="color:#222; font-weight:600;">')
+      .replace(/<b>/gi, '<b style="color:#222; font-weight:600;">')
+      .replace(/<em>/gi, '<em style="color:#444;">')
+      .replace(/<u>/gi, '<u style="color:#444;">')
+      .replace(/<ul>/gi, '<ul style="list-style-type:disc; padding-left:20px; margin:8px 0;">')
+      .replace(/<ol>/gi, '<ol style="list-style-type:decimal; padding-left:20px; margin:8px 0;">')
+      .replace(/<li>/gi, '<li style="margin:4px 0; color:#444;">')
+      .replace(/<img /gi, '<img style="max-width:100%; height:auto; border-radius:6px; margin:10px 0;" ')
+      .replace(/<hr\s*\/?>/gi, '<hr style="border:none; border-top:1px solid #eee; margin:15px 0;">')
       : '';
 
     const notesBlock = quotation.notes ? `
