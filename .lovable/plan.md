@@ -1,88 +1,50 @@
 
 
-# Fix Mobile "Load Failed" for Quotation Links
+# Fix Notes Formatting in Email Template
 
 ## Analysis
 
-The current implementation already:
-- Uses direct `fetch()` instead of `supabase.functions.invoke()` (fixed previously)
-- Edge functions have `verify_jwt = false` in config.toml
-- Edge function uses service role key (bypasses RLS)
-- CORS headers are set
+The email template in `supabase/functions/send-quotation/index.ts` already:
+- Renders notes as HTML (not plain text) via `${styledNotes}` inside the `html` property
+- Sanitizes HTML (strips `<script>`, `<iframe>`, event handlers)
+- Adds inline styles to `<ul>`, `<ol>`, `<li>` tags
 
-**However, there is a critical missing piece:** The `fetch` calls to the edge functions are missing the `apikey` header. Supabase's API gateway requires the `apikey` header (the anon key) on ALL requests, even when `verify_jwt = false`. Without it, the gateway rejects the request before it reaches the function — this is the "Load failed" error on mobile.
+**The remaining problem**: The inline style injection only covers list elements. Other common rich-text tags (`<p>`, `<strong>`, `<b>`, `<h3>`, `<h4>`, `<br>`) lack inline styles. Email clients strip inherited CSS, so:
+- `<p>` tags collapse (no margin/padding, wrong color)
+- `<strong>` inherits the muted `#a09080` color instead of standing out
+- Headings have no styling at all
+- Line spacing is lost
 
-On desktop while logged in, the browser may have cached credentials or the Supabase client may handle this differently, but a fresh mobile browser session from an email link has no such context.
+This explains why the admin sees "flat text, no spacing, all lines compressed" in email — the HTML tags are there but render without any visual differentiation.
 
 ## Changes
 
-### File: `src/pages/QuotationView.tsx`
+### File: `supabase/functions/send-quotation/index.ts` (lines 119-122)
 
-**Change 1 — Add `apikey` header to `fetchQuotation` (lines 104-111):**
-
-Add the anon key header so the Supabase gateway accepts the request:
+Expand the inline style injection to cover all common rich-text elements:
 
 ```typescript
-const res = await fetch(
-  `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-quotation`,
-  {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-    },
-    body: JSON.stringify({ quotation_number: quotationNumber }),
-  }
-);
+const styledNotes = quotation.notes ? sanitizeHtml(quotation.notes)
+  .replace(/<ul>/gi, '<ul style="list-style-type: disc; padding-left: 20px; margin: 8px 0;">')
+  .replace(/<ol>/gi, '<ol style="list-style-type: decimal; padding-left: 20px; margin: 8px 0;">')
+  .replace(/<li>/gi, '<li style="margin: 4px 0; color: #a09080;">')
+  .replace(/<p>/gi, '<p style="margin: 8px 0; color: #a09080; line-height: 1.6;">')
+  .replace(/<strong>/gi, '<strong style="color: #f5f0e8; font-weight: 600;">')
+  .replace(/<b>/gi, '<b style="color: #f5f0e8; font-weight: 600;">')
+  .replace(/<h3>/gi, '<h3 style="color: #f5f0e8; font-size: 15px; margin: 12px 0 6px 0; font-weight: 600;">')
+  .replace(/<h4>/gi, '<h4 style="color: #f5f0e8; font-size: 14px; margin: 10px 0 4px 0; font-weight: 600;">')
+  : '';
 ```
 
-**Change 2 — Add `apikey` header to `handleResponse` (lines 127-134):**
+This ensures:
+- **Bold text** stands out in a brighter color (`#f5f0e8`) against the muted notes text
+- **Paragraphs** have proper spacing and line-height
+- **Headings** are visually distinct
+- **Lists** keep their existing bullet/number styling
 
-Same fix for the status update call:
-
-```typescript
-const res = await fetch(
-  `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/update-quotation-status`,
-  {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-    },
-    body: JSON.stringify({ quotation_number: quotationNumber, action }),
-  }
-);
-```
-
-**Change 3 — Add loading timeout (after line 100):**
-
-Prevent infinite spinner on slow mobile networks:
-
-```typescript
-useEffect(() => {
-  const timer = setTimeout(() => {
-    if (loading) {
-      setLoading(false);
-      setError('Request timed out. Please check your connection and try again.');
-    }
-  }, 15000);
-  return () => clearTimeout(timer);
-}, [loading]);
-```
-
-### File: `supabase/functions/send-quotation/index.ts`
-
-**Change 4 — Ensure email uses absolute URL (verify line ~93-94):**
-
-The `siteUrl` already constructs an absolute URL. Verify it uses the published domain. Currently it falls back to `studio-shines-77.lovable.app` which is correct for the published URL.
-
-No change needed here — already using absolute URLs.
-
-## Summary
+No other files need changes — the web view already handles this via Tailwind classes, and the PDF uses its own rendering.
 
 | File | Change |
 |------|--------|
-| `src/pages/QuotationView.tsx` | Add `apikey` header to both fetch calls + add 15s loading timeout |
-
-The root cause is the missing `apikey` header on the direct fetch calls. The Supabase API gateway requires this header on every request, regardless of JWT verification settings.
+| `supabase/functions/send-quotation/index.ts` | Add inline styles for `<p>`, `<strong>`, `<b>`, `<h3>`, `<h4>` in notes HTML |
 
