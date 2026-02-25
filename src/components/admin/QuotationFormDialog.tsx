@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { Plus, Trash2, X, Bold, List, ListOrdered } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Plus, Trash2, X } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
@@ -18,6 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { RichTextEditor } from '@/components/ui/RichTextEditor';
 
 interface QuotationItem {
   id?: string;
@@ -72,7 +73,6 @@ export function QuotationFormDialog({ open, onOpenChange, quotationId, prefillBo
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
   const [bookings, setBookings] = useState<Booking[]>([]);
-  const notesRef = useRef<HTMLDivElement>(null);
   const [form, setForm] = useState<QuotationFormData>({
     client_name: '', client_email: '', client_phone: '',
     event_type: '', event_dates: [], tax_percentage: 0,
@@ -107,16 +107,6 @@ export function QuotationFormDialog({ open, onOpenChange, quotationId, prefillBo
     }
   }, [open, quotationId, prefillBookingId, bookings]);
 
-  // Sync notes content to contentEditable div
-  useEffect(() => {
-    if (notesRef.current && open) {
-      // Set initial content when form loads
-      const currentHtml = notesRef.current.innerHTML;
-      if (form.notes && currentHtml !== form.notes) {
-        notesRef.current.innerHTML = sanitizeHtml(form.notes);
-      }
-    }
-  }, [form.notes, open]);
 
   const resetForm = () => {
     setForm({
@@ -125,7 +115,6 @@ export function QuotationFormDialog({ open, onOpenChange, quotationId, prefillBo
       discount_amount: 0, notes: '', valid_until: '', booking_id: null,
     });
     setItems([{ item_name: '', description: '', quantity: 1, price: 0, total: 0, display_order: 0 }]);
-    if (notesRef.current) notesRef.current.innerHTML = '';
   };
 
   const loadQuotation = async (id: string) => {
@@ -142,9 +131,6 @@ export function QuotationFormDialog({ open, onOpenChange, quotationId, prefillBo
       discount_amount: Number(q.discount_amount), notes: q.notes || '',
       valid_until: q.valid_until || '', booking_id: q.booking_id,
     });
-    if (notesRef.current) {
-      notesRef.current.innerHTML = sanitizeHtml(q.notes || '');
-    }
     const { data: itemsData } = await supabase.from('quotation_items')
       .select('*').eq('quotation_id', id).order('display_order');
     if (itemsData?.length) {
@@ -212,21 +198,6 @@ export function QuotationFormDialog({ open, onOpenChange, quotationId, prefillBo
     }));
   };
 
-  // Rich text toolbar handlers
-  const execCommand = useCallback((command: string, value?: string) => {
-    notesRef.current?.focus();
-    document.execCommand(command, false, value);
-    // Capture updated HTML
-    if (notesRef.current) {
-      setForm(prev => ({ ...prev, notes: notesRef.current!.innerHTML }));
-    }
-  }, []);
-
-  const handleNotesInput = useCallback(() => {
-    if (notesRef.current) {
-      setForm(prev => ({ ...prev, notes: notesRef.current!.innerHTML }));
-    }
-  }, []);
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 0 }).format(amount);
@@ -242,8 +213,7 @@ export function QuotationFormDialog({ open, onOpenChange, quotationId, prefillBo
       return;
     }
 
-    // Capture latest notes from contentEditable
-    const notesHtml = notesRef.current?.innerHTML || form.notes || '';
+    const notesHtml = form.notes || '';
 
     setSaving(true);
     try {
@@ -396,51 +366,10 @@ export function QuotationFormDialog({ open, onOpenChange, quotationId, prefillBo
           {/* Notes / Terms & Conditions (Rich Text) */}
           <div>
             <Label className="mb-2 block">Notes / Terms & Conditions</Label>
-            <div className="border border-input rounded-md overflow-hidden">
-              {/* Toolbar */}
-              <div className="flex items-center gap-1 px-2 py-1.5 bg-muted/30 border-b border-input">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  type="button"
-                  onClick={() => execCommand('bold')}
-                  title="Bold"
-                >
-                  <Bold size={14} />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  type="button"
-                  onClick={() => execCommand('insertUnorderedList')}
-                  title="Bullet List"
-                >
-                  <List size={14} />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  type="button"
-                  onClick={() => execCommand('insertOrderedList')}
-                  title="Numbered List"
-                >
-                  <ListOrdered size={14} />
-                </Button>
-              </div>
-              {/* Editable area */}
-              <div
-                ref={notesRef}
-                contentEditable
-                suppressContentEditableWarning
-                onInput={handleNotesInput}
-                onBlur={handleNotesInput}
-                className="min-h-[120px] px-3 py-2 text-sm bg-background focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 [&_ul]:list-disc [&_ul]:ml-4 [&_ol]:list-decimal [&_ol]:ml-4 [&_li]:my-0.5"
-                style={{ whiteSpace: 'pre-wrap' }}
-              />
-            </div>
+            <RichTextEditor
+              content={form.notes}
+              onChange={(html) => setForm(p => ({ ...p, notes: html }))}
+            />
           </div>
 
           {/* Items */}

@@ -356,6 +356,61 @@
   100% { background-position: 200% 0; }
 }
 
+/* Quotation notes rich text rendering */
+.quotation-notes {
+  line-height: 1.8;
+}
+.quotation-notes h1 {
+  font-size: 1.625rem;
+  margin-top: 1.25rem;
+  margin-bottom: 0.5rem;
+  font-weight: 700;
+}
+.quotation-notes h2 {
+  font-size: 1.375rem;
+  margin-top: 1.125rem;
+  margin-bottom: 0.375rem;
+  font-weight: 700;
+}
+.quotation-notes h3 {
+  font-size: 1.125rem;
+  margin-top: 0.9375rem;
+  margin-bottom: 0.25rem;
+  font-weight: 600;
+}
+.quotation-notes ul {
+  list-style-type: disc;
+  padding-left: 1.25rem;
+}
+.quotation-notes ol {
+  list-style-type: decimal;
+  padding-left: 1.25rem;
+}
+.quotation-notes li {
+  margin: 0.25rem 0;
+}
+.quotation-notes img {
+  max-width: 100%;
+  height: auto;
+  margin: 0.625rem 0;
+  border-radius: 0.375rem;
+}
+.quotation-notes p {
+  margin-bottom: 0.625rem;
+}
+.quotation-notes hr {
+  border: none;
+  border-top: 1px solid currentColor;
+  opacity: 0.2;
+  margin: 1rem 0;
+}
+.quotation-notes strong {
+  font-weight: 700;
+}
+.quotation-notes em {
+  font-style: italic;
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 8px;
