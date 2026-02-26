@@ -43,8 +43,9 @@ serve(async (req: Request) => {
       });
     }
 
-    // Only allow showcase video assets
-    if (!key.startsWith("assets/showcase_video/")) {
+    // Only allow specific prefixes
+    const allowedPrefixes = ["assets/showcase_video/", "works/"];
+    if (!allowedPrefixes.some(p => key.startsWith(p))) {
       return new Response(JSON.stringify({ error: "Access denied" }), {
         status: 403,
         headers: { "Content-Type": "application/json", ...corsHeaders },
