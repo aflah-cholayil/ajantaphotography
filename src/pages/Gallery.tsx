@@ -53,6 +53,7 @@ const Gallery = () => {
   const [activeType, setActiveType] = useState('All');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [selectedWorkKey, setSelectedWorkKey] = useState<string | null>(null);
+  const [selectedWorkType, setSelectedWorkType] = useState<string | null>(null);
   const [fullResUrl, setFullResUrl] = useState<string | null>(null);
   const [works, setWorks] = useState<Work[]>([]);
   const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
@@ -127,11 +128,16 @@ const Gallery = () => {
   }, [works.length, hasMore, loadingMore, fetchWorks]);
 
   // Lightbox: fetch full-res URL
-  const handleImageClick = async (work: { id: string; src: string; s3_key?: string }) => {
+  const handleImageClick = async (work: { id: string; src: string; s3_key?: string; type?: string }) => {
     setSelectedImage(work.src);
     setFullResUrl(null);
+    setSelectedWorkType(work.type || 'photo');
     if (work.s3_key) {
       setSelectedWorkKey(work.s3_key);
+      if (work.type === 'video') {
+        // Videos use the proxy, no need for signed URL
+        return;
+      }
       try {
         const response = await fetch(
           `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/s3-signed-url?key=${encodeURIComponent(work.s3_key)}`
@@ -241,9 +247,11 @@ const Gallery = () => {
                       <div className="aspect-[4/5] overflow-hidden rounded-lg">
                         {image.type === 'video' ? (
                         <video
-                            src={image.src}
+                            src={`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/video-stream?key=${encodeURIComponent(image.s3_key!)}`}
                             className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
                             muted
+                            preload="metadata"
+                            playsInline
                           />
                         ) : (
                           <img
@@ -285,24 +293,42 @@ const Gallery = () => {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-50 bg-background/95 backdrop-blur-lg flex items-center justify-center p-4"
-            onClick={() => { setSelectedImage(null); setFullResUrl(null); setSelectedWorkKey(null); }}
+            onClick={() => { setSelectedImage(null); setFullResUrl(null); setSelectedWorkKey(null); setSelectedWorkType(null); }}
           >
             <button
-              onClick={() => { setSelectedImage(null); setFullResUrl(null); setSelectedWorkKey(null); }}
+              onClick={() => { setSelectedImage(null); setFullResUrl(null); setSelectedWorkKey(null); setSelectedWorkType(null); }}
               className="absolute top-6 right-6 p-2 text-foreground hover:text-primary transition-colors"
             >
               <X size={32} />
             </button>
-            <motion.img
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              transition={{ duration: 0.3 }}
-              src={fullResUrl || selectedImage}
-              alt="Full view"
-              className="max-w-full max-h-[90vh] object-contain rounded-lg"
-              onClick={(e) => e.stopPropagation()}
-            />
+            {selectedWorkType === 'video' && selectedWorkKey ? (
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                transition={{ duration: 0.3 }}
+              >
+                <video
+                  src={`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/video-stream?key=${encodeURIComponent(selectedWorkKey)}`}
+                  controls
+                  autoPlay
+                  playsInline
+                  className="max-w-full max-h-[90vh] rounded-lg"
+                  onClick={(e) => e.stopPropagation()}
+                />
+              </motion.div>
+            ) : (
+              <motion.img
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                transition={{ duration: 0.3 }}
+                src={fullResUrl || selectedImage}
+                alt="Full view"
+                className="max-w-full max-h-[90vh] object-contain rounded-lg"
+                onClick={(e) => e.stopPropagation()}
+              />
+            )}
           </motion.div>
         )}
       </AnimatePresence>
