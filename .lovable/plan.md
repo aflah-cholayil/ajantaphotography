@@ -1,73 +1,41 @@
 
 
-# Fix Gallery Video Playback
-
-## Problem
-
-Two issues causing videos to break on the gallery page:
-
-1. **Grid thumbnail**: Videos use signed R2 URLs directly in `<video src>`, which fails due to browser ORB (Opaque Response Blocking) / CORS restrictions. The same issue was previously solved for the homepage showcase video using the `video-stream` edge function proxy.
-
-2. **Lightbox**: When a video work is clicked, the lightbox always renders `<motion.img>` (line 296-305). An `<img>` tag cannot display video content, resulting in a broken image icon showing "Full view" alt text.
+# Fix Showcase Video Upload Error
 
 ## Root Cause
 
-- The `video-stream` edge function only allows keys starting with `assets/showcase_video/` (line 47). Gallery work videos use a `works/` prefix, so they get a 403 "Access denied" response.
-- The lightbox has no video-aware rendering — it always uses `<img>`.
+Three issues in `supabase/functions/upload-asset/index.ts`:
+
+### 1. CORS headers are outdated (PRIMARY cause)
+The CORS headers are missing `x-supabase-client-platform`, `x-supabase-client-platform-version`, `x-supabase-client-runtime`, `x-supabase-client-runtime-version`. The Supabase JS client v2.97.0 sends these headers, and the browser's preflight (OPTIONS) request is rejected because they're not in `Access-Control-Allow-Headers`. This explains why the edge function logs show no request processing — the actual POST never reaches the handler.
+
+### 2. Auth uses `supabase.auth.getUser(token)` instead of JWT decoding
+Other edge functions (like `s3-signed-url`) switched to manual JWT payload decoding to work correctly with Lovable Cloud's ES256 tokens. `upload-asset` still calls `getUser(token)` which can fail.
+
+### 3. File size mismatch: server limits 500MB, UI says 1GB
+The edge function rejects files over 500MB, but the client UI displays "Max size: 1GB" and validates at 1GB.
 
 ## Changes
 
-### 1. Edge Function: `supabase/functions/video-stream/index.ts`
+### File: `supabase/functions/upload-asset/index.ts`
 
-Expand the allowed key prefixes to include `works/` alongside `assets/showcase_video/`:
-
+1. **Update CORS headers** to match the working pattern from `s3-signed-url`:
 ```typescript
-// Replace the strict prefix check with:
-const allowedPrefixes = ["assets/showcase_video/", "works/"];
-if (!allowedPrefixes.some(p => key.startsWith(p))) {
-  return new Response(JSON.stringify({ error: "Access denied" }), {
-    status: 403,
-    headers: { "Content-Type": "application/json", ...corsHeaders },
-  });
-}
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+};
 ```
 
-### 2. Gallery Page: `src/pages/Gallery.tsx`
+2. **Replace `supabase.auth.getUser(token)` with JWT decoding** — add `decodeJwtPayload` helper and use service-role client for role lookup (same pattern as `s3-signed-url`).
 
-**a) Video thumbnails in grid** — use the video-stream proxy URL instead of signed URL:
+3. **Update file size limit** from 500MB to 1GB to match the UI.
 
-For video-type works, construct the src as the video-stream proxy URL:
-```
-`${SUPABASE_URL}/functions/v1/video-stream?key=${encodeURIComponent(work.s3_key)}`
-```
+| Issue | Fix |
+|-------|-----|
+| Missing CORS headers | Add `x-supabase-client-*` headers |
+| Auth failure with Lovable Cloud tokens | Use `decodeJwtPayload` instead of `getUser()` |
+| 500MB server limit vs 1GB UI | Change to `1024 * 1024 * 1024` |
 
-Add `preload="metadata"` and `playsInline` to the thumbnail `<video>` element so the browser loads the first frame as a poster.
-
-**b) Track the selected work's type** — add state to know if the lightbox should show a video or image.
-
-**c) Lightbox rendering** — conditionally render `<video>` with controls for video works, or `<motion.img>` for photos:
-
-```tsx
-{selectedWorkType === 'video' ? (
-  <video
-    src={`${SUPABASE_URL}/functions/v1/video-stream?key=${encodeURIComponent(selectedWorkKey)}`}
-    controls
-    autoPlay
-    playsInline
-    className="max-w-full max-h-[90vh] rounded-lg"
-    onClick={(e) => e.stopPropagation()}
-  />
-) : (
-  <motion.img ... />
-)}
-```
-
-### Summary
-
-| File | Change |
-|------|--------|
-| `supabase/functions/video-stream/index.ts` | Allow `works/` prefix in addition to `assets/showcase_video/` |
-| `src/pages/Gallery.tsx` | Use video-stream proxy for video thumbnails; render `<video>` in lightbox for video works |
-
-No other files modified. No changes to quotation, email, or calculation logic.
+No other files modified.
 
