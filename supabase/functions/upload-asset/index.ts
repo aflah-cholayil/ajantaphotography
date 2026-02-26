@@ -2,9 +2,23 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { AwsClient } from "https://esm.sh/aws4fetch@1.0.20?target=deno";
 
+// Decode JWT payload without verification (gateway already verified)
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const payload = parts[1];
+    const padded = payload + "=".repeat((4 - payload.length % 4) % 4);
+    const decoded = atob(padded.replace(/-/g, "+").replace(/_/g, "/"));
+    return JSON.parse(decoded);
+  } catch {
+    return null;
+  }
+}
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
 // R2 config (new uploads go here)
@@ -40,18 +54,10 @@ const handler = async (req: Request): Promise<Response> => {
     }
 
     const token = authHeader.replace("Bearer ", "");
+    const payload = decodeJwtPayload(token);
+    const userId = payload?.sub as string | undefined;
 
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
-      { 
-        global: { headers: { Authorization: authHeader } },
-        auth: { autoRefreshToken: false, persistSession: false }
-      }
-    );
-
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-    if (authError || !user) {
+    if (!userId) {
       return new Response(JSON.stringify({ error: "Unauthorized - Invalid token" }), {
         status: 401,
         headers: { "Content-Type": "application/json", ...corsHeaders },
@@ -66,7 +72,7 @@ const handler = async (req: Request): Promise<Response> => {
     const { data: roleData } = await serviceSupabase
       .from("user_roles")
       .select("role")
-      .eq("user_id", user.id)
+      .eq("user_id", userId)
       .single();
 
     if (!roleData?.role || !["admin", "owner", "editor"].includes(roleData.role)) {
@@ -86,8 +92,8 @@ const handler = async (req: Request): Promise<Response> => {
           headers: { "Content-Type": "application/json", ...corsHeaders },
         });
       }
-      if (fileSize > 500 * 1024 * 1024) {
-        return new Response(JSON.stringify({ error: "Video file too large. Maximum 500MB allowed." }), {
+      if (fileSize > 1024 * 1024 * 1024) {
+        return new Response(JSON.stringify({ error: "Video file too large. Maximum 1GB allowed." }), {
           status: 400,
           headers: { "Content-Type": "application/json", ...corsHeaders },
         });
