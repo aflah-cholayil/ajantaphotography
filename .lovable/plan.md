@@ -1,49 +1,73 @@
 
 
-# Fix Ordered List Numbering in PDF
+# Fix Gallery Video Playback
 
-## Root Cause (confirmed via database query)
+## Problem
 
-The actual HTML stored by TipTap for this quotation is:
+Two issues causing videos to break on the gallery page:
 
-```html
-<ol><li><p><strong>STILL:</strong></p></li></ol>
-...
-<ol start="2"><li><p><strong>VIDEO:</strong></p></li></ol>
-```
+1. **Grid thumbnail**: Videos use signed R2 URLs directly in `<video src>`, which fails due to browser ORB (Opaque Response Blocking) / CORS restrictions. The same issue was previously solved for the homepage showcase video using the `video-stream` edge function proxy.
 
-TipTap uses the `start` attribute on `<ol>` to indicate continuation. The current code ignores this attribute — it uses a `previousElementSibling` heuristic that does not match how TipTap structures its output.
+2. **Lightbox**: When a video work is clicked, the lightbox always renders `<motion.img>` (line 296-305). An `<img>` tag cannot display video content, resulting in a broken image icon showing "Full view" alt text.
 
-## Fix
+## Root Cause
 
-**File:** `src/pages/QuotationView.tsx`, lines 405-414
+- The `video-stream` edge function only allows keys starting with `assets/showcase_video/` (line 47). Gallery work videos use a `works/` prefix, so they get a 403 "Access denied" response.
+- The lightbox has no video-aware rendering — it always uses `<img>`.
 
-Replace the `case 'ol'` block to read the `start` attribute:
+## Changes
+
+### 1. Edge Function: `supabase/functions/video-stream/index.ts`
+
+Expand the allowed key prefixes to include `works/` alongside `assets/showcase_video/`:
 
 ```typescript
-case 'ol': {
-  const startAttr = (el as HTMLElement).getAttribute('start');
-  if (startAttr) {
-    listCounter = parseInt(startAttr, 10) - 1;
-  } else {
-    listCounter = 0;
-  }
-  y += 1;
-  el.childNodes.forEach(c => walkNode(c, isBold, 'ol'));
-  y += 1;
-  break;
+// Replace the strict prefix check with:
+const allowedPrefixes = ["assets/showcase_video/", "works/"];
+if (!allowedPrefixes.some(p => key.startsWith(p))) {
+  return new Response(JSON.stringify({ error: "Access denied" }), {
+    status: 403,
+    headers: { "Content-Type": "application/json", ...corsHeaders },
+  });
 }
 ```
 
-When `<ol start="2">` is encountered, `listCounter` is set to 1. The `<li>` handler then increments to 2, producing "2." — exactly matching what the admin typed.
+### 2. Gallery Page: `src/pages/Gallery.tsx`
 
-When no `start` attribute exists (plain `<ol>`), counter resets to 0 as before, so item becomes "1."
+**a) Video thumbnails in grid** — use the video-stream proxy URL instead of signed URL:
 
-## Summary
+For video-type works, construct the src as the video-stream proxy URL:
+```
+`${SUPABASE_URL}/functions/v1/video-stream?key=${encodeURIComponent(work.s3_key)}`
+```
 
-| Line | Change |
+Add `preload="metadata"` and `playsInline` to the thumbnail `<video>` element so the browser loads the first frame as a poster.
+
+**b) Track the selected work's type** — add state to know if the lightbox should show a video or image.
+
+**c) Lightbox rendering** — conditionally render `<video>` with controls for video works, or `<motion.img>` for photos:
+
+```tsx
+{selectedWorkType === 'video' ? (
+  <video
+    src={`${SUPABASE_URL}/functions/v1/video-stream?key=${encodeURIComponent(selectedWorkKey)}`}
+    controls
+    autoPlay
+    playsInline
+    className="max-w-full max-h-[90vh] rounded-lg"
+    onClick={(e) => e.stopPropagation()}
+  />
+) : (
+  <motion.img ... />
+)}
+```
+
+### Summary
+
+| File | Change |
 |------|--------|
-| 405-414 | Read `start` attribute from `<ol>` instead of checking `previousElementSibling` |
+| `supabase/functions/video-stream/index.ts` | Allow `works/` prefix in addition to `assets/showcase_video/` |
+| `src/pages/Gallery.tsx` | Use video-stream proxy for video thumbnails; render `<video>` in lightbox for video works |
 
-Single change. No other files or logic modified.
+No other files modified. No changes to quotation, email, or calculation logic.
 
