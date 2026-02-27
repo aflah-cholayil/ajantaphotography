@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import { SectionHeading } from '@/components/ui/SectionHeading';
 import { supabase } from '@/integrations/supabase/client';
-import { Loader2 } from 'lucide-react';
+import { Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
+import useEmblaCarousel from 'embla-carousel-react';
 import gallery1 from '@/assets/gallery-1.jpg';
 import gallery2 from '@/assets/gallery-2.jpg';
 import gallery3 from '@/assets/gallery-3.jpg';
@@ -26,7 +27,47 @@ export const GalleryPreview = () => {
   const [works, setWorks] = useState<Work[]>([]);
   const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const autoplayRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [isHovered, setIsHovered] = useState(false);
 
+  const [emblaRef, emblaApi] = useEmblaCarousel({
+    loop: true,
+    align: 'center',
+    slidesToScroll: 1,
+  });
+
+  // Track selected index
+  const onSelect = useCallback(() => {
+    if (!emblaApi) return;
+    setSelectedIndex(emblaApi.selectedScrollSnap());
+  }, [emblaApi]);
+
+  useEffect(() => {
+    if (!emblaApi) return;
+    onSelect();
+    emblaApi.on('select', onSelect);
+    emblaApi.on('reInit', onSelect);
+    return () => {
+      emblaApi.off('select', onSelect);
+    };
+  }, [emblaApi, onSelect]);
+
+  // Autoplay
+  useEffect(() => {
+    if (!emblaApi || isHovered) {
+      if (autoplayRef.current) clearInterval(autoplayRef.current);
+      return;
+    }
+    autoplayRef.current = setInterval(() => {
+      emblaApi.scrollNext();
+    }, 3000);
+    return () => {
+      if (autoplayRef.current) clearInterval(autoplayRef.current);
+    };
+  }, [emblaApi, isHovered]);
+
+  // Fetch works (unchanged logic)
   useEffect(() => {
     const fetchWorks = async () => {
       try {
@@ -41,7 +82,6 @@ export const GalleryPreview = () => {
         if (error) throw error;
         setWorks(data || []);
 
-        // Fetch signed URLs in parallel
         if (data && data.length > 0) {
           const entries = await Promise.all(
             data.map(async (work) => {
@@ -69,7 +109,6 @@ export const GalleryPreview = () => {
         setLoading(false);
       }
     };
-
     fetchWorks();
   }, []);
 
@@ -95,38 +134,64 @@ export const GalleryPreview = () => {
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
           </div>
         ) : (
-          <div className="mt-16 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {displayImages.slice(0, 6).map((image, index) => (
-              <motion.div
-                key={image.id}
-                initial={{ opacity: 0, scale: 0.95 }}
-                whileInView={{ opacity: 1, scale: 1 }}
-                viewport={{ once: true }}
-                transition={{ duration: 0.6, delay: index * 0.1 }}
-                className={`relative overflow-hidden rounded-lg group cursor-pointer ${
-                  index === 0 ? 'md:row-span-2' : ''
-                }`}
+          <div
+            className="mt-16 max-w-[1200px] mx-auto"
+            onMouseEnter={() => setIsHovered(true)}
+            onMouseLeave={() => setIsHovered(false)}
+          >
+            <div className="overflow-hidden" ref={emblaRef}>
+              <div className="flex">
+                {displayImages.map((image, index) => {
+                  const isActive = index === selectedIndex;
+                  return (
+                    <div
+                      key={image.id}
+                      className="min-w-0 shrink-0 grow-0 basis-[85%] md:basis-[40%] px-2 md:px-3"
+                    >
+                      <div
+                        className={`relative overflow-hidden rounded-[20px] transition-all duration-[600ms] ease-in-out ${
+                          isActive
+                            ? 'scale-100 opacity-100 shadow-2xl'
+                            : 'scale-[0.85] opacity-60'
+                        }`}
+                      >
+                        <div className="aspect-[3/4] max-h-[450px] overflow-hidden">
+                          <img
+                            src={image.src}
+                            alt={image.alt}
+                            loading="lazy"
+                            className="w-full h-full object-cover"
+                            onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                          />
+                        </div>
+                        <div className="absolute inset-0 bg-gradient-to-t from-background/80 via-transparent to-transparent opacity-0 hover:opacity-100 transition-opacity duration-500" />
+                        <div className="absolute bottom-0 left-0 right-0 p-6 opacity-0 hover:opacity-100 transition-opacity duration-500">
+                          <span className="font-serif text-xl text-foreground">{image.alt}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Controls */}
+            <div className="flex justify-center items-center gap-4 mt-8">
+              <button
+                onClick={() => emblaApi?.scrollPrev()}
+                className="w-10 h-10 rounded-full border border-border flex items-center justify-center text-foreground hover:bg-muted/50 transition-colors"
+                aria-label="Previous slide"
               >
-                <div className="aspect-[4/5] md:h-full overflow-hidden">
-                    <motion.img
-                      src={image.src}
-                      alt={image.alt}
-                      loading="lazy"
-                      className="w-full h-full object-cover"
-                      onError={(e) => { e.currentTarget.style.display = 'none'; }}
-                    initial={{ scale: 1 }}
-                    whileInView={{ scale: 1.08 }}
-                    viewport={{ once: true }}
-                    transition={{ duration: 8, ease: 'linear' }}
-                    whileHover={{ scale: 1.15 }}
-                  />
-                </div>
-                <div className="absolute inset-0 bg-gradient-to-t from-background/80 via-background/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-                <div className="absolute inset-0 flex items-end p-6 opacity-0 group-hover:opacity-100 transition-opacity duration-500">
-                  <span className="font-serif text-xl text-foreground">{image.alt}</span>
-                </div>
-              </motion.div>
-            ))}
+                <ChevronLeft className="h-5 w-5" />
+              </button>
+              <button
+                onClick={() => emblaApi?.scrollNext()}
+                className="w-10 h-10 rounded-full border border-border flex items-center justify-center text-foreground hover:bg-muted/50 transition-colors"
+                aria-label="Next slide"
+              >
+                <ChevronRight className="h-5 w-5" />
+              </button>
+            </div>
           </div>
         )}
 
