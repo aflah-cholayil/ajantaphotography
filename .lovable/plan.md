@@ -1,41 +1,22 @@
 
+# Fix Gallery Carousel Image Clipping & Crash
 
-# Redesign Gallery Preview as 3D Centered Carousel
+## Problems
 
-## Approach
+1. **Runtime crash**: `Cannot read properties of null (reading 'useRef')` in `useEmblaCarousel` — likely a duplicate React instance from the `embla-carousel-react` bundle. Fix by using a dynamic import pattern or ensuring proper React resolution.
 
-Replace the grid layout in `GalleryPreview.tsx` with a custom React carousel using Embla Carousel (already installed as `embla-carousel-react`). No new dependencies needed.
-
-The carousel will use CSS transforms for the 3D centered-slide effect: center slide at `scale(1)`, adjacent slides at `scale(0.85) opacity(0.6)`, with smooth transitions.
+2. **Images clipped**: The `overflow-hidden` on the inner slide `div` (line 152) combined with `scale-[0.85]` on side cards causes visual clipping. The `aspect-[3/4] max-h-[450px]` wrapper also constrains images. The outer `overflow-hidden` on the Embla viewport (line 142) is needed for the carousel but the inner slide's overflow should not clip the scaled content.
 
 ## Changes
 
-### File: `src/components/home/GalleryPreview.tsx` — Full rewrite of render section
+### File: `src/components/home/GalleryPreview.tsx`
 
-Keep all existing data-fetching logic (works, imageUrls, loading state, fallbackImages) unchanged.
+1. **Move `overflow-hidden` from the inner card div to the image wrapper only** — the card itself should allow the scale transform to render fully without clipping. Keep `overflow-hidden` on the `aspect-[3/4]` image container so images are cropped to fit, but remove it from the card wrapper that applies `scale()`.
 
-Replace the grid (lines 98-131) with an Embla-based carousel:
+2. **Remove `max-h-[450px]`** — this arbitrarily clips tall images. The `aspect-[3/4]` ratio already controls dimensions. Let the slide basis control the width and aspect ratio control the height naturally.
 
-- Use `useEmblaCarousel` with `{ loop: true, align: 'center', slidesToScroll: 1 }`
-- Custom autoplay via `setInterval` (3000ms), paused on hover
-- Track `selectedIndex` via Embla's `select` event
-- Each slide gets dynamic classes: center slide = `scale-100 opacity-100`, others = `scale-[0.85] opacity-60`
-- Images rendered with `rounded-[20px]`, `object-cover`, `aspect-[3/4]`, max-height ~450px
-- Slide container: `max-w-[1200px] mx-auto overflow-hidden`
-- Responsive: on mobile `basis-[85%]`, on md `basis-[40%]` to show ~2.5 slides
-- Prev/Next circular arrow buttons centered below carousel
-- Soft shadow on center card via conditional `shadow-2xl`
+3. **Add padding to the Embla viewport container** to prevent side-image clipping at edges — use `py-4` so scaled shadows and edges aren't cut off.
 
-### Controls
+4. **Ensure the `overflow-hidden` on Embla viewport only clips horizontally** — use `overflow-x-hidden overflow-y-visible` or add vertical padding to compensate.
 
-Two circular buttons below the carousel using `ChevronLeft` / `ChevronRight` from lucide-react, styled with thin border, hover background fade — matching the reference design.
-
-### "Explore Full Gallery" link
-
-Kept as-is below the controls.
-
-### No other files changed
-
-- No changes to Index.tsx, Layout, Navbar, Footer, or any other section
-- No new dependencies needed (embla-carousel-react already installed)
-
+These are CSS-only changes within `GalleryPreview.tsx`. No other files affected.
