@@ -139,7 +139,7 @@ export const GalleryPreview = () => {
             onMouseEnter={() => setIsHovered(true)}
             onMouseLeave={() => setIsHovered(false)}
           >
-            <div className="overflow-hidden" ref={emblaRef}>
+            <div className="overflow-x-hidden py-4" ref={emblaRef}>
               <div className="flex">
                 {displayImages.map((image, index) => {
                   const isActive = index === selectedIndex;
@@ -149,13 +149,13 @@ export const GalleryPreview = () => {
                       className="min-w-0 shrink-0 grow-0 basis-[85%] md:basis-[40%] px-2 md:px-3"
                     >
                       <div
-                        className={`relative overflow-hidden rounded-[20px] transition-all duration-[600ms] ease-in-out ${
+                        className={`relative rounded-[20px] transition-all duration-[600ms] ease-in-out ${
                           isActive
                             ? 'scale-100 opacity-100 shadow-2xl'
                             : 'scale-[0.85] opacity-60'
                         }`}
                       >
-                        <div className="aspect-[3/4] max-h-[450px] overflow-hidden">
+                        <div className="aspect-[3/4] overflow-hidden rounded-[20px]">
                           <img
                             src={image.src}
                             alt={image.alt}
