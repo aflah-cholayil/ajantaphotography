@@ -1,41 +1,41 @@
 
 
-# Fix Showcase Video Upload Error
+# Redesign Gallery Preview as 3D Centered Carousel
 
-## Root Cause
+## Approach
 
-Three issues in `supabase/functions/upload-asset/index.ts`:
+Replace the grid layout in `GalleryPreview.tsx` with a custom React carousel using Embla Carousel (already installed as `embla-carousel-react`). No new dependencies needed.
 
-### 1. CORS headers are outdated (PRIMARY cause)
-The CORS headers are missing `x-supabase-client-platform`, `x-supabase-client-platform-version`, `x-supabase-client-runtime`, `x-supabase-client-runtime-version`. The Supabase JS client v2.97.0 sends these headers, and the browser's preflight (OPTIONS) request is rejected because they're not in `Access-Control-Allow-Headers`. This explains why the edge function logs show no request processing — the actual POST never reaches the handler.
-
-### 2. Auth uses `supabase.auth.getUser(token)` instead of JWT decoding
-Other edge functions (like `s3-signed-url`) switched to manual JWT payload decoding to work correctly with Lovable Cloud's ES256 tokens. `upload-asset` still calls `getUser(token)` which can fail.
-
-### 3. File size mismatch: server limits 500MB, UI says 1GB
-The edge function rejects files over 500MB, but the client UI displays "Max size: 1GB" and validates at 1GB.
+The carousel will use CSS transforms for the 3D centered-slide effect: center slide at `scale(1)`, adjacent slides at `scale(0.85) opacity(0.6)`, with smooth transitions.
 
 ## Changes
 
-### File: `supabase/functions/upload-asset/index.ts`
+### File: `src/components/home/GalleryPreview.tsx` — Full rewrite of render section
 
-1. **Update CORS headers** to match the working pattern from `s3-signed-url`:
-```typescript
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
-};
-```
+Keep all existing data-fetching logic (works, imageUrls, loading state, fallbackImages) unchanged.
 
-2. **Replace `supabase.auth.getUser(token)` with JWT decoding** — add `decodeJwtPayload` helper and use service-role client for role lookup (same pattern as `s3-signed-url`).
+Replace the grid (lines 98-131) with an Embla-based carousel:
 
-3. **Update file size limit** from 500MB to 1GB to match the UI.
+- Use `useEmblaCarousel` with `{ loop: true, align: 'center', slidesToScroll: 1 }`
+- Custom autoplay via `setInterval` (3000ms), paused on hover
+- Track `selectedIndex` via Embla's `select` event
+- Each slide gets dynamic classes: center slide = `scale-100 opacity-100`, others = `scale-[0.85] opacity-60`
+- Images rendered with `rounded-[20px]`, `object-cover`, `aspect-[3/4]`, max-height ~450px
+- Slide container: `max-w-[1200px] mx-auto overflow-hidden`
+- Responsive: on mobile `basis-[85%]`, on md `basis-[40%]` to show ~2.5 slides
+- Prev/Next circular arrow buttons centered below carousel
+- Soft shadow on center card via conditional `shadow-2xl`
 
-| Issue | Fix |
-|-------|-----|
-| Missing CORS headers | Add `x-supabase-client-*` headers |
-| Auth failure with Lovable Cloud tokens | Use `decodeJwtPayload` instead of `getUser()` |
-| 500MB server limit vs 1GB UI | Change to `1024 * 1024 * 1024` |
+### Controls
 
-No other files modified.
+Two circular buttons below the carousel using `ChevronLeft` / `ChevronRight` from lucide-react, styled with thin border, hover background fade — matching the reference design.
+
+### "Explore Full Gallery" link
+
+Kept as-is below the controls.
+
+### No other files changed
+
+- No changes to Index.tsx, Layout, Navbar, Footer, or any other section
+- No new dependencies needed (embla-carousel-react already installed)
 
