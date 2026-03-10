@@ -18,12 +18,14 @@ export const PasswordStrengthIndicator = ({
 
   if (!password) return null;
 
+  const specialCharacters = "!@#$%^&*()_+-=[]{};':\"\\|,.<>/?";
+
   const requirements = [
     { met: password.length >= 8, text: 'At least 8 characters' },
     { met: /[a-z]/.test(password), text: 'One lowercase letter' },
     { met: /[A-Z]/.test(password), text: 'One uppercase letter' },
     { met: /[0-9]/.test(password), text: 'One number' },
-    { met: /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password), text: 'One special character (recommended)' },
+    { met: [...password].some((ch) => specialCharacters.includes(ch)), text: 'One special character (recommended)' },
   ];
 
   return (

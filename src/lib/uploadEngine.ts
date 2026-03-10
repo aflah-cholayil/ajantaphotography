@@ -524,7 +524,9 @@ export class UploadEngine {
           img.onload = () => { width = img.naturalWidth; height = img.naturalHeight; URL.revokeObjectURL(img.src); resolve(); };
           img.onerror = () => { URL.revokeObjectURL(img.src); resolve(); };
         });
-      } catch { }
+      } catch {
+        void 0;
+      }
     } else if (file.type.startsWith('video/')) {
       try {
         const video = document.createElement('video');
@@ -533,7 +535,9 @@ export class UploadEngine {
           video.onloadedmetadata = () => { width = video.videoWidth; height = video.videoHeight; duration = Math.round(video.duration); URL.revokeObjectURL(video.src); resolve(); };
           video.onerror = () => { URL.revokeObjectURL(video.src); resolve(); };
         });
-      } catch { }
+      } catch {
+        void 0;
+      }
     }
 
     const mediaType = file.type.startsWith('video/') ? 'video' : 'photo';

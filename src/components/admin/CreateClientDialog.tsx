@@ -57,17 +57,20 @@ export const CreateClientDialog = ({ onSuccess }: CreateClientDialogProps) => {
   const getInvokeErrorMessage = (response: unknown): string | null => {
     const error = (response as any)?.error;
     if (!error) return null;
+    const status = (error as any)?.context?.status ?? (response as any)?.status;
     const contextBody = (error as any)?.context?.body;
+    const statusSuffix = typeof status === 'number' ? ` (status ${status})` : '';
     if (contextBody) {
       try {
         const parsed = typeof contextBody === 'string' ? JSON.parse(contextBody) : contextBody;
-        if (parsed?.error && typeof parsed.error === 'string') return parsed.error;
-        if (parsed?.message && typeof parsed.message === 'string') return parsed.message;
+        if (parsed?.error && typeof parsed.error === 'string') return `${parsed.error}${statusSuffix}`;
+        if (parsed?.message && typeof parsed.message === 'string') return `${parsed.message}${statusSuffix}`;
       } catch {
-        if (typeof contextBody === 'string') return contextBody;
+        if (typeof contextBody === 'string') return `${contextBody}${statusSuffix}`;
       }
     }
-    return typeof error.message === 'string' ? error.message : 'Edge Function error';
+    if (typeof error.message === 'string') return `${error.message}${statusSuffix}`;
+    return `Edge Function error${statusSuffix}`;
   };
 
   const form = useForm<CreateClientFormData>({

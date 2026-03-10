@@ -41,6 +41,10 @@ const COMMON_WEAK_PASSWORDS = new Set([
   'ajanta', 'ajanta123', 'photography', 'photographer',
 ]);
 
+const specialCharacters = "!@#$%^&*()_+-=[]{};':\"\\|,.<>/?";
+const hasSpecialCharacter = (password: string) =>
+  [...password].some((ch) => specialCharacters.includes(ch));
+
 // Check if password contains sequential characters
 const hasSequentialChars = (password: string): boolean => {
   const lower = password.toLowerCase();
@@ -89,7 +93,7 @@ export const calculatePasswordStrength = (password: string): {
   if (/[a-z]/.test(password)) score += 10;
   if (/[A-Z]/.test(password)) score += 15;
   if (/[0-9]/.test(password)) score += 15;
-  if (/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) score += 20;
+  if (hasSpecialCharacter(password)) score += 20;
 
   // Penalty for common patterns
   if (COMMON_WEAK_PASSWORDS.has(password.toLowerCase())) score = Math.min(score, 10);
