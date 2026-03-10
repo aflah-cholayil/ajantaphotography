@@ -1,3 +1,5 @@
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- Create enum for user roles
 CREATE TYPE public.app_role AS ENUM ('admin', 'client');
 
@@ -106,7 +108,7 @@ CREATE INDEX idx_media_s3_key ON public.media(s3_key);
 CREATE TABLE public.share_links (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   album_id UUID NOT NULL REFERENCES public.albums(id) ON DELETE CASCADE,
-  token TEXT NOT NULL UNIQUE DEFAULT encode(gen_random_bytes(32), 'hex'),
+  token TEXT NOT NULL UNIQUE DEFAULT md5(random()::text || clock_timestamp()::text),
   password_hash TEXT,
   allow_download BOOLEAN NOT NULL DEFAULT false,
   expires_at TIMESTAMPTZ,

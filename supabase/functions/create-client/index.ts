@@ -163,7 +163,7 @@ const handler = async (req: Request): Promise<Response> => {
     // Send welcome email (MANDATORY) - retry once and fail the flow if it cannot be sent
     const origin = req.headers.get("origin");
     const referer = req.headers.get("referer");
-    const baseUrl = origin || (referer ? new URL(referer).origin : "https://studio-shines-77.lovable.app");
+    const baseUrl = origin || (referer ? new URL(referer).origin : Deno.env.get("SITE_URL") || "https://ajantaphotography.in");
     // Include email in URL for pre-fill
     const loginUrl = `${baseUrl}/login?email=${encodeURIComponent(email)}`;
 
