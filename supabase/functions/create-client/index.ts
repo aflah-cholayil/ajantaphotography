@@ -144,7 +144,7 @@ const handler = async (req: Request): Promise<Response> => {
     // Check if user already exists
     const { data: existingUser, error: existingUserError } = await serviceSupabase
       .from("profiles")
-      .select("id")
+      .select("user_id")
       .eq("email", email)
       .maybeSingle();
 
@@ -159,11 +159,78 @@ const handler = async (req: Request): Promise<Response> => {
       );
     }
 
-    if (existingUser) {
-      return new Response(JSON.stringify({ error: "A user with this email already exists" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json", ...corsHeaders },
-      });
+    if (existingUser?.user_id) {
+      const existingUserId = existingUser.user_id as string;
+
+      const { data: existingRole, error: existingRoleError } = await serviceSupabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", existingUserId)
+        .maybeSingle();
+
+      if (existingRoleError) {
+        console.error("Error checking existing user role:", existingRoleError);
+        return new Response(
+          JSON.stringify({ error: "Failed to validate existing user role" }),
+          {
+            status: 500,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          }
+        );
+      }
+
+      if (existingRole?.role && existingRole.role !== "client") {
+        return new Response(
+          JSON.stringify({ error: "This email is already used by a staff account" }),
+          {
+            status: 400,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          }
+        );
+      }
+
+      const { data: existingClient, error: existingClientError } = await serviceSupabase
+        .from("clients")
+        .select("id")
+        .eq("user_id", existingUserId)
+        .maybeSingle();
+
+      if (existingClientError) {
+        console.error("Error checking existing client:", existingClientError);
+        return new Response(
+          JSON.stringify({ error: "Failed to validate existing client record" }),
+          {
+            status: 500,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          }
+        );
+      }
+
+      if (existingClient?.id) {
+        return new Response(
+          JSON.stringify({ error: "A client with this email already exists" }),
+          {
+            status: 400,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          }
+        );
+      }
+
+      console.log("Cleaning up existing client auth user without client record:", existingUserId);
+      try {
+        await serviceSupabase.from("profiles").delete().eq("user_id", existingUserId);
+        await serviceSupabase.from("user_roles").delete().eq("user_id", existingUserId);
+        await serviceSupabase.auth.admin.deleteUser(existingUserId);
+      } catch (cleanupError) {
+        console.error("Failed to cleanup existing user:", cleanupError);
+        return new Response(
+          JSON.stringify({ error: "Failed to cleanup existing user. Please try again." }),
+          {
+            status: 500,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          }
+        );
+      }
     }
 
     // Generate password
