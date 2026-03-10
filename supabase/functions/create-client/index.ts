@@ -42,6 +42,31 @@ const handler = async (req: Request): Promise<Response> => {
   }
 
   try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("ANON_KEY");
+    const serviceRoleKey =
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SERVICE_ROLE_KEY");
+
+    if (!supabaseUrl || !supabaseAnonKey) {
+      return new Response(
+        JSON.stringify({ error: "Missing SUPABASE_URL or SUPABASE_ANON_KEY" }),
+        {
+          status: 500,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        }
+      );
+    }
+
+    if (!serviceRoleKey) {
+      return new Response(
+        JSON.stringify({ error: "Missing SERVICE_ROLE_KEY" }),
+        {
+          status: 500,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        }
+      );
+    }
+
     // Verify admin authentication
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
@@ -52,14 +77,14 @@ const handler = async (req: Request): Promise<Response> => {
     }
 
     const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
+      supabaseUrl,
+      supabaseAnonKey,
       { global: { headers: { Authorization: authHeader } } }
     );
 
     const serviceSupabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+      supabaseUrl,
+      serviceRoleKey
     );
 
     const token = authHeader.replace("Bearer ", "");
@@ -75,11 +100,22 @@ const handler = async (req: Request): Promise<Response> => {
     const userId = claims.claims.sub as string;
 
     // Check if user is admin
-    const { data: roleData } = await serviceSupabase
+    const { data: roleData, error: roleError } = await serviceSupabase
       .from("user_roles")
       .select("role")
       .eq("user_id", userId)
       .single();
+
+    if (roleError) {
+      console.error("Error fetching user role:", roleError);
+      return new Response(
+        JSON.stringify({ error: "Failed to verify admin role" }),
+        {
+          status: 500,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        }
+      );
+    }
 
     const allowedRoles = ["admin", "owner", "editor"];
     if (!roleData?.role || !allowedRoles.includes(roleData.role)) {
@@ -106,11 +142,22 @@ const handler = async (req: Request): Promise<Response> => {
     const { name, email, eventName, eventDate, notes } = parsed.data;
 
     // Check if user already exists
-    const { data: existingUser } = await serviceSupabase
+    const { data: existingUser, error: existingUserError } = await serviceSupabase
       .from("profiles")
       .select("id")
       .eq("email", email)
       .maybeSingle();
+
+    if (existingUserError) {
+      console.error("Error checking existing user:", existingUserError);
+      return new Response(
+        JSON.stringify({ error: "Failed to validate client email" }),
+        {
+          status: 500,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        }
+      );
+    }
 
     if (existingUser) {
       return new Response(JSON.stringify({ error: "A user with this email already exists" }), {

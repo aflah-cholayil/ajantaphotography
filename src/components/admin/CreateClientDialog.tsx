@@ -54,6 +54,22 @@ export const CreateClientDialog = ({ onSuccess }: CreateClientDialogProps) => {
   const [copied, setCopied] = useState(false);
   const { toast } = useToast();
 
+  const getInvokeErrorMessage = (response: unknown): string | null => {
+    const error = (response as any)?.error;
+    if (!error) return null;
+    const contextBody = (error as any)?.context?.body;
+    if (contextBody) {
+      try {
+        const parsed = typeof contextBody === 'string' ? JSON.parse(contextBody) : contextBody;
+        if (parsed?.error && typeof parsed.error === 'string') return parsed.error;
+        if (parsed?.message && typeof parsed.message === 'string') return parsed.message;
+      } catch {
+        if (typeof contextBody === 'string') return contextBody;
+      }
+    }
+    return typeof error.message === 'string' ? error.message : 'Edge Function error';
+  };
+
   const form = useForm<CreateClientFormData>({
     resolver: zodResolver(createClientSchema),
     defaultValues: {
@@ -87,7 +103,7 @@ export const CreateClientDialog = ({ onSuccess }: CreateClientDialogProps) => {
       });
 
       if (response.error) {
-        throw new Error(response.error.message);
+        throw new Error(getInvokeErrorMessage(response) || response.error.message);
       }
 
       const result = response.data;
