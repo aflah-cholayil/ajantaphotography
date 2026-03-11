@@ -54,6 +54,7 @@ interface PersonRecord {
 
 interface ProfileRecord {
   name: string;
+  email?: string | null;
 }
 
 async function deleteStorageObject(s3Key: string): Promise<boolean> {
@@ -227,7 +228,7 @@ async function deleteClientFromStorage(
   clientId: string,
   userId: string,
   softDelete: boolean = false
-): Promise<{ success: boolean; albumCount: number; mediaCount: number; totalSize: number }> {
+): Promise<{ success: boolean; albumCount: number; mediaCount: number; totalSize: number; error?: string }> {
   const { data: clientData, error: clientError } = await supabase
     .from("clients")
     .select("id, event_name, user_id")
@@ -235,18 +236,35 @@ async function deleteClientFromStorage(
     .single();
 
   if (clientError || !clientData) {
-    return { success: false, albumCount: 0, mediaCount: 0, totalSize: 0 };
+    return { success: false, albumCount: 0, mediaCount: 0, totalSize: 0, error: "Client not found" };
   }
 
   const client = clientData as ClientRecord;
 
+  const { data: roleData, error: roleError } = await supabase
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", client.user_id)
+    .maybeSingle();
+
+  if (roleError) {
+    console.error("Failed to fetch client role", roleError);
+    return { success: false, albumCount: 0, mediaCount: 0, totalSize: 0, error: "Failed to fetch client role" };
+  }
+
+  const role = (roleData as any)?.role as string | undefined;
+  if (role && ["owner", "admin", "editor", "viewer"].includes(role)) {
+    return { success: false, albumCount: 0, mediaCount: 0, totalSize: 0, error: "Refusing to delete staff user" };
+  }
+
   const { data: profileData } = await supabase
     .from("profiles")
-    .select("name")
+    .select("name, email")
     .eq("user_id", client.user_id)
     .single();
 
   const clientName = (profileData as ProfileRecord | null)?.name || client.event_name;
+  const clientEmail = (profileData as ProfileRecord | null)?.email || null;
 
   const { data: albumsData } = await supabase
     .from("albums")
@@ -264,6 +282,9 @@ async function deleteClientFromStorage(
   }
 
   await supabase.from("email_logs").delete().eq("client_id", clientId);
+  if (clientEmail) {
+    await supabase.from("email_logs").delete().eq("to_email", clientEmail);
+  }
 
   if (softDelete) {
     await supabase
@@ -276,6 +297,19 @@ async function deleteClientFromStorage(
 
   if (!softDelete) {
     await supabase.from("user_roles").delete().eq("user_id", client.user_id);
+    await supabase.from("profiles").delete().eq("user_id", client.user_id);
+
+    const { error: deleteAuthError } = await supabase.auth.admin.deleteUser(client.user_id);
+    if (deleteAuthError) {
+      console.error("Failed to delete auth user", deleteAuthError);
+      return {
+        success: false,
+        albumCount: albums.length,
+        mediaCount: totalMediaCount,
+        totalSize,
+        error: "Failed to delete auth user",
+      };
+    }
   }
 
   await supabase.from("deletion_logs").insert({
@@ -424,6 +458,8 @@ async function handler(req: Request): Promise<Response> {
     const authHeader = req.headers.get("Authorization");
     let userId: string;
 
+    const { action, mediaId, mediaIds, albumId, clientId, softDelete = false }: DeleteRequest = await req.json();
+
     if (authHeader?.startsWith("Bearer ")) {
       const { data: { user }, error: authError } = await serviceClient.auth.getUser(
         authHeader.replace("Bearer ", "")
@@ -444,10 +480,14 @@ async function handler(req: Request): Promise<Response> {
 
       userId = user.id;
     } else {
+      if (action !== "cleanup_expired") {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
       userId = "00000000-0000-0000-0000-000000000000";
     }
-
-    const { action, mediaId, mediaIds, albumId, clientId, softDelete = false }: DeleteRequest = await req.json();
 
     switch (action) {
       case "delete_media": {

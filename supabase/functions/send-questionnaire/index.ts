@@ -99,7 +99,7 @@ const handler = async (req: Request): Promise<Response> => {
     const baseUrl = rawBaseUrl.replace(/\/+$/, "");
     const questionnaireUrl = `${baseUrl}/questionnaire/${encodeURIComponent(questionnaire.token)}`;
 
-    const logoUrl = "https://dtknywnttoslxthlqwsz.supabase.co/storage/v1/object/public/avatars/logo.png";
+    const logoUrl = `${supabaseUrl}/storage/v1/object/public/avatars/logo.png`;
 
     // Format event date
     const eventDate = booking.event_date 

@@ -7,6 +7,7 @@ import { useToast } from '@/hooks/use-toast';
 import { MinimalFooter } from '@/components/shared/MinimalFooter';
 import logoSrc from '@/assets/logo.png';
 import { registerPDFFont } from '@/lib/pdfFont';
+import { supabaseUrl } from '@/integrations/supabase/client';
 
 interface QuotationData {
   id: string;
@@ -113,7 +114,7 @@ const QuotationView = () => {
   const fetchQuotation = async () => {
     try {
       const res = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-quotation`,
+        `${supabaseUrl}/functions/v1/get-quotation`,
         {
           method: 'POST',
           headers: {
@@ -139,7 +140,7 @@ const QuotationView = () => {
     setResponding(true);
     try {
       const res = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/update-quotation-status`,
+        `${supabaseUrl}/functions/v1/update-quotation-status`,
         {
           method: 'POST',
           headers: {

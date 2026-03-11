@@ -9,6 +9,7 @@ import { Eye, EyeOff, ArrowRight } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 import { Logo } from '@/components/shared/Logo';
+import { supabase } from '@/integrations/supabase/client';
 
 const Login = () => {
   const [searchParams] = useSearchParams();
@@ -17,6 +18,7 @@ const Login = () => {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isSendingReset, setIsSendingReset] = useState(false);
   const navigate = useNavigate();
   const { user, isAdmin, role, signIn, isLoading: authLoading } = useAuth();
 
@@ -55,6 +57,42 @@ const Login = () => {
       console.error('Login error:', err);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    const normalizedEmail = email.trim();
+    if (!normalizedEmail) {
+      toast.error('Enter your email first');
+      return;
+    }
+
+    setIsSendingReset(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('send-email', {
+        body: {
+          type: 'password_reset',
+          to: normalizedEmail,
+          data: {},
+        },
+      });
+
+      if (error || (data && typeof data === 'object' && 'success' in data && (data as any).success === false)) {
+        const { error: fallbackError } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
+          redirectTo: `${window.location.origin}/reset-password`,
+        });
+        if (fallbackError) {
+          toast.error(fallbackError.message);
+          return;
+        }
+      }
+
+      toast.success('If your account exists, you will receive a reset email');
+    } catch (err) {
+      toast.error('Failed to send password reset email');
+      console.error('Reset password error:', err);
+    } finally {
+      setIsSendingReset(false);
     }
   };
 
@@ -138,6 +176,16 @@ const Login = () => {
                     className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                   >
                     {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={handleForgotPassword}
+                    disabled={isSendingReset}
+                    className="text-xs text-primary hover:underline disabled:opacity-50 disabled:hover:no-underline"
+                  >
+                    {isSendingReset ? 'Sending reset...' : 'Forgot password?'}
                   </button>
                 </div>
               </div>

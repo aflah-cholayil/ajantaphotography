@@ -2,7 +2,7 @@ import { useState, useRef, useCallback } from 'react';
 import { Upload, Video, X, Loader2, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, supabaseUrl } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 
 interface VideoUploaderProps {
@@ -152,7 +152,7 @@ export function VideoUploader({ currentVideoKey, onUploadComplete, onRemove }: V
       {hasVideo && !isUploading && (
         <div className="relative rounded-lg overflow-hidden bg-muted" style={{ maxHeight: '180px' }}>
           <video
-            src={previewUrl || `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/s3-signed-url?key=${currentVideoKey}`}
+            src={previewUrl || `${supabaseUrl}/functions/v1/s3-signed-url?key=${currentVideoKey}`}
             className="w-full h-full object-cover"
             style={{ maxHeight: '180px' }}
             muted

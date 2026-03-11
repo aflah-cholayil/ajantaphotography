@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Layout } from '@/components/layout/Layout';
 import { SectionHeading } from '@/components/ui/SectionHeading';
 import { X, Loader2, Image, Video } from 'lucide-react';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, supabaseUrl } from '@/integrations/supabase/client';
 import gallery1 from '@/assets/gallery-1.jpg';
 import gallery2 from '@/assets/gallery-2.jpg';
 import gallery3 from '@/assets/gallery-3.jpg';
@@ -34,7 +34,7 @@ async function fetchSignedUrls(works: Work[]): Promise<Record<string, string>> {
   const promises = works.map(async (work) => {
     try {
       const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/s3-signed-url?key=${encodeURIComponent(work.s3_key)}`
+        `${supabaseUrl}/functions/v1/s3-signed-url?key=${encodeURIComponent(work.s3_key)}`
       );
       if (response.ok) {
         const { url } = await response.json();
@@ -140,7 +140,7 @@ const Gallery = () => {
       }
       try {
         const response = await fetch(
-          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/s3-signed-url?key=${encodeURIComponent(work.s3_key)}`
+          `${supabaseUrl}/functions/v1/s3-signed-url?key=${encodeURIComponent(work.s3_key)}`
         );
         if (response.ok) {
           const { url } = await response.json();
@@ -247,7 +247,7 @@ const Gallery = () => {
                       <div className="aspect-[4/5] overflow-hidden rounded-lg">
                         {image.type === 'video' ? (
                         <video
-                            src={`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/video-stream?key=${encodeURIComponent(image.s3_key!)}`}
+                            src={`${supabaseUrl}/functions/v1/video-stream?key=${encodeURIComponent(image.s3_key!)}`}
                             className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
                             muted
                             preload="metadata"
@@ -309,7 +309,7 @@ const Gallery = () => {
                 transition={{ duration: 0.3 }}
               >
                 <video
-                  src={`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/video-stream?key=${encodeURIComponent(selectedWorkKey)}`}
+                  src={`${supabaseUrl}/functions/v1/video-stream?key=${encodeURIComponent(selectedWorkKey)}`}
                   controls
                   autoPlay
                   playsInline

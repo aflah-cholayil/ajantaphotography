@@ -6,7 +6,7 @@ import {
   Film, Album, FileText, CheckCircle, ChevronRight, ChevronLeft,
   Loader2, Lock, AlertCircle
 } from 'lucide-react';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, supabaseUrl } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -125,7 +125,7 @@ export default function Questionnaire() {
 
       // Use fetch directly for GET with query params
       const res = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/questionnaire?token=${token}`,
+        `${supabaseUrl}/functions/v1/questionnaire?token=${token}`,
         {
           method: 'GET',
           headers: {
@@ -192,7 +192,7 @@ export default function Questionnaire() {
       };
 
       const res = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/questionnaire?token=${token}`,
+        `${supabaseUrl}/functions/v1/questionnaire?token=${token}`,
         {
           method: 'POST',
           headers: {
