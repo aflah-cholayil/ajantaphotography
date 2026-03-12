@@ -36,9 +36,11 @@ interface FavoritesTabProps {
 
 // URL cache with expiry
 const urlCache = new Map<string, { url: string; expiresAt: number }>();
+const pendingUrlRequests = new Map<string, Promise<string | null>>();
 const URL_CACHE_DURATION = 50 * 60 * 1000;
 
 async function getSignedUrl(s3Key: string, albumId: string): Promise<string | null> {
+  if (!s3Key || s3Key === 'undefined' || s3Key === 'null') return null;
   const cacheKey = `${albumId}:${s3Key}`;
   const cached = urlCache.get(cacheKey);
   
@@ -46,9 +48,19 @@ async function getSignedUrl(s3Key: string, albumId: string): Promise<string | nu
     return cached.url;
   }
 
+  const pending = pendingUrlRequests.get(cacheKey);
+  if (pending) {
+    return pending;
+  }
+
+  const requestPromise = (async () => {
   try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData.session?.access_token;
+
     const response = await supabase.functions.invoke('s3-signed-url', {
-      body: { s3Key, albumId },
+      body: { key: s3Key, s3Key, albumId },
+      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
     });
 
     if (response.data?.url) {
@@ -62,6 +74,14 @@ async function getSignedUrl(s3Key: string, albumId: string): Promise<string | nu
     console.error('Error getting signed URL:', err);
   }
   return null;
+  })();
+
+  pendingUrlRequests.set(cacheKey, requestPromise);
+  try {
+    return await requestPromise;
+  } finally {
+    pendingUrlRequests.delete(cacheKey);
+  }
 }
 
 interface FavoriteMediaItemProps {
@@ -85,6 +105,7 @@ const FavoriteMediaItem = memo(({
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
+  const [triedOriginalKey, setTriedOriginalKey] = useState(false);
   const itemRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -110,6 +131,8 @@ const FavoriteMediaItem = memo(({
 
     const fetchUrl = async () => {
       setIsLoading(true);
+      setHasError(false);
+      setTriedOriginalKey(false);
       const key = item.s3_preview_key || item.s3_key;
       const signedUrl = await getSignedUrl(key, albumId);
       
@@ -130,6 +153,7 @@ const FavoriteMediaItem = memo(({
     setHasError(false);
     setIsLoading(true);
     setUrl(null);
+    setTriedOriginalKey(false);
     
     const fetchUrl = async () => {
       const signedUrl = await getSignedUrl(key, albumId);
@@ -188,6 +212,21 @@ const FavoriteMediaItem = memo(({
           alt={item.file_name}
           className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
           loading="lazy"
+          onError={async () => {
+            setUrl(null);
+            // Fallback to original key if preview file is missing/broken.
+            if (item.s3_preview_key && !triedOriginalKey) {
+              setTriedOriginalKey(true);
+              setIsLoading(true);
+              const originalSignedUrl = await getSignedUrl(item.s3_key, albumId);
+              if (originalSignedUrl) {
+                setUrl(originalSignedUrl);
+                return;
+              }
+            }
+            setHasError(true);
+            setIsLoading(false);
+          }}
           onLoad={() => setIsLoading(false)}
         />
       )}

@@ -149,7 +149,7 @@ export const GalleryPreview = () => {
                       className="min-w-0 shrink-0 grow-0 basis-[85%] md:basis-[40%] px-2 md:px-3"
                     >
                       <div
-                        className={`relative rounded-[20px] transition-all duration-[600ms] ease-in-out ${
+                        className={`relative rounded-[20px] transition-all duration-700 ease-in-out ${
                           isActive
                             ? 'scale-100 opacity-100 shadow-2xl'
                             : 'scale-[0.85] opacity-60'

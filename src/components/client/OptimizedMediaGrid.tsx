@@ -53,9 +53,11 @@ interface MediaItemProps {
 
 // Cache for signed URLs with expiry tracking
 const urlCache = new Map<string, { url: string; expiresAt: number }>();
+const pendingUrlRequests = new Map<string, Promise<string | null>>();
 const URL_CACHE_DURATION = 50 * 60 * 1000; // 50 minutes (URL expires in 1 hour)
 
 async function getSignedUrl(s3Key: string, albumId: string, retryCount = 0): Promise<string | null> {
+  if (!s3Key || s3Key === 'undefined' || s3Key === 'null') return null;
   const cacheKey = `${albumId}:${s3Key}`;
   const cached = urlCache.get(cacheKey);
   
@@ -64,9 +66,19 @@ async function getSignedUrl(s3Key: string, albumId: string, retryCount = 0): Pro
     return cached.url;
   }
 
+  const pending = pendingUrlRequests.get(cacheKey);
+  if (pending) {
+    return pending;
+  }
+
+  const requestPromise = (async () => {
   try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData.session?.access_token;
+
     const response = await supabase.functions.invoke('s3-signed-url', {
-      body: { s3Key, albumId },
+      body: { key: s3Key, s3Key, albumId },
+      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
     });
 
     // Don't retry on auth/access errors (403)
@@ -99,6 +111,14 @@ async function getSignedUrl(s3Key: string, albumId: string, retryCount = 0): Pro
     }
   }
   return null;
+  })();
+
+  pendingUrlRequests.set(cacheKey, requestPromise);
+  try {
+    return await requestPromise;
+  } finally {
+    pendingUrlRequests.delete(cacheKey);
+  }
 }
 
 // Individual media item component with lazy loading
@@ -121,6 +141,8 @@ const MediaItem = memo(({
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
+  const [autoRetryCount, setAutoRetryCount] = useState(0);
+  const [triedOriginalKey, setTriedOriginalKey] = useState(false);
   const itemRef = useRef<HTMLDivElement>(null);
   const retryTimeoutRef = useRef<NodeJS.Timeout>();
 
@@ -155,6 +177,8 @@ const MediaItem = memo(({
     const fetchUrl = async () => {
       setIsLoading(true);
       setHasError(false);
+      setAutoRetryCount(0);
+      setTriedOriginalKey(false);
       
       const key = item.s3_preview_key || item.s3_key;
       const signedUrl = await getSignedUrl(key, albumId);
@@ -178,6 +202,8 @@ const MediaItem = memo(({
     setHasError(false);
     setIsLoading(true);
     setUrl(null);
+    setAutoRetryCount(0);
+    setTriedOriginalKey(false);
     
     // Re-fetch
     const fetchUrl = async () => {
@@ -193,16 +219,36 @@ const MediaItem = memo(({
     fetchUrl();
   }, [item.s3_preview_key, item.s3_key, albumId]);
 
-  const handleImageError = useCallback(() => {
+  const handleImageError = useCallback(async () => {
     console.warn(`Image failed to load: ${item.id}`);
-    // Auto-retry once after a delay
-    if (!retryTimeoutRef.current) {
+    // Hide the broken image frame while we attempt fallback/retry.
+    setUrl(null);
+
+    // If preview URL is broken, fallback to original key once.
+    if (item.s3_preview_key && !triedOriginalKey) {
+      setTriedOriginalKey(true);
+      setIsLoading(true);
+      setHasError(false);
+
+      const originalSignedUrl = await getSignedUrl(item.s3_key, albumId);
+      if (originalSignedUrl) {
+        setUrl(originalSignedUrl);
+        return;
+      }
+    }
+
+    // Auto-retry once after a delay, then stop to avoid loops.
+    if (!retryTimeoutRef.current && autoRetryCount < 1) {
+      setAutoRetryCount((prev) => prev + 1);
       retryTimeoutRef.current = setTimeout(() => {
         handleRetry();
         retryTimeoutRef.current = undefined;
       }, 2000);
+      return;
     }
-  }, [item.id, handleRetry]);
+    setHasError(true);
+    setIsLoading(false);
+  }, [item.id, item.s3_key, item.s3_preview_key, albumId, handleRetry, autoRetryCount, triedOriginalKey]);
 
   const isPhoto = item.type === 'photo';
   const aspectClass = isPhoto ? 'aspect-square' : 'aspect-video';

@@ -108,7 +108,7 @@ const handler = async (req: Request): Promise<Response> => {
     // Generate S3 key for the edited file
     const timestamp = Date.now();
     const ext = fileName.split(".").pop() || "jpg";
-    const s3Key = `albums/${editRequest.album_id}/edited/${editRequest.media_id}-edited-${timestamp}.${ext}`;
+    const s3Key = `${editRequest.album_id}/originals/${editRequest.media_id}-edited-${timestamp}.${ext}`;
 
     // Generate presigned PUT URL
     const objectUrl = `${r2Endpoint}/${r2Bucket}/${s3Key}`;

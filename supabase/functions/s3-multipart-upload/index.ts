@@ -8,10 +8,10 @@ const corsHeaders = {
 };
 
 // R2 only — validate env vars
-const r2Endpoint = Deno.env.get("R2_ENDPOINT") || "";
-const r2Bucket = Deno.env.get("R2_BUCKET_NAME") || "";
-const r2AccessKeyId = Deno.env.get("R2_ACCESS_KEY_ID") || "";
-const r2SecretAccessKey = Deno.env.get("R2_SECRET_ACCESS_KEY") || "";
+const r2Endpoint = Deno.env.get("R2_ENDPOINT")!;
+const r2Bucket = Deno.env.get("R2_BUCKET_NAME")!;
+const r2AccessKeyId = Deno.env.get("R2_ACCESS_KEY_ID")!;
+const r2SecretAccessKey = Deno.env.get("R2_SECRET_ACCESS_KEY")!;
 
 console.log(`[s3-multipart] R2 env check: ENDPOINT=${!!r2Endpoint}, BUCKET=${!!r2Bucket}, ACCESS_KEY=${!!r2AccessKeyId}, SECRET_KEY=${!!r2SecretAccessKey}`);
 
@@ -81,6 +81,7 @@ async function getPartUploadUrl(s3Key: string, uploadId: string, partNumber: num
 
   const signed = await r2Client.sign(url, {
     method: "PUT",
+    headers: { host: new URL(url).host },
     aws: { signQuery: true },
   });
 
@@ -143,7 +144,7 @@ const handler = async (req: Request): Promise<Response> => {
 
       const timestamp = Date.now();
       const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, "_");
-      const key = `albums/${albumId}/originals/${timestamp}_${sanitizedFileName}`;
+      const key = `${albumId}/originals/${timestamp}_${sanitizedFileName}`;
 
       console.log(`[s3-multipart] Initiating upload: file=${fileName}, size=${fileSize}, key=${key}`);
 
