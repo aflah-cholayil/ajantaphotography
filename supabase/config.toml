@@ -1,4 +1,4 @@
-project_id = "uwlivwobmlaadrsaqejx"
+project_id = "cfuxhjbypvdxhvmfzuqp"
 
 [functions.send-email]
 verify_jwt = false
@@ -38,6 +38,14 @@ verify_jwt = false
 
 [functions.send-questionnaire]
 verify_jwt = false
+
+[functions.project-health]
+verify_jwt = false
+
+[functions.r2-health]
+verify_jwt = false
+
+
 
 [functions.questionnaire]
 verify_jwt = false

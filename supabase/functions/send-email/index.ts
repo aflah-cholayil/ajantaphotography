@@ -8,11 +8,15 @@ const corsHeaders = {
 };
 
 const resend = new Resend(Deno.env.get("RESEND_API_KEY"));
-// Use verified sender (onboarding@resend.dev) until custom domain is verified
-const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") && Deno.env.get("RESEND_FROM_EMAIL") !== "noreply@ajantaphotography.in"
-  ? Deno.env.get("RESEND_FROM_EMAIL")!
-  : "Ajanta Photography <onboarding@resend.dev>";
-const adminEmail = Deno.env.get("BOOKING_ADMIN_EMAIL") || "";
+const fromEmail = Deno.env.get("RESEND_FROM_EMAIL")?.trim() || "Ajanta Photography <onboarding@resend.dev>";
+const replyToEmail = Deno.env.get("RESEND_REPLY_TO_EMAIL")?.trim() || "";
+const adminEmail = Deno.env.get("BOOKING_ADMIN_EMAIL")?.trim() || "";
+
+function extractEmailAddress(input: string): string {
+  const angleMatch = input.match(/<([^>]+)>/);
+  if (angleMatch?.[1]) return angleMatch[1].trim();
+  return input.trim();
+}
 
 // Default studio configuration (fallback if DB fetch fails)
 const defaultStudioConfig = {
@@ -420,7 +424,8 @@ const handler = async (req: Request): Promise<Response> => {
     
     // For admin notifications, send to admin email
     const adminTypes = ["booking_admin", "contact_admin"];
-    const recipient = adminTypes.includes(type) ? adminEmail : to;
+    const fallbackRecipient = replyToEmail || extractEmailAddress(fromEmail);
+    const recipient = adminTypes.includes(type) ? (adminEmail || fallbackRecipient) : to;
     
     if (!recipient) {
       throw new Error("No recipient email provided");
@@ -462,6 +467,7 @@ const handler = async (req: Request): Promise<Response> => {
       subject: emailContent.subject,
       html: emailContent.html,
       text: (emailContent as { text?: string }).text,
+      ...(replyToEmail ? { reply_to: replyToEmail } : {}),
     });
 
     console.log("[send-email] Resend response:", { 

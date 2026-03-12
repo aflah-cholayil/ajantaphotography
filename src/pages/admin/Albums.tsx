@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
-import { Search, Plus, MoreVertical, Upload, Eye, Share2, CheckCircle, Trash2, FolderUp, ChevronDown, Calendar, Image } from 'lucide-react';
+import { Search, Plus, MoreVertical, Upload, Eye, Share2, CheckCircle, Trash2, FolderUp, ChevronDown, Calendar, Image, ArrowRightLeft } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { AdminLayout } from '@/components/admin/AdminLayout';
@@ -102,6 +102,10 @@ const AdminAlbums = () => {
   // Delete album state
   const [deleteAlbumId, setDeleteAlbumId] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [moveDialogOpen, setMoveDialogOpen] = useState(false);
+  const [albumToMove, setAlbumToMove] = useState<Album | null>(null);
+  const [targetClientId, setTargetClientId] = useState('');
+  const [isMoving, setIsMoving] = useState(false);
 
   // Folder upload state
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
@@ -324,6 +328,44 @@ const AdminAlbums = () => {
       toast({ title: 'Error', description: error instanceof Error ? error.message : 'Failed to delete', variant: 'destructive' });
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const openMoveDialog = (album: Album) => {
+    setAlbumToMove(album);
+    setTargetClientId(album.client_id);
+    setMoveDialogOpen(true);
+  };
+
+  const handleMoveAlbum = async () => {
+    if (!albumToMove || !targetClientId || targetClientId === albumToMove.client_id) return;
+
+    setIsMoving(true);
+    try {
+      const { error } = await supabase
+        .from('albums')
+        .update({ client_id: targetClientId })
+        .eq('id', albumToMove.id);
+
+      if (error) throw error;
+
+      toast({
+        title: 'Album moved',
+        description: `"${albumToMove.title}" was moved to the selected client.`,
+      });
+
+      setMoveDialogOpen(false);
+      setAlbumToMove(null);
+      setTargetClientId('');
+      fetchAlbums();
+    } catch (error: unknown) {
+      toast({
+        title: 'Error',
+        description: error instanceof Error ? error.message : 'Failed to move album',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsMoving(false);
     }
   };
 
@@ -611,6 +653,10 @@ const AdminAlbums = () => {
                                     </DropdownMenuItem>
                                   }
                                 />
+                                <DropdownMenuItem onClick={() => openMoveDialog(album)}>
+                                  <ArrowRightLeft size={16} className="mr-2" />
+                                  Move to Client
+                                </DropdownMenuItem>
                                 <DropdownMenuSeparator />
                                 {album.status !== 'ready' && (
                                   <DropdownMenuItem onClick={() => handleUpdateStatus(album.id, 'ready')}>
@@ -671,6 +717,74 @@ const AdminAlbums = () => {
           open={!!deleteAlbumId}
           onOpenChange={(open) => !open && setDeleteAlbumId(null)}
         />
+
+        {/* Move Album Dialog */}
+        <Dialog
+          open={moveDialogOpen}
+          onOpenChange={(open) => {
+            setMoveDialogOpen(open);
+            if (!open) {
+              setAlbumToMove(null);
+              setTargetClientId('');
+            }
+          }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle className="font-serif text-2xl">Move Album to Client</DialogTitle>
+              <DialogDescription>
+                Select a different client for this album. Media files will remain linked to this album.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 pt-4">
+              {albumToMove && (
+                <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm">
+                  <p className="font-medium text-foreground">{albumToMove.title}</p>
+                  <p className="text-muted-foreground text-xs mt-1">
+                    Current: {albumToMove.clients.profiles.name} - {albumToMove.clients.event_name}
+                  </p>
+                </div>
+              )}
+              <div className="space-y-2">
+                <Label>Target Client</Label>
+                <Select value={targetClientId} onValueChange={setTargetClientId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a client" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {clients.map((client) => (
+                      <SelectItem key={client.id} value={client.id}>
+                        {client.profiles.name} - {client.event_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex gap-2 pt-2">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => setMoveDialogOpen(false)}
+                  disabled={isMoving}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  className="flex-1 btn-gold"
+                  onClick={handleMoveAlbum}
+                  disabled={
+                    isMoving ||
+                    !albumToMove ||
+                    !targetClientId ||
+                    targetClientId === albumToMove.client_id
+                  }
+                >
+                  {isMoving ? 'Moving...' : 'Move Album'}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* Folder Upload Dialog */}
         <FolderUploadDialog

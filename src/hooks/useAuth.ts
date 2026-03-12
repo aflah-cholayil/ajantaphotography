@@ -46,8 +46,24 @@ export const useAuth = () => {
       .select('role')
       .eq('user_id', userId)
       .maybeSingle();
-    
-    return (data?.role as AppRole) || null;
+
+    if (data?.role) {
+      return data.role as AppRole;
+    }
+
+    // Fallback for migrated users where user_roles may be missing:
+    // if user exists as a client account, treat as client role.
+    const { data: clientData } = await supabase
+      .from('clients')
+      .select('id')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (clientData?.id) {
+      return 'client';
+    }
+
+    return null;
   }, []);
 
   const getAuthState = useCallback((user: User | null, session: Session | null, role: AppRole | null): AuthState => {
