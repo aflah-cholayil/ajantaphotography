@@ -70,6 +70,7 @@ interface Media {
   height: number | null;
   duration: number | null;
   s3_key: string;
+  s3_preview_key?: string | null;
   created_at: string;
 }
 
@@ -200,15 +201,30 @@ const AdminAlbumDetail = () => {
       for (let i = 0; i < newMedia.length; i += BATCH_SIZE) {
         const batch = newMedia.slice(i, i + BATCH_SIZE);
         const results = await Promise.all(
-          batch.map(async (item) => {
+          batch.map(async (media) => {
             try {
-              const { data: urlData } = await supabase.functions.invoke('s3-signed-url', {
-                body: { s3Key: item.s3_key },
-              });
-              return { id: item.id, url: urlData?.url };
+              if (!media?.s3_key || media.s3_key === 'undefined' || media.s3_key === 'null') {
+                console.warn("Missing s3_key for media:", media);
+                return { id: media.id, url: null };
+              }
+              const { data, error } = await supabase.functions.invoke(
+                "s3-signed-url",
+                {
+                  body: {
+                    key: media.s3_key,
+                    s3Key: media.s3_key
+                  }
+                }
+              );
+              if (error) {
+                console.error('Error getting signed URL:', error);
+                return { id: media.id, url: null };
+              }
+              const imageUrl = data?.url;
+              return { id: media.id, url: imageUrl ?? null };
             } catch (e) {
               console.error('Error getting signed URL:', e);
-              return { id: item.id, url: null };
+              return { id: media.id, url: null };
             }
           })
         );
@@ -321,17 +337,34 @@ const AdminAlbumDetail = () => {
       const uniqueMediaIds = [...new Set(favorites.map(f => f.media_id))];
       const selectedMedia = media.filter(m => uniqueMediaIds.includes(m.id));
       let downloadedCount = 0;
-      for (const item of selectedMedia) {
+      for (const media of selectedMedia) {
         try {
-          const { data: urlData } = await supabase.functions.invoke('s3-signed-url', { body: { s3Key: item.s3_key } });
-          if (urlData?.url) {
-            const response = await fetch(urlData.url);
+          if (!media?.s3_key || media.s3_key === 'undefined' || media.s3_key === 'null') {
+            console.warn("Missing s3_key for media:", media);
+            continue;
+          }
+          const { data, error } = await supabase.functions.invoke(
+            "s3-signed-url",
+            {
+              body: {
+                key: media.s3_key,
+                s3Key: media.s3_key
+              }
+            }
+          );
+          if (error) {
+            console.error('Error getting signed URL:', error);
+            continue;
+          }
+          const imageUrl = data?.url;
+          if (imageUrl) {
+            const response = await fetch(imageUrl);
             const blob = await response.blob();
-            zip.file(item.file_name, blob);
+            zip.file(media.file_name, blob);
             downloadedCount++;
           }
         } catch (err) {
-          console.error(`Error downloading ${item.file_name}:`, err);
+          console.error(`Error downloading ${media.file_name}:`, err);
         }
       }
       if (downloadedCount > 0) {

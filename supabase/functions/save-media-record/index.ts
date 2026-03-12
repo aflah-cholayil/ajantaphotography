@@ -51,7 +51,7 @@ serve(async (req: Request) => {
       });
     }
 
-    const { albumId, s3Key, fileName, mimeType, size, type, width, height, duration, storageProvider } = await req.json();
+    const { albumId, s3Key, s3PreviewKey, s3MediumKey, fileName, mimeType, size, type, width, height, duration, storageProvider } = await req.json();
 
     if (!albumId || !s3Key || !fileName || !mimeType || size === undefined) {
       return new Response(JSON.stringify({ error: "Missing required fields: albumId, s3Key, fileName, mimeType, size" }), {
@@ -66,6 +66,8 @@ serve(async (req: Request) => {
       .insert({
         album_id: albumId,
         s3_key: s3Key,
+        s3_preview_key: s3PreviewKey || null,
+        s3_medium_key: s3MediumKey || null,
         file_name: fileName,
         mime_type: mimeType,
         size,
@@ -87,6 +89,19 @@ serve(async (req: Request) => {
     }
 
     console.log(`Media record saved: ${data.id} for ${s3Key} (provider: ${storageProvider || "r2"})`);
+
+    // Ensure newly uploaded albums have a visible cover and become viewable for clients.
+    await serviceClient
+      .from("albums")
+      .update({ cover_image_key: s3Key })
+      .eq("id", albumId)
+      .is("cover_image_key", null);
+
+    await serviceClient
+      .from("albums")
+      .update({ status: "ready", ready_at: new Date().toISOString() })
+      .eq("id", albumId)
+      .eq("status", "pending");
 
     return new Response(JSON.stringify({ id: data.id, s3_key: data.s3_key }), {
       status: 200,

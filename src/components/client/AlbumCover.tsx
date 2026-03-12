@@ -13,14 +13,14 @@ export const AlbumCover = ({ albumId, coverImageKey, alt, className = "w-full h-
   const [url, setUrl] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!coverImageKey) return;
+    if (!coverImageKey || coverImageKey === 'undefined' || coverImageKey === 'null') return;
     
     let cancelled = false;
     
     const fetchUrl = async () => {
       try {
         const response = await supabase.functions.invoke('s3-signed-url', {
-          body: { s3Key: coverImageKey, albumId },
+          body: { key: coverImageKey, s3Key: coverImageKey, albumId },
         });
         if (!cancelled && response.data?.url) {
           setUrl(response.data.url);

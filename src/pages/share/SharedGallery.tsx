@@ -21,10 +21,12 @@ interface Media {
   file_name: string;
   s3_key: string;
   s3_preview_key: string | null;
+  s3_medium_key?: string | null;
   type: 'photo' | 'video';
   width: number | null;
   height: number | null;
   signedUrl?: string | null;
+  signedMediumUrl?: string | null;
 }
 
 interface Album {
@@ -41,6 +43,40 @@ interface ShareLinkInfo {
 }
 
 const PAGE_SIZE = 200;
+const urlCache = new Map<string, string>();
+
+async function getSharedSignedUrl(params: {
+  key: string;
+  albumId: string;
+  shareToken: string;
+  sharePassword?: string;
+}): Promise<string | null> {
+  if (!params.key || params.key === 'undefined' || params.key === 'null') return null;
+  const cacheKey = `${params.albumId}:${params.key}`;
+  const cached = urlCache.get(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const { data, error } = await supabase.functions.invoke('s3-signed-url', {
+      body: {
+        key: params.key,
+        s3Key: params.key,
+        albumId: params.albumId,
+        shareToken: params.shareToken,
+        sharePassword: params.sharePassword,
+      },
+    });
+    if (error || !data?.url) {
+      console.error('Failed to get shared signed URL:', error);
+      return null;
+    }
+    urlCache.set(cacheKey, data.url);
+    return data.url;
+  } catch (err) {
+    console.error('Error getting shared signed URL:', err);
+    return null;
+  }
+}
 
 const SharedGallery = () => {
   const { token } = useParams<{ token: string }>();
@@ -59,6 +95,7 @@ const SharedGallery = () => {
   const [zoomLevel, setZoomLevel] = useState(1);
   const [activeTab, setActiveTab] = useState('photos');
   const [retryCount, setRetryCount] = useState(0);
+  const [brokenMediaIds, setBrokenMediaIds] = useState<Set<string>>(new Set());
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(0);
@@ -141,7 +178,7 @@ const SharedGallery = () => {
 
   // Load gallery data
   const loadGallery = async (providedPassword?: string, page = 0) => {
-    if (!token) return;
+    if (!token || !album?.id) return;
 
     if (page === 0) {
       setIsLoading(true);
@@ -184,11 +221,40 @@ const SharedGallery = () => {
       }
 
       if (data?.album) {
+        const signedMedia = await Promise.all(
+          ((data.media || []) as Media[]).map(async (item) => {
+            const previewKey = item.s3_preview_key ?? item.s3_key;
+            let signedUrl = await getSharedSignedUrl({
+              key: previewKey,
+              albumId: data.album.id,
+              shareToken: normalizedToken,
+              sharePassword: providedPassword || password,
+            });
+            if (!signedUrl && item.s3_preview_key) {
+              signedUrl = await getSharedSignedUrl({
+                key: item.s3_key,
+                albumId: data.album.id,
+                shareToken: normalizedToken,
+                sharePassword: providedPassword || password,
+              });
+            }
+            const mediumKey = item.s3_medium_key || item.s3_key;
+            const signedMediumUrl = await getSharedSignedUrl({
+              key: mediumKey,
+              albumId: data.album.id,
+              shareToken: normalizedToken,
+              sharePassword: providedPassword || password,
+            });
+            return { ...item, signedUrl, signedMediumUrl };
+          })
+        );
+
         setAlbum(data.album);
         if (page === 0) {
-          setMedia(data.media || []);
+          setMedia(signedMedia);
+          setBrokenMediaIds(new Set());
         } else {
-          setMedia(prev => [...prev, ...(data.media || [])]);
+          setMedia(prev => [...prev, ...signedMedia]);
         }
         setShareLink(data.shareLink);
         setTotalCount(data.totalCount || 0);
@@ -252,17 +318,15 @@ const SharedGallery = () => {
 
     try {
       toast.info('Preparing download...');
-      const { data, error } = await supabase.functions.invoke('get-share-gallery', {
-        body: { 
-          token: token.trim(), 
-          password,
-          action: 'get-signed-url',
-          s3Key: item.s3_key,
-        },
+      const signedUrl = await getSharedSignedUrl({
+        key: item.s3_key,
+        albumId: album.id,
+        shareToken: token.trim(),
+        sharePassword: password,
       });
-      
-      if (data?.url) {
-        const response = await fetch(data.url);
+
+      if (signedUrl) {
+        const response = await fetch(signedUrl);
         const blob = await response.blob();
         const blobUrl = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -302,17 +366,15 @@ const SharedGallery = () => {
 
       for (const item of media) {
         try {
-          const { data } = await supabase.functions.invoke('get-share-gallery', {
-            body: { 
-              token: token.trim(), 
-              password,
-              action: 'get-signed-url',
-              s3Key: item.s3_key,
-            },
+          const signedUrl = await getSharedSignedUrl({
+            key: item.s3_key,
+            albumId: album.id,
+            shareToken: token.trim(),
+            sharePassword: password,
           });
 
-          if (data?.url) {
-            const fileResponse = await fetch(data.url);
+          if (signedUrl) {
+            const fileResponse = await fetch(signedUrl);
             if (fileResponse.ok) {
               const blob = await fileResponse.blob();
               folder.file(item.file_name, blob);
@@ -556,12 +618,16 @@ const SharedGallery = () => {
                     className="aspect-square relative group cursor-pointer overflow-hidden rounded-lg bg-muted"
                     onClick={() => setSelectedMedia(item)}
                   >
-                    {item.signedUrl ? (
+                    {item.signedUrl && !brokenMediaIds.has(item.id) ? (
                       <img
                         src={item.signedUrl}
                         alt={item.file_name}
                         className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
                         loading="lazy"
+                        onError={() => {
+                          console.error('Failed to load shared image:', item.file_name);
+                          setBrokenMediaIds(prev => new Set(prev).add(item.id));
+                        }}
                       />
                     ) : (
                       <Skeleton className="w-full h-full" />
@@ -611,12 +677,16 @@ const SharedGallery = () => {
                     className="aspect-video relative group cursor-pointer overflow-hidden rounded-lg bg-muted"
                     onClick={() => setSelectedMedia(item)}
                   >
-                    {item.signedUrl ? (
+                    {item.signedUrl && !brokenMediaIds.has(item.id) ? (
                       <video
                         src={item.signedUrl}
                         className="w-full h-full object-cover"
                         muted
                         playsInline
+                        onError={() => {
+                          console.error('Failed to load shared video:', item.file_name);
+                          setBrokenMediaIds(prev => new Set(prev).add(item.id));
+                        }}
                       />
                     ) : (
                       <Skeleton className="w-full h-full" />
@@ -763,11 +833,11 @@ const SharedGallery = () => {
               onClick={(e) => e.stopPropagation()}
             >
               {selectedMedia.type === 'photo' ? (
-                <motion.img
+                  <motion.img
                   key={selectedMedia.id}
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  src={selectedMedia.signedUrl || ''}
+                  src={selectedMedia.signedMediumUrl || selectedMedia.signedUrl || ''}
                   alt={selectedMedia.file_name}
                   className="max-w-full max-h-[85vh] object-contain transition-transform duration-200"
                   style={{ transform: `scale(${zoomLevel})` }}
@@ -777,7 +847,7 @@ const SharedGallery = () => {
                   key={selectedMedia.id}
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  src={selectedMedia.signedUrl || ''}
+                  src={selectedMedia.signedMediumUrl || selectedMedia.signedUrl || ''}
                   controls
                   autoPlay
                   className="max-w-full max-h-[85vh]"

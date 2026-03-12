@@ -8,10 +8,10 @@ const corsHeaders = {
 };
 
 // R2 config
-const r2Endpoint = Deno.env.get("R2_ENDPOINT") || "";
-const r2BucketName = Deno.env.get("R2_BUCKET_NAME") || "";
-const r2AccessKeyId = Deno.env.get("R2_ACCESS_KEY_ID") || "";
-const r2SecretAccessKey = Deno.env.get("R2_SECRET_ACCESS_KEY") || "";
+const r2Endpoint = Deno.env.get("R2_ENDPOINT")!;
+const r2BucketName = Deno.env.get("R2_BUCKET_NAME")!;
+const r2AccessKeyId = Deno.env.get("R2_ACCESS_KEY_ID")!;
+const r2SecretAccessKey = Deno.env.get("R2_SECRET_ACCESS_KEY")!;
 
 const r2 = new AwsClient({
   accessKeyId: r2AccessKeyId,
@@ -25,8 +25,25 @@ interface UploadRequest {
   fileName?: string;
   fileType?: string;
   fileSize?: number;
-  isPreview?: boolean;
+  variant?: "original" | "medium" | "preview";
   action?: string;
+  fileDataBase64?: string;
+}
+
+function splitName(fileName: string) {
+  const sanitized = fileName.replace(/[^a-zA-Z0-9.-]/g, "_");
+  const dot = sanitized.lastIndexOf(".");
+  if (dot <= 0) return { base: sanitized, ext: "" };
+  return { base: sanitized.slice(0, dot), ext: sanitized.slice(dot) };
+}
+
+function buildStorageKey(albumId: string, fileName: string, variant: "original" | "medium" | "preview") {
+  const timestamp = Date.now();
+  const { base, ext } = splitName(fileName);
+  const fileNameWithExt = variant === "original"
+    ? `${timestamp}_${base}${ext}`
+    : `${timestamp}_${base}.webp`;
+  return `${albumId}/${variant === "preview" ? "previews" : variant}/${fileNameWithExt}`;
 }
 
 const handler = async (req: Request): Promise<Response> => {
@@ -166,8 +183,80 @@ const handler = async (req: Request): Promise<Response> => {
       }
     }
 
+    // ===== PROXY MODE: server-side upload fallback (for browser CORS blocks) =====
+    if (body.action === "proxy-upload") {
+      const { albumId, fileName, fileType, fileSize, variant = "original", fileDataBase64 } = body;
+
+      if (!albumId || !fileName || !fileType || !fileSize || !fileDataBase64) {
+        return new Response(JSON.stringify({ error: "Missing required fields: albumId, fileName, fileType, fileSize, fileDataBase64" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      // Keep proxy uploads for small files only to avoid edge runtime payload limits.
+      if (fileSize > 10 * 1024 * 1024) {
+        return new Response(JSON.stringify({ error: "Proxy upload supports files up to 10MB" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const s3Key = buildStorageKey(albumId, fileName, variant);
+      const objectUrl = `${r2Endpoint}/${r2BucketName}/${s3Key}`;
+
+      try {
+        const cleanBase64 = fileDataBase64.includes(",")
+          ? fileDataBase64.split(",").pop() || ""
+          : fileDataBase64;
+        const binary = atob(cleanBase64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+        const signedReq = await r2.sign(objectUrl, {
+          method: "PUT",
+          headers: {
+            host: new URL(objectUrl).host,
+            "Content-Type": fileType,
+          },
+          aws: { signQuery: true },
+        });
+
+        const uploadRes = await fetch(signedReq.url, {
+          method: "PUT",
+          headers: signedReq.headers,
+          body: bytes,
+        });
+
+        if (!uploadRes.ok) {
+          const text = await uploadRes.text();
+          return new Response(JSON.stringify({ error: `Proxy upload failed: ${uploadRes.status} ${text}` }), {
+            status: 500,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          });
+        }
+
+        return new Response(JSON.stringify({
+          success: true,
+          s3Key,
+          bucket: r2BucketName,
+          region: "auto",
+          storageProvider: "r2",
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      } catch (proxyError) {
+        const msg = proxyError instanceof Error ? proxyError.message : "Unknown proxy upload error";
+        return new Response(JSON.stringify({ error: msg }), {
+          status: 500,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+    }
+
     // ===== NORMAL MODE: generate presigned URL =====
-    const { albumId, fileName, fileType, fileSize, isPreview } = body;
+    const { albumId, fileName, fileType, fileSize, variant = "original" } = body;
 
     if (!albumId || !fileName || !fileType || !fileSize) {
       return new Response(JSON.stringify({ error: "Missing required fields: albumId, fileName, fileType, fileSize" }), {
@@ -176,10 +265,7 @@ const handler = async (req: Request): Promise<Response> => {
       });
     }
 
-    const timestamp = Date.now();
-    const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, "_");
-    const prefix = isPreview ? "previews" : "originals";
-    const s3Key = `albums/${albumId}/${prefix}/${timestamp}_${sanitizedFileName}`;
+    const s3Key = buildStorageKey(albumId, fileName, variant);
 
     console.log(`[s3-upload] Generating R2 presigned URL: file=${fileName}, size=${fileSize}, key=${s3Key}`);
 
@@ -195,6 +281,7 @@ const handler = async (req: Request): Promise<Response> => {
     try {
       const signedReq = await r2.sign(objectUrl, {
         method: "PUT",
+        headers: { host: new URL(objectUrl).host },
         aws: { signQuery: true },
       });
 

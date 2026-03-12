@@ -38,6 +38,7 @@ const urlCache = new Map<string, { url: string; expiresAt: number }>();
 const URL_CACHE_DURATION = 50 * 60 * 1000;
 
 async function getSignedUrl(s3Key: string, albumId: string): Promise<string | null> {
+  if (!s3Key || s3Key === 'undefined' || s3Key === 'null') return null;
   const cacheKey = `${albumId}:${s3Key}`;
   const cached = urlCache.get(cacheKey);
   
@@ -47,7 +48,7 @@ async function getSignedUrl(s3Key: string, albumId: string): Promise<string | nu
 
   try {
     const response = await supabase.functions.invoke('s3-signed-url', {
-      body: { s3Key, albumId },
+      body: { key: s3Key, s3Key, albumId },
     });
 
     if (response.data?.url) {
@@ -135,6 +136,7 @@ export function PeopleTab({ albumId, onDownload }: PeopleTabProps) {
       // Fetch signed URLs for all photos
       const urls: Record<string, string> = {};
       for (const photo of photos) {
+        if (!photo?.s3_key) continue;
         const key = photo.s3_preview_key || photo.s3_key;
         const url = await getSignedUrl(key, albumId);
         if (url) {

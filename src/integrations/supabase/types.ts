@@ -517,6 +517,7 @@ export type Database = {
           id: string
           mime_type: string
           s3_key: string
+          s3_medium_key: string | null
           s3_preview_key: string | null
           size: number
           sort_order: number | null
@@ -533,6 +534,7 @@ export type Database = {
           id?: string
           mime_type: string
           s3_key: string
+          s3_medium_key?: string | null
           s3_preview_key?: string | null
           size: number
           sort_order?: number | null
@@ -549,6 +551,7 @@ export type Database = {
           id?: string
           mime_type?: string
           s3_key?: string
+          s3_medium_key?: string | null
           s3_preview_key?: string | null
           size?: number
           sort_order?: number | null

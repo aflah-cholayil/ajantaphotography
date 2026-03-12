@@ -26,6 +26,8 @@ export interface FileUploadState {
   bytesUploaded: number;
   error?: string;
   s3Key?: string;
+  s3PreviewKey?: string;
+  s3MediumKey?: string;
   uploadId?: string;
   retryCount: number;
   dbSaved: boolean;
@@ -142,6 +144,80 @@ export class UploadEngine {
     const idx = this.state.files.findIndex(f => f.id === id);
     if (idx !== -1) {
       this.state.files[idx] = { ...this.state.files[idx], ...updates };
+    }
+  }
+
+  private async createResizedWebP(file: File, maxWidth: number, quality = 0.82): Promise<Blob | null> {
+    try {
+      const imageBitmap = await createImageBitmap(file);
+      const { width, height } = imageBitmap;
+      if (!width || !height) return null;
+
+      const targetWidth = Math.min(width, maxWidth);
+      const targetHeight = Math.round((height / width) * targetWidth);
+
+      const canvas = document.createElement('canvas');
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        imageBitmap.close();
+        return null;
+      }
+      ctx.drawImage(imageBitmap, 0, 0, targetWidth, targetHeight);
+      imageBitmap.close();
+
+      const blob = await new Promise<Blob | null>((resolve) => {
+        canvas.toBlob((b) => resolve(b), 'image/webp', quality);
+      });
+      return blob;
+    } catch (err) {
+      console.warn('[UploadEngine] Failed to create resized webp:', err);
+      return null;
+    }
+  }
+
+  private async uploadBlobVariant(albumId: string, fileName: string, blob: Blob, variant: 'medium' | 'preview'): Promise<string | null> {
+    const { data: urlData, error } = await supabase.functions.invoke('s3-upload', {
+      body: {
+        albumId,
+        fileName,
+        fileType: 'image/webp',
+        fileSize: blob.size,
+        variant,
+      },
+    });
+
+    if (error || urlData?.error || !urlData?.presignedUrl || !urlData?.s3Key) {
+      console.warn(`[UploadEngine] Failed to get ${variant} upload URL`, error || urlData?.error);
+      return null;
+    }
+
+    const controller = new AbortController();
+    const variantId = `${Date.now()}-${variant}-${Math.random().toString(36).slice(2, 8)}`;
+    this.abortControllers.set(variantId, controller);
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.timeout = SMALL_FILE_TIMEOUT;
+        xhr.addEventListener('load', () => {
+          if (xhr.status >= 200 && xhr.status < 300) resolve();
+          else reject(new Error(`${variant} upload failed (${xhr.status})`));
+        });
+        xhr.addEventListener('error', () => reject(new Error(`${variant} upload network error`)));
+        xhr.addEventListener('timeout', () => reject(new Error(`${variant} upload timeout`)));
+        controller.signal.addEventListener('abort', () => xhr.abort());
+        xhr.open('PUT', urlData.presignedUrl);
+        xhr.setRequestHeader('Content-Type', 'image/webp');
+        xhr.send(blob);
+      });
+      return urlData.s3Key;
+    } catch (err) {
+      console.warn(`[UploadEngine] ${variant} upload failed`, err);
+      return null;
+    } finally {
+      this.abortControllers.delete(variantId);
     }
   }
 
@@ -312,6 +388,21 @@ export class UploadEngine {
       await this.uploadMultipartFile(fileState);
     }
 
+    if (fileState.file.type.startsWith('image/')) {
+      const mediumBlob = await this.createResizedWebP(fileState.file, 1600, 0.84);
+      const previewBlob = await this.createResizedWebP(fileState.file, 400, 0.78);
+
+      const [s3MediumKey, s3PreviewKey] = await Promise.all([
+        mediumBlob ? this.uploadBlobVariant(this.albumId, fileState.file.name, mediumBlob, 'medium') : Promise.resolve(null),
+        previewBlob ? this.uploadBlobVariant(this.albumId, fileState.file.name, previewBlob, 'preview') : Promise.resolve(null),
+      ]);
+
+      this.updateFile(fileState.id, {
+        s3MediumKey: s3MediumKey || undefined,
+        s3PreviewKey: s3PreviewKey || undefined,
+      });
+    }
+
     // Save media record server-side with retry
     await this.saveMediaRecordWithRetry(fileState);
 
@@ -338,7 +429,10 @@ export class UploadEngine {
     const controller = new AbortController();
     this.abortControllers.set(fileState.id, controller);
 
-    await new Promise<void>((resolve, reject) => {
+    let directUploadError: Error | null = null;
+
+    try {
+      await new Promise<void>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
 
       // Set timeout for small file uploads
@@ -373,9 +467,66 @@ export class UploadEngine {
       xhr.open('PUT', urlData.presignedUrl);
       xhr.setRequestHeader('Content-Type', fileState.file.type);
       xhr.send(fileState.file);
+      });
+    } catch (err) {
+      directUploadError = err instanceof Error ? err : new Error(String(err));
+    } finally {
+      this.abortControllers.delete(fileState.id);
+    }
+
+    if (!directUploadError) return;
+
+    const message = directUploadError.message || '';
+    const isCorsLikeError =
+      message.includes('CORS') ||
+      message.includes('blocked') ||
+      message.includes('Network error');
+
+    if (!isCorsLikeError) {
+      throw directUploadError;
+    }
+
+    // Fallback: upload server-side through edge function to bypass browser CORS restrictions.
+    this.updateFile(fileState.id, { progress: 25, error: 'Direct upload blocked, retrying via server...' });
+    this.notify();
+
+    const fileDataBase64 = await this.fileToBase64(fileState.file);
+
+    const { data: proxyData, error: proxyError } = await supabase.functions.invoke('s3-upload', {
+      body: {
+        action: 'proxy-upload',
+        albumId: this.albumId,
+        fileName: fileState.file.name,
+        fileType: fileState.file.type,
+        fileSize: fileState.file.size,
+        fileDataBase64,
+      },
     });
 
-    this.abortControllers.delete(fileState.id);
+    if (proxyError || proxyData?.error || !proxyData?.s3Key) {
+      throw new Error(proxyData?.error || proxyError?.message || 'Proxy upload failed');
+    }
+
+    this.updateFile(fileState.id, {
+      s3Key: proxyData.s3Key,
+      progress: 100,
+      bytesUploaded: fileState.file.size,
+      error: undefined,
+    });
+    this.notify();
+  }
+
+  private async fileToBase64(file: File): Promise<string> {
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result;
+        if (typeof result === 'string') resolve(result);
+        else reject(new Error('Failed to encode file'));
+      };
+      reader.onerror = () => reject(new Error('Failed to read file'));
+      reader.readAsDataURL(file);
+    });
   }
 
   private async uploadMultipartFile(fileState: FileUploadState) {
@@ -510,6 +661,8 @@ export class UploadEngine {
   private async saveMediaRecordWithRetry(fileState: FileUploadState) {
     const file = fileState.file;
     const s3Key = this.state.files.find(f => f.id === fileState.id)?.s3Key;
+    const s3PreviewKey = this.state.files.find(f => f.id === fileState.id)?.s3PreviewKey;
+    const s3MediumKey = this.state.files.find(f => f.id === fileState.id)?.s3MediumKey;
     if (!s3Key) throw new Error('No S3 key available');
 
     let width: number | undefined;
@@ -548,6 +701,8 @@ export class UploadEngine {
           body: {
             albumId: this.albumId,
             s3Key,
+            s3PreviewKey,
+            s3MediumKey,
             fileName: file.name,
             mimeType: file.type,
             size: file.size,

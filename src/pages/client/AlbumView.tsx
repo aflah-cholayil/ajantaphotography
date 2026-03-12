@@ -27,6 +27,7 @@ interface Media {
   file_name: string;
   s3_key: string;
   s3_preview_key: string | null;
+  s3_medium_key?: string | null;
   type: 'photo' | 'video';
   width: number | null;
   height: number | null;
@@ -44,6 +45,7 @@ const urlCache = new Map<string, { url: string; expiresAt: number }>();
 const URL_CACHE_DURATION = 50 * 60 * 1000;
 
 async function getSignedUrl(s3Key: string, albumId: string): Promise<string | null> {
+  if (!s3Key || s3Key === 'undefined' || s3Key === 'null') return null;
   const cacheKey = `${albumId}:${s3Key}`;
   const cached = urlCache.get(cacheKey);
   
@@ -52,8 +54,12 @@ async function getSignedUrl(s3Key: string, albumId: string): Promise<string | nu
   }
 
   try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData.session?.access_token;
+
     const response = await supabase.functions.invoke('s3-signed-url', {
-      body: { s3Key, albumId },
+      body: { key: s3Key, s3Key, albumId },
+      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
     });
 
     // Don't retry on auth/access errors
@@ -124,7 +130,7 @@ const ClientAlbumView = () => {
     try {
       const { data: mediaData, error: mediaError } = await supabase
         .from('media')
-        .select('id, file_name, s3_key, s3_preview_key, type, width, height')
+        .select('id, file_name, s3_key, s3_preview_key, s3_medium_key, type, width, height')
         .eq('album_id', id)
         .order('sort_order', { ascending: true })
         .range(from, to);
@@ -238,7 +244,8 @@ const ClientAlbumView = () => {
   useEffect(() => {
     if (selectedMedia && id) {
       const fetchLightboxUrl = async () => {
-        const url = await getSignedUrl(selectedMedia.s3_key, id);
+        const key = selectedMedia.s3_medium_key || selectedMedia.s3_key;
+        const url = await getSignedUrl(key, id);
         setLightboxUrl(url);
       };
       fetchLightboxUrl();
@@ -346,7 +353,7 @@ const ClientAlbumView = () => {
         const to = from + PAGE_SIZE - 1;
         const { data: pageData } = await supabase
           .from('media')
-          .select('id, file_name, s3_key, s3_preview_key, type, width, height')
+          .select('id, file_name, s3_key, s3_preview_key, s3_medium_key, type, width, height')
           .eq('album_id', id)
           .order('sort_order', { ascending: true })
           .range(from, to);
@@ -617,6 +624,7 @@ const ClientAlbumView = () => {
               editRequests={editRequests}
               completedEdits={completedEdits}
               onRequestEdit={(item) => {
+                if (!item?.s3_key) return;
                 setEditDialogMedia(item);
                 // Get thumbnail URL from cache
                 const key = item.s3_preview_key || item.s3_key;

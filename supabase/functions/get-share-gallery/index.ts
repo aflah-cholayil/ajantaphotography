@@ -8,16 +8,6 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// AWS (legacy)
-const awsRegion = Deno.env.get("AWS_REGION") || "us-east-1";
-const awsBucket = Deno.env.get("AWS_BUCKET_NAME")!;
-const awsClient = new AwsClient({
-  accessKeyId: Deno.env.get("AWS_ACCESS_KEY_ID")!,
-  secretAccessKey: Deno.env.get("AWS_SECRET_ACCESS_KEY")!,
-  region: awsRegion,
-  service: "s3",
-});
-
 // R2
 const r2Endpoint = Deno.env.get("R2_ENDPOINT")!;
 const r2Bucket = Deno.env.get("R2_BUCKET_NAME")!;
@@ -28,14 +18,9 @@ const r2Client = new AwsClient({
   service: "s3",
 });
 
-async function signUrl(s3Key: string, provider: string) {
-  if (provider === "r2") {
-    const objectUrl = `${r2Endpoint}/${r2Bucket}/${s3Key}`;
-    const signed = await r2Client.sign(objectUrl, { method: "GET", aws: { signQuery: true } });
-    return signed.url;
-  }
-  const objectUrl = `https://${awsBucket}.s3.${awsRegion}.amazonaws.com/${s3Key}`;
-  const signed = await awsClient.sign(objectUrl, { method: "GET", aws: { signQuery: true } });
+async function signUrl(s3Key: string) {
+  const objectUrl = `${r2Endpoint}/${r2Bucket}/${s3Key}`;
+  const signed = await r2Client.sign(objectUrl, { method: "GET", aws: { signQuery: true } });
   return signed.url;
 }
 
@@ -158,7 +143,7 @@ const handler = async (req: Request): Promise<Response> => {
 
       const { data: media, error: mediaError } = await supabase
         .from("media")
-        .select("id, file_name, s3_key, s3_preview_key, type, width, height, storage_provider")
+        .select("id, file_name, s3_key, s3_preview_key, s3_medium_key, type, width, height, storage_provider")
         .eq("album_id", shareLink.album_id)
         .order("sort_order", { ascending: true })
         .range(from, to);
@@ -167,13 +152,12 @@ const handler = async (req: Request): Promise<Response> => {
         console.error("Error fetching media:", mediaError);
       }
 
-      // Generate signed URLs using correct provider per item
+      // Generate signed URLs from R2
       const mediaWithUrls = await Promise.all(
         (media || []).map(async (item: any) => {
           const previewKey = item.s3_preview_key || item.s3_key;
-          const provider = item.storage_provider || "aws";
           try {
-            const url = await signUrl(previewKey, provider);
+            const url = await signUrl(previewKey);
             return { ...item, signedUrl: url };
           } catch (err) {
             console.error(`Error signing URL for ${item.id}:`, err);
@@ -212,18 +196,8 @@ const handler = async (req: Request): Promise<Response> => {
     }
 
     if (action === "get-signed-url" && s3Key) {
-      // Look up provider for this specific key
-      const { data: mediaItem } = await supabase
-        .from("media")
-        .select("storage_provider")
-        .or(`s3_key.eq.${s3Key},s3_preview_key.eq.${s3Key}`)
-        .limit(1)
-        .maybeSingle();
-      
-      const provider = mediaItem?.storage_provider || "aws";
-
       try {
-        const url = await signUrl(s3Key, provider);
+        const url = await signUrl(s3Key);
         return new Response(
           JSON.stringify({ url }),
           { headers: { "Content-Type": "application/json", ...corsHeaders } }

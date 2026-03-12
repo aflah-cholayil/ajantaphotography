@@ -80,10 +80,10 @@ export function EditRequestsList({ albumId, mediaUrls, onCountChange }: EditRequ
         // Fetch edited thumbnails for completed requests
         const completedRequests = editRequests.filter(r => r.status === 'completed' && r.edited_s3_key);
         for (const req of completedRequests) {
-          if (req.edited_s3_key) {
+          if (req.edited_s3_key && req.edited_s3_key !== 'undefined' && req.edited_s3_key !== 'null') {
             try {
               const { data: urlData } = await supabase.functions.invoke('s3-signed-url', {
-                body: { s3Key: req.edited_s3_key, albumId },
+                body: { key: req.edited_s3_key, s3Key: req.edited_s3_key, albumId },
               });
               if (urlData?.url) {
                 setEditedThumbnails(prev => ({ ...prev, [req.id]: urlData.url }));
@@ -105,7 +105,7 @@ export function EditRequestsList({ albumId, mediaUrls, onCountChange }: EditRequ
 
   const handleDownloadOriginal = async (req: EditRequest) => {
     const s3Key = mediaS3Keys[req.media_id];
-    if (!s3Key) {
+    if (!s3Key || s3Key === 'undefined' || s3Key === 'null') {
       toast.error('Original file not found');
       return;
     }
@@ -114,7 +114,7 @@ export function EditRequestsList({ albumId, mediaUrls, onCountChange }: EditRequ
     try {
       toast.info('Preparing download...');
       const { data, error } = await supabase.functions.invoke('s3-signed-url', {
-        body: { s3Key, albumId },
+        body: { key: s3Key, s3Key, albumId },
       });
       if (error || !data?.url) throw new Error('Failed to get signed URL');
 

@@ -30,13 +30,14 @@ const urlCache = new Map<string, { url: string; expiresAt: number }>();
 const URL_CACHE_DURATION = 50 * 60 * 1000;
 
 async function getSignedUrl(s3Key: string, albumId: string): Promise<string | null> {
+  if (!s3Key || s3Key === 'undefined' || s3Key === 'null') return null;
   const cacheKey = `${albumId}:${s3Key}`;
   const cached = urlCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.url;
 
   try {
     const { data, error } = await supabase.functions.invoke('s3-signed-url', {
-      body: { s3Key, albumId },
+      body: { key: s3Key, s3Key, albumId },
     });
     if (error || !data?.url) return null;
     urlCache.set(cacheKey, { url: data.url, expiresAt: Date.now() + URL_CACHE_DURATION });
@@ -83,7 +84,7 @@ export function EditRequestsTab({ albumId }: EditRequestsTabProps) {
         // Fetch original thumbnails
         const urls: Record<string, string> = {};
         for (const req of editRequests) {
-          if (req.media) {
+          if (req.media?.s3_key) {
             const key = req.media.s3_preview_key || req.media.s3_key;
             const url = await getSignedUrl(key, albumId);
             if (url) urls[req.media_id] = url;
