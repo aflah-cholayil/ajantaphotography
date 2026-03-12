@@ -4,10 +4,10 @@ import path from "path";
 import { componentTagger } from "lovable-tagger";
 import * as fs from "fs";
 
-const SUPABASE_PROJECT_ID = "uwlivwobmlaadrsaqejx";
+const SUPABASE_PROJECT_ID = "cfuxhjbypvdxhvmfzuqp";
 const SUPABASE_URL = `https://${SUPABASE_PROJECT_ID}.supabase.co`;
 const SUPABASE_PUBLISHABLE_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV3bGl2d29ibWxhYWRyc2FxZWp4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMxMDU3MzUsImV4cCI6MjA4ODY4MTczNX0.uHMxtI7NbCzveumQyEI5czAT6DLQyzYgtpltOx6mVCc";
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNmdXhoamJ5cHZkeGh2bWZ6dXFwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMyMDY2MjYsImV4cCI6MjA4ODc4MjYyNn0.KNp42ES46Gr2Ir8drHmd1VRX4xq1l-UpNOFmJRIvDJc";
 
 const resolveEnvDir = () => {
   const candidateDirs = [
@@ -73,7 +73,9 @@ export default defineConfig(({ mode }) => {
   const define: Record<string, string> = {};
   const appearsWrongProject =
     (fileEnv.VITE_SUPABASE_PROJECT_ID || "").includes("dtknywnttoslxthlqwsz") ||
-    (fileEnv.VITE_SUPABASE_URL || "").includes("dtknywnttoslxthlqwsz");
+    (fileEnv.VITE_SUPABASE_URL || "").includes("dtknywnttoslxthlqwsz") ||
+    (fileEnv.VITE_SUPABASE_PROJECT_ID || "").includes("uwlivwobmlaadrsaqejx") ||
+    (fileEnv.VITE_SUPABASE_URL || "").includes("uwlivwobmlaadrsaqejx");
 
   const resolvedSupabaseUrl =
     fileEnv.VITE_SUPABASE_URL && !appearsWrongProject ? fileEnv.VITE_SUPABASE_URL : SUPABASE_URL;
