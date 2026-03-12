@@ -54,21 +54,50 @@ export const CreateClientDialog = ({ onSuccess }: CreateClientDialogProps) => {
   const [copied, setCopied] = useState(false);
   const { toast } = useToast();
 
-  const getInvokeErrorMessage = (response: unknown): string | null => {
+  const getInvokeErrorMessage = async (response: unknown): Promise<string | null> => {
     const error = (response as any)?.error;
     if (!error) return null;
+
     const status = (error as any)?.context?.status ?? (response as any)?.status;
-    const contextBody = (error as any)?.context?.body;
     const statusSuffix = typeof status === 'number' ? ` (status ${status})` : '';
-    if (contextBody) {
+    const contextBody = (error as any)?.context?.body;
+
+    const parseBodyText = (text: string): string | null => {
+      const trimmed = text.trim();
+      if (!trimmed) return null;
       try {
-        const parsed = typeof contextBody === 'string' ? JSON.parse(contextBody) : contextBody;
+        const parsed = JSON.parse(trimmed);
         if (parsed?.error && typeof parsed.error === 'string') return `${parsed.error}${statusSuffix}`;
         if (parsed?.message && typeof parsed.message === 'string') return `${parsed.message}${statusSuffix}`;
+        if (typeof parsed === 'string') return `${parsed}${statusSuffix}`;
       } catch {
-        if (typeof contextBody === 'string') return `${contextBody}${statusSuffix}`;
+        return `${trimmed}${statusSuffix}`;
+      }
+      return null;
+    };
+
+    if (contextBody) {
+      if (typeof contextBody === 'string') {
+        const parsed = parseBodyText(contextBody);
+        if (parsed) return parsed;
+      } else if (contextBody instanceof Blob) {
+        const parsed = parseBodyText(await contextBody.text());
+        if (parsed) return parsed;
+      } else if (contextBody instanceof ReadableStream) {
+        const parsed = parseBodyText(await new Response(contextBody).text());
+        if (parsed) return parsed;
+      } else if (typeof contextBody === 'object') {
+        const bodyObj = contextBody as any;
+        if (bodyObj?.error && typeof bodyObj.error === 'string') return `${bodyObj.error}${statusSuffix}`;
+        if (bodyObj?.message && typeof bodyObj.message === 'string') return `${bodyObj.message}${statusSuffix}`;
+        try {
+          return `${JSON.stringify(contextBody)}${statusSuffix}`;
+        } catch {
+          void 0;
+        }
       }
     }
+
     if (typeof error.message === 'string') return `${error.message}${statusSuffix}`;
     return `Edge Function error${statusSuffix}`;
   };
@@ -106,7 +135,8 @@ export const CreateClientDialog = ({ onSuccess }: CreateClientDialogProps) => {
       });
 
       if (response.error) {
-        throw new Error(getInvokeErrorMessage(response) || response.error.message);
+        const message = await getInvokeErrorMessage(response);
+        throw new Error(message || response.error.message);
       }
 
       const result = response.data;

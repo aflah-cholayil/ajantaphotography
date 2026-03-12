@@ -21,7 +21,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, supabaseUrl } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
 interface UploadWorkDialogProps {
@@ -204,7 +204,7 @@ export const UploadWorkDialog = ({ open, onOpenChange, onSuccess }: UploadWorkDi
 
     // Initiate
     const initResponse = await fetch(
-      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/manage-work?action=multipart-initiate`,
+      `${supabaseUrl}/functions/v1/manage-work?action=multipart-initiate`,
       {
         method: 'POST',
         headers: {
@@ -235,7 +235,7 @@ export const UploadWorkDialog = ({ open, onOpenChange, onSuccess }: UploadWorkDi
 
       // Get signed URL for this part
       const urlResponse = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/manage-work?action=multipart-part-url`,
+        `${supabaseUrl}/functions/v1/manage-work?action=multipart-part-url`,
         {
           method: 'POST',
           headers: {
@@ -274,7 +274,7 @@ export const UploadWorkDialog = ({ open, onOpenChange, onSuccess }: UploadWorkDi
     parts.sort((a, b) => a.partNumber - b.partNumber);
 
     const completeResponse = await fetch(
-      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/manage-work?action=multipart-complete`,
+      `${supabaseUrl}/functions/v1/manage-work?action=multipart-complete`,
       {
         method: 'POST',
         headers: {
@@ -320,7 +320,7 @@ export const UploadWorkDialog = ({ open, onOpenChange, onSuccess }: UploadWorkDi
         setUploadProgress(10);
 
         const response = await fetch(
-          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/manage-work?action=upload-url`,
+          `${supabaseUrl}/functions/v1/manage-work?action=upload-url`,
           {
             method: 'POST',
             headers: {
@@ -364,7 +364,7 @@ export const UploadWorkDialog = ({ open, onOpenChange, onSuccess }: UploadWorkDi
       setUploadPhase('Saving record...');
       setUploadProgress(95);
       const createResponse = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/manage-work?action=create`,
+        `${supabaseUrl}/functions/v1/manage-work?action=create`,
         {
           method: 'POST',
           headers: {

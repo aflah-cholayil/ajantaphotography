@@ -19,7 +19,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, supabaseUrl } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { Database } from '@/integrations/supabase/types';
 
@@ -76,7 +76,7 @@ export const EditWorkDialog = ({ open, onOpenChange, work, onSuccess }: EditWork
       }
 
       const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/manage-work?action=update&id=${work.id}`,
+        `${supabaseUrl}/functions/v1/manage-work?action=update&id=${work.id}`,
         {
           method: 'POST',
           headers: {

@@ -99,7 +99,17 @@ function getEmailFooter(config: StudioConfig): string {
 }
 
 interface EmailRequest {
-  type: "welcome" | "gallery_ready" | "share_link" | "booking_confirmation" | "booking_admin" | "contact_confirmation" | "contact_admin" | "contact_reply" | "password_changed";
+  type:
+    | "welcome"
+    | "gallery_ready"
+    | "share_link"
+    | "booking_confirmation"
+    | "booking_admin"
+    | "contact_confirmation"
+    | "contact_admin"
+    | "contact_reply"
+    | "password_changed"
+    | "password_reset";
   to: string;
   data: Record<string, unknown>;
 }
@@ -315,6 +325,27 @@ const getEmailContent = (type: string, data: Record<string, unknown>, config: St
         `,
       };
 
+    case "password_reset":
+      return {
+        subject: `Reset Your Password - ${config.name}`,
+        html: `
+          <div style="font-family: 'Georgia', serif; max-width: 600px; margin: 0 auto; background: #1a1814; color: #f5f0e8; padding: 40px;">
+            ${emailHeader}
+            <h2 style="color: #f5f0e8; font-weight: 300;">Reset Your Password</h2>
+            <p style="line-height: 1.8; color: #a09080;">
+              We received a request to reset the password for your account.
+            </p>
+            <a href="${data.resetUrl}" style="display: inline-block; background: linear-gradient(135deg, #d4a853, #b8923d); color: #1a1814; padding: 15px 30px; text-decoration: none; border-radius: 4px; font-weight: 500; margin-top: 12px;">
+              Reset Password
+            </a>
+            <p style="line-height: 1.8; color: #a09080; margin-top: 18px;">
+              If you didn’t request this, you can ignore this email.
+            </p>
+            ${emailFooter}
+          </div>
+        `,
+      };
+
     default:
       throw new Error(`Unknown email type: ${type}`);
   }
@@ -340,6 +371,43 @@ const handler = async (req: Request): Promise<Response> => {
     if (!to || !to.includes('@')) {
       throw new Error("Invalid recipient email address");
     }
+
+    const resolvedData = { ...(data as Record<string, unknown>) };
+    if (type === "password_reset") {
+      const origin =
+        req.headers.get("origin") ||
+        (req.headers.get("referer") ? new URL(req.headers.get("referer")!).origin : null) ||
+        Deno.env.get("SITE_URL") ||
+        "https://ajantaphotography.in";
+      const redirectTo = `${origin}/reset-password`;
+
+      try {
+        const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
+          type: "recovery",
+          email: to,
+          options: { redirectTo },
+        });
+
+        const actionLink = (linkData as unknown as { properties?: { action_link?: string } })
+          ?.properties?.action_link;
+
+        if (linkError || !actionLink) {
+          console.error("[send-email] Failed to generate password reset link:", linkError);
+          return new Response(JSON.stringify({ success: true }), {
+            status: 200,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          });
+        }
+
+        resolvedData.resetUrl = actionLink;
+      } catch (err) {
+        console.error("[send-email] Password reset generation error:", err);
+        return new Response(JSON.stringify({ success: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+    }
     
     console.log(`[send-email] Starting ${type} email to ${to}`);
     
@@ -348,7 +416,7 @@ const handler = async (req: Request): Promise<Response> => {
     const emailHeader = getEmailHeader();
     const emailFooter = getEmailFooter(studioConfig);
     
-    const emailContent = getEmailContent(type, data, studioConfig, emailHeader, emailFooter);
+    const emailContent = getEmailContent(type, resolvedData, studioConfig, emailHeader, emailFooter);
     
     // For admin notifications, send to admin email
     const adminTypes = ["booking_admin", "contact_admin"];
@@ -360,8 +428,9 @@ const handler = async (req: Request): Promise<Response> => {
 
     // Create pending log entry BEFORE sending
     const safeData = (() => {
-      const copy: Record<string, unknown> = { ...(data as Record<string, unknown>) };
+      const copy: Record<string, unknown> = { ...(resolvedData as Record<string, unknown>) };
       if ("password" in copy) delete copy.password;
+      if ("resetUrl" in copy) delete copy.resetUrl;
       return copy;
     })();
 

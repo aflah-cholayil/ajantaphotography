@@ -3,6 +3,7 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { useStudioSettings } from '@/hooks/useStudioSettings';
 import { SectionHeading } from '@/components/ui/SectionHeading';
 import { Loader2, Play } from 'lucide-react';
+import { supabaseUrl } from '@/integrations/supabase/client';
 
 export const CinematicVideoSection = () => {
   const sectionRef = useRef<HTMLDivElement>(null);
@@ -20,7 +21,7 @@ export const CinematicVideoSection = () => {
 
   // Build proxy URL
   const videoSrc = shouldRenderSection && showcaseVideoKey
-    ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/video-stream?key=${encodeURIComponent(showcaseVideoKey)}`
+    ? `${supabaseUrl}/functions/v1/video-stream?key=${encodeURIComponent(showcaseVideoKey)}`
     : null;
 
   // Handle video playback based on viewport

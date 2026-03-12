@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import { SectionHeading } from '@/components/ui/SectionHeading';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, supabaseUrl } from '@/integrations/supabase/client';
 import { Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 import useEmblaCarousel from 'embla-carousel-react';
 import gallery1 from '@/assets/gallery-1.jpg';
@@ -87,7 +87,7 @@ export const GalleryPreview = () => {
             data.map(async (work) => {
               try {
                 const response = await fetch(
-                  `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/s3-signed-url?key=${encodeURIComponent(work.s3_key)}`
+                  `${supabaseUrl}/functions/v1/s3-signed-url?key=${encodeURIComponent(work.s3_key)}`
                 );
                 if (response.ok) {
                   const { url } = await response.json();

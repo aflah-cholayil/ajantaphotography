@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, supabaseUrl } from '@/integrations/supabase/client';
 import {
   HardDrive, Upload, IndianRupee, RefreshCw, AlertTriangle, Database,
   BarChart3, Cloud, CheckCircle2, TrendingDown
@@ -66,7 +66,7 @@ const getAuthHeaders = async () => {
 
 const fetchStorageStats = async (force: boolean): Promise<StorageStats> => {
   const headers = await getAuthHeaders();
-  const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/storage-stats${force ? '?force=true' : ''}`;
+  const url = `${supabaseUrl}/functions/v1/storage-stats${force ? '?force=true' : ''}`;
   const res = await fetch(url, { headers });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));

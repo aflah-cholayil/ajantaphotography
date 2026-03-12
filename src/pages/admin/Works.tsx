@@ -44,7 +44,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useAuth } from '@/hooks/useAuth';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase, supabaseUrl } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { UploadWorkDialog } from '@/components/admin/UploadWorkDialog';
 import { EditWorkDialog } from '@/components/admin/EditWorkDialog';
@@ -96,7 +96,7 @@ const Works = () => {
           data.slice(0, 20).map(async (work) => {
             try {
               const response = await fetch(
-                `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/manage-work?action=signed-url&key=${encodeURIComponent(work.s3_key)}`,
+                `${supabaseUrl}/functions/v1/manage-work?action=signed-url&key=${encodeURIComponent(work.s3_key)}`,
                 {
                   headers: {
                     'Authorization': `Bearer ${session.data.session!.access_token}`,
@@ -142,7 +142,7 @@ const Works = () => {
       if (!session) return;
 
       const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/manage-work?action=update&id=${work.id}`,
+        `${supabaseUrl}/functions/v1/manage-work?action=update&id=${work.id}`,
         {
           method: 'POST',
           headers: {
@@ -176,7 +176,7 @@ const Works = () => {
       if (!session) return;
 
       const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/manage-work?action=delete&id=${workToDelete.id}`,
+        `${supabaseUrl}/functions/v1/manage-work?action=delete&id=${workToDelete.id}`,
         {
           method: 'POST',
           headers: {

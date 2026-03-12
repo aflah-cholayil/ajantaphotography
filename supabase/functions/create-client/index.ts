@@ -2,6 +2,8 @@ import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { z } from "npm:zod@3.25.76";
 
+const CREATE_CLIENT_BUILD = "20260310-01";
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
@@ -9,9 +11,9 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const jsonResponse = (body: Record<string, unknown>) =>
+const jsonResponse = (body: Record<string, unknown>, status = 200) =>
   new Response(JSON.stringify(body), {
-    status: 200,
+    status,
     headers: { "Content-Type": "application/json", ...corsHeaders },
   });
 
@@ -44,6 +46,62 @@ const generatePassword = (): string => {
   return password;
 };
 
+const findAuthUserByEmail = async (
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  email: string
+): Promise<{ id: string; email?: string } | null> => {
+  const normalizedEmail = email.trim().toLowerCase();
+  const perPage = 1000;
+
+  for (let page = 1; page <= 50; page++) {
+    const url = new URL(`${supabaseUrl}/auth/v1/admin/users`);
+    url.searchParams.set("page", String(page));
+    url.searchParams.set("per_page", String(perPage));
+
+    const res = await fetch(url.toString(), {
+      method: "GET",
+      headers: {
+        apikey: serviceRoleKey,
+        Authorization: `Bearer ${serviceRoleKey}`,
+      },
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Auth list users failed (${res.status}): ${text}`);
+    }
+
+    const json = await res.json().catch(() => null) as any;
+    const users = (json?.users ?? []) as Array<{ id: string; email?: string | null }>;
+    const match = users.find((u) => (u.email || "").trim().toLowerCase() === normalizedEmail);
+    if (match) return { id: match.id, email: match.email ?? undefined };
+    if (users.length < perPage) return null;
+  }
+
+  return null;
+};
+
+const getAuthUserByEmail = async (
+  serviceSupabase: ReturnType<typeof createClient>,
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  email: string
+): Promise<{ id: string; email?: string } | null> => {
+  const normalizedEmail = email.trim().toLowerCase();
+
+  try {
+    const { data, error } = await serviceSupabase.rpc("get_auth_user_id_by_email", {
+      p_email: normalizedEmail,
+    });
+    if (!error && data) return { id: data as string, email: normalizedEmail };
+  } catch {
+    // ignore
+  }
+
+  return await findAuthUserByEmail(supabaseUrl, serviceRoleKey, normalizedEmail);
+};
+
 const handler = async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -51,24 +109,25 @@ const handler = async (req: Request): Promise<Response> => {
 
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
-    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("ANON_KEY");
+    const serviceRoleKey =
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SERVICE_ROLE_KEY");
 
     if (!supabaseUrl || !supabaseAnonKey) {
       return jsonResponse({
         success: false,
         error: "Missing SUPABASE_URL or SUPABASE_ANON_KEY",
-      });
+      }, 500);
     }
 
     if (!serviceRoleKey) {
-      return jsonResponse({ success: false, error: "Missing SUPABASE_SERVICE_ROLE_KEY" });
+      return jsonResponse({ success: false, error: "Missing SERVICE_ROLE_KEY" }, 500);
     }
 
     // Verify admin authentication
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
-      return jsonResponse({ success: false, error: "Unauthorized" });
+      return jsonResponse({ success: false, error: "Unauthorized" }, 401);
     }
 
     const supabase = createClient(
@@ -86,7 +145,7 @@ const handler = async (req: Request): Promise<Response> => {
     const { data: claims, error: authError } = await supabase.auth.getClaims(token);
     
     if (authError || !claims?.claims) {
-      return jsonResponse({ success: false, error: "Unauthorized" });
+      return jsonResponse({ success: false, error: "Unauthorized" }, 401);
     }
 
     const userId = claims.claims.sub as string;
@@ -100,125 +159,208 @@ const handler = async (req: Request): Promise<Response> => {
 
     if (roleError) {
       console.error("Error fetching user role:", roleError);
-      return jsonResponse({ success: false, error: "Failed to verify admin role" });
+      return jsonResponse({ success: false, error: "Failed to verify admin role" }, 500);
     }
 
     const allowedRoles = ["admin", "owner", "editor"];
     if (!roleData?.role || !allowedRoles.includes(roleData.role)) {
       console.log("Access denied for role:", roleData?.role);
-      return jsonResponse({ success: false, error: "Admin access required" });
+      return jsonResponse({ success: false, error: "Admin access required" }, 403);
     }
 
     const payload: CreateClientRequest = await req.json();
 
     const parsed = createClientSchema.safeParse(payload);
     if (!parsed.success) {
-      return jsonResponse({ success: false, error: "Invalid input" });
+      const firstIssue = parsed.error.issues[0];
+      const issuePath = firstIssue?.path?.length ? firstIssue.path.join(".") : "request";
+      const issueMessage = firstIssue?.message || "Invalid input";
+      return jsonResponse({ success: false, error: `${issuePath}: ${issueMessage}` }, 400);
     }
 
     const { name, email, eventName, eventDate, notes } = parsed.data;
 
-    // Check if user already exists
-    const { data: existingUser, error: existingUserError } = await serviceSupabase
+    const normalizedEmail = email.trim().toLowerCase();
+
+    const { data: existingProfile, error: existingProfileError } = await serviceSupabase
       .from("profiles")
       .select("user_id")
-      .eq("email", email)
+      .ilike("email", normalizedEmail)
+      .order("created_at", { ascending: false })
+      .limit(1)
       .maybeSingle();
 
-    if (existingUserError) {
-      console.error("Error checking existing user:", existingUserError);
-      return jsonResponse({ success: false, error: "Failed to validate client email" });
+    if (existingProfileError) {
+      console.error("Error checking existing profile:", existingProfileError);
+      return jsonResponse({ success: false, error: "Failed to validate client email" }, 500);
     }
 
-    if (existingUser?.user_id) {
-      const existingUserId = existingUser.user_id as string;
-
-      const { data: existingRole, error: existingRoleError } = await serviceSupabase
-        .from("user_roles")
-        .select("role")
-        .eq("user_id", existingUserId)
-        .maybeSingle();
-
-      if (existingRoleError) {
-        console.error("Error checking existing user role:", existingRoleError);
-        return jsonResponse({ success: false, error: "Failed to validate existing user role" });
-      }
-
-      if (existingRole?.role && existingRole.role !== "client") {
-        return jsonResponse({
-          success: false,
-          error: "This email is already used by a staff account",
-        });
-      }
-
-      const { data: existingClient, error: existingClientError } = await serviceSupabase
-        .from("clients")
-        .select("id")
-        .eq("user_id", existingUserId)
-        .maybeSingle();
-
-      if (existingClientError) {
-        console.error("Error checking existing client:", existingClientError);
-        return jsonResponse({
-          success: false,
-          error: "Failed to validate existing client record",
-        });
-      }
-
-      if (existingClient?.id) {
-        return jsonResponse({
-          success: false,
-          error: "A client with this email already exists",
-        });
-      }
-
-      console.log("Cleaning up existing client auth user without client record:", existingUserId);
+    let clientUserId: string | null = (existingProfile?.user_id as string | undefined) ?? null;
+    let authUserWasCreated = false;
+    let existingClientId: string | null = null;
+    if (!clientUserId) {
       try {
-        await serviceSupabase.from("profiles").delete().eq("user_id", existingUserId);
-        await serviceSupabase.from("user_roles").delete().eq("user_id", existingUserId);
-        await serviceSupabase.auth.admin.deleteUser(existingUserId);
-      } catch (cleanupError) {
-        console.error("Failed to cleanup existing user:", cleanupError);
-        return jsonResponse({
-          success: false,
-          error: "Failed to cleanup existing user. Please try again.",
-        });
+        const existingAuthUser = await getAuthUserByEmail(
+          serviceSupabase,
+          supabaseUrl,
+          serviceRoleKey,
+          normalizedEmail
+        );
+        clientUserId = existingAuthUser?.id ?? null;
+      } catch (listUsersError) {
+        console.error("Failed to list auth users:", listUsersError);
       }
     }
 
-    // Generate password
     const password = generatePassword();
 
-    // Create auth user with metadata
-    const { data: authData, error: signUpError } = await serviceSupabase.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: {
-        name,
-        role: "client",
-        must_change_password: true,
-      },
-    });
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      if (clientUserId) {
+        const { data: existingRoles, error: existingRolesError } = await serviceSupabase
+          .from("user_roles")
+          .select("role")
+          .eq("user_id", clientUserId);
 
-    if (signUpError || !authData.user) {
-      console.error("Error creating user:", signUpError);
-      throw signUpError || new Error("Failed to create user");
+        if (existingRolesError) {
+          console.error("Error checking existing user roles:", existingRolesError);
+          return jsonResponse({ success: false, error: "Failed to validate existing user role" }, 500);
+        }
+
+        const roles = (existingRoles ?? []).map((r: any) => r.role).filter(Boolean) as string[];
+        const staffRoles = ["owner", "admin", "editor", "viewer"];
+        if (roles.some((r) => staffRoles.includes(r))) {
+          return jsonResponse({ success: false, error: "This email is already used by a staff account" }, 409);
+        }
+
+        const { data: existingClient, error: existingClientError } = await serviceSupabase
+          .from("clients")
+          .select("id")
+          .eq("user_id", clientUserId)
+          .limit(1)
+          .maybeSingle();
+
+        if (existingClientError) {
+          console.error("Error checking existing client:", existingClientError);
+          return jsonResponse({ success: false, error: "Failed to validate existing client record" }, 500);
+        }
+
+        existingClientId = (existingClient?.id as string | undefined) ?? null;
+
+        const { error: updateUserError } = await serviceSupabase.auth.admin.updateUserById(clientUserId, {
+          password,
+          user_metadata: {
+            name,
+            role: "client",
+            must_change_password: true,
+          },
+        });
+
+        if (updateUserError) {
+          console.error("Error updating existing user:", updateUserError);
+          return jsonResponse({ success: false, error: updateUserError.message }, 500);
+        }
+
+        const { error: profileUpsertError } = await serviceSupabase
+          .from("profiles")
+          .upsert(
+            { user_id: clientUserId, name, email: normalizedEmail, must_change_password: true, is_active: true },
+            { onConflict: "user_id" }
+          );
+
+        if (profileUpsertError) {
+          console.error("Error upserting profile:", profileUpsertError);
+          return jsonResponse({ success: false, error: "Failed to update profile" }, 500);
+        }
+
+        await serviceSupabase.from("user_roles").delete().eq("user_id", clientUserId);
+        const { error: roleInsertError } = await serviceSupabase
+          .from("user_roles")
+          .insert({ user_id: clientUserId, role: "client" });
+
+        if (roleInsertError) {
+          console.error("Error inserting client role:", roleInsertError);
+          return jsonResponse({ success: false, error: "Failed to update user role" }, 500);
+        }
+
+        break;
+      }
+
+      const { data: authData, error: signUpError } = await serviceSupabase.auth.admin.createUser({
+        email: normalizedEmail,
+        password,
+        email_confirm: true,
+        user_metadata: {
+          name,
+          role: "client",
+          must_change_password: true,
+        },
+      });
+
+      if (signUpError || !authData.user) {
+        const message = signUpError?.message || "Failed to create user";
+        const messageLower = message.toLowerCase();
+        console.error("Error creating user:", signUpError);
+
+        if (
+          messageLower.includes("already exists") ||
+          messageLower.includes("already registered") ||
+          messageLower.includes("user already registered")
+        ) {
+          try {
+            const existingAuthUser = await getAuthUserByEmail(
+              serviceSupabase,
+              supabaseUrl,
+              serviceRoleKey,
+              normalizedEmail
+            );
+            if (existingAuthUser?.id) {
+              clientUserId = existingAuthUser.id;
+              continue;
+            }
+          } catch (authLookupError) {
+            console.error("Auth user lookup failed after create-user conflict:", authLookupError);
+          }
+
+          return jsonResponse(
+            { success: false, error: `A user with this email already exists [${CREATE_CLIENT_BUILD}]` },
+            409
+          );
+        }
+
+        return jsonResponse({ success: false, error: message }, 400);
+      }
+
+      clientUserId = authData.user.id;
+      authUserWasCreated = true;
+      break;
     }
 
-    console.log("User created:", authData.user.id);
+    if (!clientUserId) {
+      return jsonResponse({ success: false, error: "Failed to resolve client user account" }, 500);
+    }
 
-    // Create client record
-    const { data: clientData, error: clientError } = await serviceSupabase
-      .from("clients")
-      .insert({
-        user_id: authData.user.id,
-        event_name: eventName,
-        event_date: eventDate,
-        notes,
-      })
-      .select()
-      .single();
+    // Create or update client record
+    const { data: clientData, error: clientError } = existingClientId
+      ? await serviceSupabase
+          .from("clients")
+          .update({
+            event_name: eventName,
+            event_date: eventDate,
+            notes,
+          })
+          .eq("id", existingClientId)
+          .select()
+          .single()
+      : await serviceSupabase
+          .from("clients")
+          .insert({
+            user_id: clientUserId,
+            event_name: eventName,
+            event_date: eventDate,
+            notes,
+          })
+          .select()
+          .single();
 
     if (clientError) {
       console.error("Error creating client:", clientError);
@@ -287,9 +429,11 @@ const handler = async (req: Request): Promise<Response> => {
       console.error("Welcome email failed after retry. Rolling back client creation.");
       try {
         await serviceSupabase.from("clients").delete().eq("id", clientData.id);
-        await serviceSupabase.from("profiles").delete().eq("user_id", authData.user.id);
-        await serviceSupabase.from("user_roles").delete().eq("user_id", authData.user.id);
-        await serviceSupabase.auth.admin.deleteUser(authData.user.id);
+        if (authUserWasCreated) {
+          await serviceSupabase.from("profiles").delete().eq("user_id", clientUserId);
+          await serviceSupabase.from("user_roles").delete().eq("user_id", clientUserId);
+          await serviceSupabase.auth.admin.deleteUser(clientUserId);
+        }
       } catch (cleanupError) {
         console.error("Rollback cleanup failed", cleanupError);
       }
@@ -299,22 +443,27 @@ const handler = async (req: Request): Promise<Response> => {
         error: lastWelcomeEmailError
           ? `Welcome email failed: ${lastWelcomeEmailError}`
           : "Welcome email failed to send. Please try again.",
-      });
+      }, 502);
     }
 
     // Create default album (optional)
-    const { data: albumData, error: albumError } = await serviceSupabase
-      .from("albums")
-      .insert({
-        client_id: clientData.id,
-        title: eventName,
-        status: "pending",
-      })
-      .select()
-      .single();
+    let albumData: unknown = null;
+    if (!existingClientId) {
+      const { data: createdAlbum, error: albumError } = await serviceSupabase
+        .from("albums")
+        .insert({
+          client_id: clientData.id,
+          title: eventName,
+          status: "pending",
+        })
+        .select()
+        .single();
 
-    if (albumError) {
-      console.error("Error creating album:", albumError);
+      if (albumError) {
+        console.error("Error creating album:", albumError);
+      } else {
+        albumData = createdAlbum;
+      }
     }
 
     return new Response(
@@ -322,7 +471,7 @@ const handler = async (req: Request): Promise<Response> => {
         success: true,
         client: clientData,
         album: albumData,
-        userId: authData.user.id,
+        userId: clientUserId,
         temporaryPassword: password,
         emailSent: true,
         emailId,
@@ -335,7 +484,7 @@ const handler = async (req: Request): Promise<Response> => {
   } catch (error: unknown) {
     console.error("Error in create-client function:", error);
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
-    return jsonResponse({ success: false, error: errorMessage });
+    return jsonResponse({ success: false, error: errorMessage }, 500);
   }
 };
 
