@@ -13,10 +13,14 @@ dist-ssr
 *.local
 supabase/.temp/
 
-# Env files
+# Env files (never commit secrets)
 .env
 .env.*
 !.env.example
+
+# SQL backups (may contain sensitive data)
+backup.sql
+*.sql.backup
 
 # Editor directories and files
 .vscode/*

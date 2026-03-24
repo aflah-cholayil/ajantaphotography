@@ -195,21 +195,25 @@ async function mediaKeyExists(supabase: ReturnType<typeof createClient>, albumId
 }
 
 async function publicWorkKeyExists(supabase: ReturnType<typeof createClient>, key: string) {
+  // Grant access if key belongs to an active work visible on gallery OR home (manage-work uses timestamp_filename format)
+  const checkRow = (row: { status: string; show_on_gallery: boolean; show_on_home: boolean } | null) =>
+    !!row && row.status === "active" && (row.show_on_gallery || row.show_on_home);
+
   const { data: byKey } = await supabase
     .from("works")
-    .select("id, status, show_on_gallery")
+    .select("id, status, show_on_gallery, show_on_home")
     .eq("s3_key", key)
     .limit(1)
     .maybeSingle();
-  if (byKey && byKey.status === "active" && byKey.show_on_gallery) return true;
+  if (checkRow(byKey)) return true;
 
   const { data: byPreviewKey } = await supabase
     .from("works")
-    .select("id, status, show_on_gallery")
+    .select("id, status, show_on_gallery, show_on_home")
     .eq("s3_preview_key", key)
     .limit(1)
     .maybeSingle();
-  return !!(byPreviewKey && byPreviewKey.status === "active" && byPreviewKey.show_on_gallery);
+  return checkRow(byPreviewKey);
 }
 
 interface SignedUrlRequest {
@@ -263,7 +267,8 @@ const handler = async (req: Request): Promise<Response> => {
     if (key.startsWith("assets/showcase_video/") || key.startsWith("assets/public/")) {
       isPublicAsset = true;
     }
-    if (!isPublicAsset && key.startsWith("works/")) {
+    // Check works table: supports both "works/" prefix and manage-work format (timestamp_filename)
+    if (!isPublicAsset) {
       isPublicAsset = await publicWorkKeyExists(supabase, key);
     }
 
