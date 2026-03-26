@@ -24,6 +24,7 @@ import { Loader2, UserPlus, Mail, Key, ShieldCheck, Edit3, Eye } from 'lucide-re
 import { motion, AnimatePresence } from 'framer-motion';
 import { PasswordStrengthIndicator } from '@/components/ui/PasswordStrengthIndicator';
 import { validatePassword } from '@/lib/passwordValidation';
+import { getInvokeErrorMessage } from '@/lib/supabaseInvokeError';
 
 type AdminRole = 'admin' | 'editor' | 'viewer';
 
@@ -88,16 +89,23 @@ export const CreateAdminDialog = ({ open, onOpenChange, onSuccess }: CreateAdmin
       });
 
       if (response.error) {
-        throw new Error(response.error.message || 'Failed to create admin user');
+        const message = await getInvokeErrorMessage(response);
+        throw new Error(message || response.error.message || 'Failed to create admin user');
       }
 
       if (response.data?.error) {
         throw new Error(response.data.error);
       }
 
+      const emailSent = (response.data as { email_sent?: boolean; email_warning?: string })?.email_sent !== false;
+      const emailWarning = (response.data as { email_warning?: string })?.email_warning;
+
       toast({
         title: "Admin User Created",
-        description: `${formData.name} has been added and will receive login credentials via email.`,
+        description: emailSent
+          ? `${formData.name} has been added and will receive login credentials via email.`
+          : `${formData.name} was added, but the welcome email could not be sent.${emailWarning ? ` (${emailWarning})` : ' Configure RESEND_API_KEY in Supabase Edge Function secrets.'}`,
+        variant: 'default',
       });
 
       // Reset form

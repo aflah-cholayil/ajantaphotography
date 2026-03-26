@@ -41,6 +41,7 @@ import {
 import { format } from 'date-fns';
 import { CreateAdminDialog } from '@/components/admin/CreateAdminDialog';
 import { EditAdminDialog } from '@/components/admin/EditAdminDialog';
+import { getInvokeErrorMessage } from '@/lib/supabaseInvokeError';
 
 type AdminRole = 'owner' | 'admin' | 'editor' | 'viewer' | 'client';
 
@@ -125,7 +126,13 @@ const AdminUsers = () => {
         },
       });
 
-      if (response.error) throw response.error;
+      if (response.error) {
+        const message = await getInvokeErrorMessage(response);
+        throw new Error(message || response.error.message || 'Request failed');
+      }
+      if (response.data && typeof response.data === 'object' && 'error' in response.data && (response.data as { error?: string }).error) {
+        throw new Error((response.data as { error: string }).error);
+      }
 
       toast({
         title: user.is_active ? "User Disabled" : "User Enabled",
@@ -137,7 +144,7 @@ const AdminUsers = () => {
       console.error('Error toggling user status:', error);
       toast({
         title: "Error",
-        description: "Failed to update user status",
+        description: error instanceof Error ? error.message : "Failed to update user status",
         variant: "destructive",
       });
     }
@@ -160,7 +167,13 @@ const AdminUsers = () => {
         },
       });
 
-      if (response.error) throw response.error;
+      if (response.error) {
+        const message = await getInvokeErrorMessage(response);
+        throw new Error(message || response.error.message || 'Request failed');
+      }
+      if (response.data && typeof response.data === 'object' && 'error' in response.data && (response.data as { error?: string }).error) {
+        throw new Error((response.data as { error: string }).error);
+      }
 
       toast({
         title: "User Deleted",
@@ -172,7 +185,7 @@ const AdminUsers = () => {
       console.error('Error deleting user:', error);
       toast({
         title: "Error",
-        description: "Failed to delete user",
+        description: error instanceof Error ? error.message : "Failed to delete user",
         variant: "destructive",
       });
     } finally {

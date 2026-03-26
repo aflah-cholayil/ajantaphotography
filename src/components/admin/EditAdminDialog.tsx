@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Loader2, Pencil, ShieldCheck, Edit3, Eye } from 'lucide-react';
+import { getInvokeErrorMessage } from '@/lib/supabaseInvokeError';
 
 type AdminRole = 'owner' | 'admin' | 'editor' | 'viewer' | 'client';
 
@@ -87,7 +88,8 @@ export const EditAdminDialog = ({ open, onOpenChange, user, onSuccess }: EditAdm
       });
 
       if (response.error) {
-        throw new Error(response.error.message || 'Failed to update admin user');
+        const message = await getInvokeErrorMessage(response);
+        throw new Error(message || response.error.message || 'Failed to update admin user');
       }
 
       if (response.data?.error) {
