@@ -40,30 +40,43 @@ export const useAuth = () => {
     canDelete: false,
   });
 
-  const fetchUserRole = useCallback(async (userId: string) => {
-    const { data } = await supabase
-      .from('user_roles')
-      .select('role')
-      .eq('user_id', userId)
-      .maybeSingle();
+  const fetchUserRole = useCallback(async (userId: string): Promise<AppRole | null> => {
+    try {
+      // Use limit(1) — avoids PGRST116 if duplicate rows ever exist
+      const { data: rows, error: roleError } = await supabase
+        .from('user_roles')
+        .select('role')
+        .eq('user_id', userId)
+        .limit(1);
 
-    if (data?.role) {
-      return data.role as AppRole;
+      if (roleError) {
+        console.error('useAuth: user_roles fetch failed', roleError);
+      }
+
+      const fromRole = rows?.[0]?.role;
+      if (fromRole) {
+        return fromRole as AppRole;
+      }
+
+      const { data: clientData, error: clientError } = await supabase
+        .from('clients')
+        .select('id')
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      if (clientError) {
+        console.error('useAuth: clients lookup failed', clientError);
+      }
+
+      if (clientData?.id) {
+        return 'client';
+      }
+
+      return null;
+    } catch (e) {
+      console.error('useAuth: fetchUserRole error', e);
+      return null;
     }
-
-    // Fallback for migrated users where user_roles may be missing:
-    // if user exists as a client account, treat as client role.
-    const { data: clientData } = await supabase
-      .from('clients')
-      .select('id')
-      .eq('user_id', userId)
-      .maybeSingle();
-
-    if (clientData?.id) {
-      return 'client';
-    }
-
-    return null;
   }, []);
 
   const getAuthState = useCallback((user: User | null, session: Session | null, role: AppRole | null): AuthState => {
@@ -85,28 +98,50 @@ export const useAuth = () => {
   }, []);
 
   useEffect(() => {
-    // Get initial session
+    let cancelled = false;
+
     const initAuth = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (session?.user) {
-        const role = await fetchUserRole(session.user.id);
-        setState(getAuthState(session.user, session, role));
-      } else {
-        setState(prev => ({ ...prev, isLoading: false }));
+      try {
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError) {
+          console.error('useAuth: getSession', sessionError);
+        }
+
+        if (cancelled) return;
+
+        if (session?.user) {
+          const role = await fetchUserRole(session.user.id);
+          if (cancelled) return;
+          setState(getAuthState(session.user, session, role));
+        } else {
+          setState((prev) => ({ ...prev, isLoading: false }));
+        }
+      } catch (e) {
+        console.error('useAuth: initAuth', e);
+        if (!cancelled) {
+          setState((prev) => ({ ...prev, isLoading: false }));
+        }
       }
     };
 
-    initAuth();
+    void initAuth();
 
-    // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
         if (session?.user) {
-          // Defer the role fetch to avoid deadlock
-          setTimeout(async () => {
-            const role = await fetchUserRole(session.user.id);
-            setState(getAuthState(session.user, session, role));
+          setTimeout(() => {
+            void (async () => {
+              try {
+                const role = await fetchUserRole(session.user.id);
+                if (cancelled) return;
+                setState(getAuthState(session.user, session, role));
+              } catch (e) {
+                console.error('useAuth: onAuthStateChange role fetch', e);
+                if (!cancelled) {
+                  setState(getAuthState(session.user, session, null));
+                }
+              }
+            })();
           }, 0);
         } else {
           setState({
@@ -125,7 +160,10 @@ export const useAuth = () => {
       }
     );
 
-    return () => subscription.unsubscribe();
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
   }, [fetchUserRole, getAuthState]);
 
   const signIn = async (email: string, password: string) => {

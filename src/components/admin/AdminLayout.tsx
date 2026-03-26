@@ -84,13 +84,46 @@ export const AdminLayout = ({ children }: AdminLayoutProps) => {
 
   const filteredNavItems = navItems.filter(item => !item.ownerOnly || isOwner);
 
-  // Show loading while checking auth
-  if (authLoading || !user || !role) {
+  // Initial auth check only — do not block forever when role is missing (bad data / RLS)
+  if (authLoading) {
     return (
       <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4">
         <Logo variant="large" linkTo={undefined} />
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
         <p className="text-muted-foreground text-sm">Loading admin panel...</p>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4">
+        <Logo variant="large" linkTo={undefined} />
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        <p className="text-muted-foreground text-sm">Redirecting to sign in...</p>
+      </div>
+    );
+  }
+
+  if (!role) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-6 px-6 max-w-md mx-auto text-center">
+        <Logo variant="large" linkTo={undefined} />
+        <div>
+          <h1 className="font-serif text-xl text-foreground mb-2">Account not ready</h1>
+          <p className="text-muted-foreground text-sm">
+            You are signed in, but this account has no staff or client role assigned. Ask an owner to add you in Admin Users, or use a different account.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          onClick={async () => {
+            await signOut();
+            navigate('/login', { replace: true });
+          }}
+        >
+          Sign out
+        </Button>
       </div>
     );
   }

@@ -20,7 +20,7 @@ const Login = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isSendingReset, setIsSendingReset] = useState(false);
   const navigate = useNavigate();
-  const { user, isAdmin, role, signIn, isLoading: authLoading } = useAuth();
+  const { user, isAdmin, role, signIn, signOut, isLoading: authLoading } = useAuth();
 
   // Redirect authenticated users based on role
   useEffect(() => {
@@ -96,12 +96,46 @@ const Login = () => {
     }
   };
 
-  // Show loading while checking auth state
-  if (authLoading) {
+  // Show loading while checking auth state (with safety timeout so a stuck client never spins forever)
+  const [authWaitExceeded, setAuthWaitExceeded] = useState(false);
+  useEffect(() => {
+    const id = window.setTimeout(() => setAuthWaitExceeded(true), 12000);
+    return () => window.clearTimeout(id);
+  }, []);
+
+  if (authLoading && !authWaitExceeded) {
     return (
       <Layout hideFooter>
         <div className="min-h-screen flex items-center justify-center">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        </div>
+      </Layout>
+    );
+  }
+
+  // Signed in but no role in DB — avoid blank redirect loop
+  if (user && !role && !authLoading) {
+    return (
+      <Layout hideFooter>
+        <div className="min-h-screen flex flex-col items-center justify-center px-6 gap-6 max-w-md mx-auto text-center">
+          <Logo variant="large" linkTo="/" />
+          <div>
+            <h1 className="font-serif text-xl text-foreground mb-2">Account not set up</h1>
+            <p className="text-muted-foreground text-sm">
+              You are signed in, but this account has no role yet. Contact your studio owner, or sign out and use another account.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            className="btn-gold"
+            onClick={async () => {
+              await signOut();
+              window.location.reload();
+            }}
+          >
+            Sign out
+          </Button>
         </div>
       </Layout>
     );
