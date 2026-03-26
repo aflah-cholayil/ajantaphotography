@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import type { User, Session } from '@supabase/supabase-js';
+import type { AuthChangeEvent } from '@supabase/supabase-js';
 
 type AppRole = 'owner' | 'admin' | 'editor' | 'viewer' | 'client';
 
@@ -42,30 +43,23 @@ export const useAuth = () => {
 
   const fetchUserRole = useCallback(async (userId: string): Promise<AppRole | null> => {
     try {
-      // Use limit(1) — avoids PGRST116 if duplicate rows ever exist
-      const { data: rows, error: roleError } = await supabase
-        .from('user_roles')
-        .select('role')
-        .eq('user_id', userId)
-        .limit(1);
+      // Parallel requests — was two sequential round-trips (noticeable on slow networks)
+      const [{ data: rows, error: roleError }, { data: clientData, error: clientError }] =
+        await Promise.all([
+          supabase.from('user_roles').select('role').eq('user_id', userId).limit(1),
+          supabase.from('clients').select('id').eq('user_id', userId).maybeSingle(),
+        ]);
 
       if (roleError) {
         console.error('useAuth: user_roles fetch failed', roleError);
+      }
+      if (clientError) {
+        console.error('useAuth: clients lookup failed', clientError);
       }
 
       const fromRole = rows?.[0]?.role;
       if (fromRole) {
         return fromRole as AppRole;
-      }
-
-      const { data: clientData, error: clientError } = await supabase
-        .from('clients')
-        .select('id')
-        .eq('user_id', userId)
-        .maybeSingle();
-
-      if (clientError) {
-        console.error('useAuth: clients lookup failed', clientError);
       }
 
       if (clientData?.id) {
@@ -127,22 +121,44 @@ export const useAuth = () => {
     void initAuth();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
+      (event: AuthChangeEvent, session) => {
+        const sessionUserId = session?.user?.id ?? null;
+
+        // initAuth already called getSession + fetchUserRole — this duplicate fires right after
+        // and doubled the DB latency on every page load.
+        if (event === 'INITIAL_SESSION') {
+          return;
+        }
+
+        // Token refresh: same user/role; only swap session tokens (avoids extra DB round-trip)
+        if (event === 'TOKEN_REFRESHED' && session?.user) {
+          setState((prev) => {
+            if (prev.user?.id !== session.user.id) {
+              return prev;
+            }
+            return {
+              ...prev,
+              session,
+              user: session.user,
+              isLoading: false,
+            };
+          });
+          return;
+        }
+
         if (session?.user) {
-          setTimeout(() => {
-            void (async () => {
-              try {
-                const role = await fetchUserRole(session.user.id);
-                if (cancelled) return;
-                setState(getAuthState(session.user, session, role));
-              } catch (e) {
-                console.error('useAuth: onAuthStateChange role fetch', e);
-                if (!cancelled) {
-                  setState(getAuthState(session.user, session, null));
-                }
+          void (async () => {
+            try {
+              const role = await fetchUserRole(session.user.id);
+              if (cancelled) return;
+              setState(getAuthState(session.user, session, role));
+            } catch (e) {
+              console.error('useAuth: onAuthStateChange role fetch', e);
+              if (!cancelled) {
+                setState(getAuthState(session.user, session, null));
               }
-            })();
-          }, 0);
+            }
+          })();
         } else {
           setState({
             user: null,
